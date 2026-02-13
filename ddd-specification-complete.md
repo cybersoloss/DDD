@@ -332,11 +332,24 @@ Levels 1 and 2 are **derived views** — their content comes from spec files. Us
 | Human Gate | ✋ | Pause flow, notify human, await approval, timeout/escalation |
 | Router | ◇◇ | Semantic routing — LLM classifies intent, routes to sub-agents |
 
+### Orchestration Nodes (Level 3) — Multi-Agent Flows
+
+| Type | Icon | Purpose |
+|------|------|---------|
+| Orchestrator | ⊛ | Supervises multiple agents, monitors progress, merges results, intervenes |
+| Smart Router | ◇◇+ | Rule-based + LLM hybrid routing with fallbacks, retries, A/B testing, circuit breaker |
+| Handoff | ⇄ | Formal context transfer between agents (transfer/consult/collaborate modes) |
+| Agent Group | [⊛] | Container for agents that share memory and coordination policy |
+
 ### Navigation Nodes (Level 2)
 
 | Type | Icon | Purpose |
 |------|------|---------|
-| Flow Block | ▣ | Represents a flow within a domain (double-click to drill in) |
+| Flow Block | ▣ | Represents a traditional flow (double-click to drill in) |
+| Agent Flow Block | ▣⊛ | Represents an agent flow (shows agent badge, double-click to drill in) |
+| Agent Group Boundary | ╔[⊛]╗ | Visual boundary grouping agents that share memory/supervisor |
+| Supervisor Arrow | ──⊛▶ | Orchestrator → managed agent relationship |
+| Handoff Arrow | ⇄──▶ | Agent-to-agent handoff with mode label (transfer/consult/collaborate) |
 | Portal | ╔══╗ | Link to another domain (double-click to jump) |
 | Event Arrow | ──▶ | Async event connection between flows or to portals |
 
@@ -354,6 +367,8 @@ Levels 1 and 2 are **derived views** — their content comes from spec files. Us
 3. **Shared Data Models:** `$ref:/schemas/SchemaName` references
 4. **API Contracts:** Internal APIs connecting domains
 5. **Agent Delegation:** Router or Agent Loop hands off to sub-agent flows
+6. **Orchestrator → Agent:** Supervisor arrow on Level 2, orchestrator node on Level 3
+7. **Agent Handoff:** Formal context transfer with handoff protocol (transfer/consult/collaborate)
 
 ---
 
@@ -999,68 +1014,773 @@ metadata:
   completeness: 100
 ```
 
-### Multi-Agent Orchestration
+### Orchestration Node Specifications
 
-For complex systems, multiple agents can be composed:
+#### Orchestrator Node (⊛)
+
+A supervisor that manages multiple agents. It has its own reasoning model and decides which agent to activate, monitors their progress, and can intervene.
+
+```yaml
+- id: support_orchestrator
+  type: orchestrator
+  spec:
+    strategy: supervisor             # supervisor | round_robin | broadcast | consensus
+
+    # Supervisor's own reasoning model
+    model: claude-sonnet-4-5-20250929
+    supervisor_prompt: |
+      You manage a team of support agents. Given the user's message
+      and context, decide which specialist to route to. Monitor their
+      progress and intervene if they get stuck.
+
+    # Managed agents
+    agents:
+      - id: billing_agent
+        flow: billing-agent
+        domain: support
+        specialization: "Billing, payments, invoices"
+        priority: 1                  # Lower = higher priority when multiple match
+      - id: technical_agent
+        flow: technical-agent
+        domain: support
+        specialization: "Contract analysis, integrations, API questions"
+        priority: 2
+      - id: general_agent
+        flow: general-agent
+        domain: support
+        specialization: "Account questions, how-to, general inquiries"
+        priority: 3
+
+    # How the orchestrator picks an agent
+    routing:
+      primary: smart_router          # Node ID of the Smart Router
+      fallback_chain:                # If primary fails, try these in order
+        - general_agent
+        - human_escalation
+
+    # Shared memory accessible by all managed agents
+    shared_memory:
+      - name: conversation
+        type: conversation_history
+        access: read_write           # All agents see same conversation
+      - name: customer_context
+        type: key_value
+        access: read_only            # Agents can read, orchestrator writes
+        fields: [customer_id, tier, recent_tickets, satisfaction_score]
+
+    # Supervision rules
+    supervision:
+      monitor_iterations: true
+      monitor_tool_calls: true
+      monitor_confidence: true
+
+      intervene_on:
+        - condition: agent_iterations_exceeded
+          threshold: 5
+          action: reassign
+          target: next_in_priority
+
+        - condition: confidence_below
+          threshold: 0.3
+          action: add_instructions
+          instructions_prompt: |
+            The agent seems unsure. Provide additional context or
+            suggest a different approach.
+
+        - condition: customer_sentiment
+          sentiment: frustrated
+          action: escalate_to_human
+
+        - condition: agent_error
+          action: retry_with_different_agent
+          max_retries: 1
+
+        - condition: timeout
+          threshold: 60              # seconds
+          action: escalate_to_human
+
+    # How to merge results when multiple agents contribute
+    result_merge:
+      strategy: last_wins            # last_wins | best_of | combine | supervisor_picks
+      # best_of: supervisor evaluates all agent responses and picks best
+      # combine: supervisor synthesizes a combined response
+      # supervisor_picks: supervisor sees all results and writes final response
+
+  connections:
+    resolved: output_guardrail
+    escalated: human_gate
+    error: error_response
+```
+
+**Orchestration Strategies:**
+
+| Strategy | How it works | Use when |
+|----------|-------------|----------|
+| **supervisor** | Orchestrator's LLM reasons about which agent to activate next, monitors, and can intervene | Complex routing with dynamic decisions |
+| **round_robin** | Distribute requests evenly across agents | Load balancing homogeneous agents |
+| **broadcast** | Send to all agents simultaneously, merge results | Need multiple perspectives (consensus, fact-checking) |
+| **consensus** | All agents respond, orchestrator's LLM picks best or synthesizes | High-stakes decisions requiring agreement |
+
+#### Smart Router Node (◇◇+)
+
+Enhanced router with rule-based routing, LLM fallback, policies, and A/B testing. Replaces the basic Router node for orchestration scenarios.
+
+```yaml
+- id: smart_router
+  type: smart_router
+  spec:
+    # ── Rule-based routes (evaluated first, fast, no LLM call) ──
+    rules:
+      - id: enterprise_route
+        condition: "$.customer.tier == 'enterprise'"
+        route: enterprise_agent
+        priority: 1                  # Lower = evaluated first
+
+      - id: cancellation_route
+        condition: "$.intent == 'cancel' or $.message icontains 'cancel'"
+        route: retention_agent
+        priority: 2
+
+      - id: billing_keywords
+        condition: "$.message icontains 'invoice' or $.message icontains 'payment' or $.message icontains 'charge'"
+        route: billing_agent
+        priority: 3
+
+      - id: urgent_route
+        condition: "$.customer.open_tickets > 3 and $.customer.satisfaction_score < 3"
+        route: human_escalation
+        priority: 0                  # Highest priority
+
+    # ── LLM-based classification (when no rule matches) ──
+    llm_routing:
+      enabled: true
+      model: claude-haiku-4-5-20251001
+      routing_prompt: |
+        Classify the customer's intent into one of these categories:
+        - billing: Payment, invoices, subscription, pricing
+        - technical: Contract analysis, integrations, API, data
+        - general: Account settings, features, how-to, feedback
+        - escalation: Legal threats, data deletion, angry customer
+
+        Customer tier: {{$.customer.tier}}
+        Recent tickets: {{$.customer.open_tickets}}
+        Message: {{$.message}}
+
+        Respond with JSON: {"route": "<category>", "confidence": <0-1>}
+      confidence_threshold: 0.7
+      temperature: 0.0
+
+      routes:
+        billing: billing_agent
+        technical: technical_agent
+        general: general_agent
+        escalation: human_escalation
+
+    # ── Fallback chain (when LLM confidence < threshold or error) ──
+    fallback_chain:
+      - general_agent
+      - human_escalation
+
+    # ── Routing policies ──
+    policies:
+      retry:
+        max_attempts: 2
+        on_failure: next_in_fallback_chain
+        delay_ms: 0
+
+      timeout:
+        per_route: 30                # seconds per agent attempt
+        total: 120                   # seconds total across all retries
+        action: next_in_fallback_chain
+
+      circuit_breaker:
+        enabled: true
+        failure_threshold: 3         # Consecutive failures before opening
+        recovery_time: 60            # Seconds before trying again
+        half_open_requests: 1        # Test requests when recovering
+        on_open: next_in_fallback_chain
+
+    # ── A/B testing ──
+    ab_testing:
+      enabled: true
+      experiments:
+        - name: new_billing_agent_v2
+          route: billing_agent_v2
+          percentage: 20             # 20% of billing traffic
+          original_route: billing_agent
+          metrics:
+            - resolution_rate
+            - customer_satisfaction
+            - average_iterations
+
+        - name: fast_general_model
+          route: general_agent_fast  # Same agent, different model
+          percentage: 10
+          original_route: general_agent
+
+    # ── Context-aware routing ──
+    context_routing:
+      enabled: true
+      rules:
+        # If customer was recently talking to billing agent, route back there
+        - condition: "$.session.last_agent == 'billing_agent' and $.session.turns_since < 3"
+          route: billing_agent
+          reason: "Continue with same agent for conversation continuity"
+
+        # If this is a follow-up to an escalated conversation
+        - condition: "$.session.was_escalated == true"
+          route: human_escalation
+          reason: "Previously escalated, go directly to human"
+
+  connections:
+    billing_agent: billing_agent_flow
+    technical_agent: technical_agent_flow
+    general_agent: general_agent_flow
+    enterprise_agent: enterprise_agent_flow
+    retention_agent: retention_agent_flow
+    human_escalation: escalation_gate
+    billing_agent_v2: billing_agent_v2_flow
+    general_agent_fast: general_agent_fast_flow
+```
+
+#### Handoff Node (⇄)
+
+Formal protocol for transferring context between agents.
+
+```yaml
+- id: handoff_to_specialist
+  type: handoff
+  spec:
+    # ── Handoff Mode ──
+    mode: consult                    # transfer | consult | collaborate
+
+    # transfer: Source agent stops, target takes over completely
+    # consult:  Source agent pauses, target answers, result returns to source
+    # collaborate: Both agents active, shared context, orchestrator merges
+
+    # ── Target ──
+    target:
+      flow: technical-agent
+      domain: support
+
+    # ── Context Transfer ──
+    context_transfer:
+      # What gets passed to the target agent
+      include:
+        - type: conversation_summary
+          generator: llm              # LLM generates summary (not raw history)
+          model: claude-haiku-4-5-20251001
+          max_tokens: 500
+          prompt: |
+            Summarize this conversation for a specialist agent.
+            Focus on: what the customer needs, what's been tried,
+            and any relevant account details.
+
+        - type: structured_data
+          fields:
+            customer_id: "$.customer.id"
+            customer_tier: "$.customer.tier"
+            original_intent: "$.routing.classified_intent"
+            attempted_solutions: "$.agent.tool_calls_summary"
+
+        - type: task_description
+          content: |
+            The customer needs help with {{$.routing.classified_intent}}.
+            Previous agent could not resolve. Please assist.
+
+      exclude:
+        - internal_reasoning          # Don't share source agent's scratchpad
+        - raw_tool_results            # Only send summaries
+        - system_prompts              # Each agent has its own
+
+      max_context_tokens: 2000       # Hard limit on transferred context
+
+    # ── What happens when target finishes ──
+    on_complete:
+      return_to: source_agent        # source_agent | orchestrator | terminal
+      merge_strategy: append         # append | replace | summarize
+
+      # For 'summarize': LLM summarizes the specialist's work
+      summarize_prompt: |
+        Summarize what the specialist found and recommended.
+        Keep it concise for the customer.
+
+    # ── Failure handling ──
+    on_failure:
+      action: return_with_error      # return_with_error | retry | escalate
+      fallback: escalate_to_human
+      timeout: 60                    # seconds
+
+    # ── Handoff notification (optional) ──
+    notify_customer: true
+    notification_message: |
+      I'm connecting you with a specialist who can better help
+      with your {{$.routing.classified_intent}} question.
+
+  connections:
+    complete: return_to_orchestrator
+    failure: escalation_gate
+    timeout: timeout_response
+```
+
+**Handoff Modes:**
+
+| Mode | Source Agent | Target Agent | Context Flow | Use When |
+|------|-------------|-------------|--------------|----------|
+| **transfer** | Stops completely | Takes over | One-way: source → target | Routing to specialist, escalation |
+| **consult** | Pauses, waits | Answers specific question | Round-trip: source → target → source | Need expert opinion, then continue |
+| **collaborate** | Stays active | Also active | Bidirectional via shared memory | Complex tasks needing multiple specialists |
+
+#### Agent Group Node ([⊛])
+
+A container that groups agents sharing memory and coordination policy. On Level 2, rendered as a visual boundary around grouped agent flows.
+
+```yaml
+- id: support_team
+  type: agent_group
+  spec:
+    name: Support Team
+    description: Customer support agents working together
+
+    # Agents in this group
+    members:
+      - flow: billing-agent
+      - flow: technical-agent
+      - flow: general-agent
+      - flow: retention-agent
+
+    # Shared resources within the group
+    shared_memory:
+      - name: conversation
+        type: conversation_history
+        access: read_write
+        description: "All agents see the same conversation thread"
+      - name: customer_context
+        type: key_value
+        access: read_only
+        fields: [customer_id, tier, history_summary]
+      - name: team_knowledge
+        type: vector_store
+        provider: pgvector
+        access: read_only
+        description: "Shared knowledge base for all support agents"
+
+    # Coordination policy
+    coordination:
+      # How agents communicate within the group
+      communication: via_orchestrator  # via_orchestrator | direct | blackboard
+
+      # via_orchestrator: All inter-agent communication goes through the orchestrator
+      # direct: Agents can call each other via handoff nodes
+      # blackboard: Agents read/write to a shared blackboard (shared_memory)
+
+      # Concurrency rules
+      concurrency:
+        max_active_agents: 1         # How many agents can be active at once
+        # 1 = sequential (one at a time, typical for chat)
+        # N = parallel (multiple working simultaneously, for batch/analysis)
+
+      # Agent selection when multiple could handle a task
+      selection:
+        strategy: router_first       # router_first | round_robin | least_busy | random
+        sticky_session: true         # Keep same agent for a conversation if possible
+        sticky_timeout: 300          # Seconds before sticky session expires
+
+    # Group-level guardrails (applied to all agents in group)
+    guardrails:
+      input:
+        - type: content_filter
+          block_categories: [hate_speech, illegal_activity]
+      output:
+        - type: tone
+          required: professional
+
+    # Group-level metrics (for A/B testing, monitoring)
+    metrics:
+      track:
+        - resolution_rate
+        - average_iterations
+        - handoff_count
+        - escalation_rate
+        - customer_satisfaction
+```
+
+### Orchestration Visualization (Level 2)
+
+When a domain contains orchestrated agents, the Level 2 Domain Map shows the relationships:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ DOMAIN MAP: support                                              │
 │                                                                   │
-│   ┌──────────────────┐                                           │
-│   │ customer-support  │ ← Main agent (type: agent)               │
-│   │ agent (Router)    │                                           │
-│   └──┬───────┬────┬──┘                                           │
-│      │       │    │                                               │
-│      ▼       ▼    ▼                                               │
-│   ┌──────┐ ┌──────┐ ┌──────┐                                    │
-│   │billing│ │tech  │ │general│  ← Sub-agents (type: agent)       │
-│   │agent  │ │agent │ │agent  │                                    │
-│   └──┬───┘ └──┬───┘ └──────┘                                    │
-│      │        │                                                   │
-│      │        ▼                                                   │
-│      │     ╔════════════╗                                        │
-│      │     ║ ➜ analysis ║  ← Portal (sub-agent delegates)       │
-│      │     ╚════════════╝                                        │
-│      ▼                                                            │
-│   ╔════════════╗                                                 │
-│   ║ ➜ billing  ║  ← Portal to billing domain                    │
-│   ╚════════════╝                                                 │
+│   ┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐         │
+│   │  [⊛] Support Team (Agent Group)                   │         │
+│   │                                                    │         │
+│   │   ⊛ Support Orchestrator                          │         │
+│   │   │ (supervisor)                                   │         │
+│   │   │                                                │         │
+│   │   ├──⊛▶── ┌──────────┐                           │         │
+│   │   │        │▣⊛ billing │                           │         │
+│   │   │        │   agent   │ ─── ⇄ consult ──┐       │         │
+│   │   │        └──────────┘                   │       │         │
+│   │   │                                       ▼       │         │
+│   │   ├──⊛▶── ┌──────────┐           ┌──────────┐   │         │
+│   │   │        │▣⊛ tech    │ ◀── ⇄ ──│▣⊛ general │   │         │
+│   │   │        │   agent   │ consult  │   agent   │   │         │
+│   │   │        └──────────┘           └──────────┘   │         │
+│   │   │                                               │         │
+│   │   └──⊛▶── ┌──────────┐                           │         │
+│   │            │▣⊛retention│                           │         │
+│   │            │   agent   │                           │         │
+│   │            └──────────┘                           │         │
+│   │                                                    │         │
+│   │   ◈ Shared: conversation, customer_context        │         │
+│   └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘         │
+│                    │                                              │
+│                    │ ⇄ transfer (escalation)                     │
+│                    ▼                                              │
+│              ✋ Human Gate                                        │
+│                                                                   │
+│   ╔════════════╗     ╔════════════╗                              │
+│   ║ ➜ billing  ║     ║ ➜ analysis ║                              │
+│   ╚════════════╝     ╚════════════╝                              │
 │                                                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Agent delegation patterns:
+**Level 2 orchestration elements:**
 
-| Pattern | Description | Spec Mechanism |
-|---------|-------------|----------------|
-| **Router → Sub-agents** | Classify intent, delegate to specialist | Router node with connections to sub-agent flows |
-| **Agent → Agent** | One agent calls another as a tool | Tool with `implementation.type: sub_flow` |
-| **Agent → Human → Agent** | Escalate, get instructions, continue | Human Gate node with reject → back to agent loop |
-| **Parallel Agents** | Multiple agents work simultaneously | Parallel node containing agent sub-flows |
-| **Pipeline** | Chain agents: extract → analyze → summarize | Flows connected via events or sub-flow nodes |
+| Element | Visual | Description |
+|---------|--------|-------------|
+| Agent Group boundary | Dashed rectangle | Groups agents sharing memory/supervisor |
+| Orchestrator | ⊛ block at top of group | The supervisor agent managing the group |
+| Supervisor arrow (⊛▶) | Solid arrow from orchestrator | Shows which agents are managed |
+| Handoff arrow (⇄) | Bidirectional dashed arrow | Shows agent-to-agent handoff with mode label |
+| Agent flow block (▣⊛) | Block with agent badge | Distinguishes agent flows from traditional flows |
+| Shared memory indicator (◈) | Badge at bottom of group | Shows what memory is shared within the group |
+
+### Complete Orchestration Flow Example
 
 ```yaml
-# Tool that delegates to another agent
-- id: analyze_contract
-  type: tool
-  spec:
-    name: analyze_contract
-    description: "Delegate contract analysis to the analysis agent"
-    parameters:
-      contract_id: { type: string, required: true }
-      analysis_type: { type: string, enum: [obligations, risks, terms] }
-    implementation:
-      type: sub_flow               # Calls another agent flow
-      flow_id: contract-analysis-agent
-      domain: analysis
-      async: false                 # Wait for result (sync) or fire-and-forget (async)
+# specs/domains/support/flows/support-orchestration.yaml
+
+flow:
+  id: support-orchestration
+  name: Support Team Orchestration
+  type: agent                        # Agent flow type
+  domain: support
+  description: >
+    Orchestrated customer support with smart routing,
+    specialist agents, handoffs, and human escalation.
+
+trigger:
+  type: http
+  method: POST
+  path: /api/v1/support/chat
+  auth: required
+
+# ── Agent Group Definition ──
+agent_group:
+  id: support_team
+  name: Support Team
+  shared_memory:
+    - name: conversation
+      type: conversation_history
+      access: read_write
+    - name: customer_context
+      type: key_value
+      access: read_only
+      load_on_start: [customer_profile, recent_tickets, satisfaction_score]
+  coordination:
+    communication: via_orchestrator
+    concurrency:
+      max_active_agents: 1
+    selection:
+      sticky_session: true
+      sticky_timeout: 300
+
+# ── Nodes ──
+nodes:
+  # Input guardrail
+  - id: input_guard
+    type: guardrail
+    spec:
+      position: input
+      checks:
+        - type: content_filter
+          block_categories: [hate_speech, illegal_activity]
+          action: block
+        - type: pii_detection
+          detect: [ssn, credit_card]
+          action: mask
+        - type: prompt_injection
+          enabled: true
+          action: block
+    connections:
+      pass: orchestrator
+      block: blocked_response
+
+  # Orchestrator — the brain
+  - id: orchestrator
+    type: orchestrator
+    spec:
+      strategy: supervisor
+      model: claude-sonnet-4-5-20250929
+      supervisor_prompt: |
+        You manage a customer support team. Route requests to the
+        right specialist. Monitor their work. Intervene if needed.
+
+      agents:
+        - id: billing_agent
+          flow: billing-agent
+          specialization: "Billing, payments, invoices, subscriptions"
+          priority: 1
+        - id: technical_agent
+          flow: technical-agent
+          specialization: "Contracts, obligations, integrations, API"
+          priority: 2
+        - id: general_agent
+          flow: general-agent
+          specialization: "Account settings, features, how-to"
+          priority: 3
+        - id: retention_agent
+          flow: retention-agent
+          specialization: "Cancellations, complaints, win-back"
+          priority: 1
+
+      routing:
+        primary: smart_router
+        fallback_chain: [general_agent, human_gate]
+
+      supervision:
+        monitor_iterations: true
+        intervene_on:
+          - condition: agent_iterations_exceeded
+            threshold: 5
+            action: reassign
+          - condition: customer_sentiment
+            sentiment: frustrated
+            action: escalate_to_human
+          - condition: timeout
+            threshold: 60
+            action: escalate_to_human
+
+      result_merge:
+        strategy: last_wins
+
+    connections:
+      resolved: output_guard
+      escalated: human_gate
+      error: error_response
+
+  # Smart Router — decides which agent handles the request
+  - id: smart_router
+    type: smart_router
+    spec:
+      rules:
+        - id: urgent
+          condition: "$.customer.open_tickets > 3 and $.customer.satisfaction_score < 3"
+          route: human_gate
+          priority: 0
+        - id: enterprise
+          condition: "$.customer.tier == 'enterprise'"
+          route: technical_agent
+          priority: 1
+        - id: cancel_intent
+          condition: "$.message icontains 'cancel' or $.message icontains 'downgrade'"
+          route: retention_agent
+          priority: 2
+        - id: billing_keywords
+          condition: "$.message icontains 'invoice' or $.message icontains 'payment'"
+          route: billing_agent
+          priority: 3
+
+      llm_routing:
+        enabled: true
+        model: claude-haiku-4-5-20251001
+        confidence_threshold: 0.7
+        routes:
+          billing: billing_agent
+          technical: technical_agent
+          general: general_agent
+          escalation: human_gate
+
+      fallback_chain: [general_agent]
+
+      policies:
+        timeout:
+          per_route: 30
+          total: 120
+        circuit_breaker:
+          enabled: true
+          failure_threshold: 3
+          recovery_time: 60
+
+      context_routing:
+        enabled: true
+        rules:
+          - condition: "$.session.last_agent != null and $.session.turns_since < 3"
+            route: "$.session.last_agent"
+            reason: "Conversation continuity"
+
+      ab_testing:
+        enabled: false
+
+  # Handoff — when billing agent needs technical help
+  - id: billing_to_tech_handoff
+    type: handoff
+    spec:
+      mode: consult
+      target:
+        flow: technical-agent
+        domain: support
+      context_transfer:
+        include:
+          - type: conversation_summary
+            generator: llm
+            model: claude-haiku-4-5-20251001
+            max_tokens: 500
+          - type: structured_data
+            fields:
+              customer_id: "$.customer.id"
+              billing_context: "$.agent.findings"
+        max_context_tokens: 2000
+      on_complete:
+        return_to: source_agent
+        merge_strategy: append
+      on_failure:
+        action: return_with_error
+        timeout: 60
+
+  # Human Gate
+  - id: human_gate
+    type: human_gate
+    spec:
+      notification:
+        channels:
+          - type: slack
+            channel: "#support-escalations"
+          - type: email
+            to: "support-leads@obligo.io"
+      approval_options:
+        - id: take_over
+          label: "Take Over"
+          description: "Human agent takes the conversation"
+        - id: send_back
+          label: "Send Back"
+          description: "Return to AI with instructions"
+          requires_input: true
+        - id: resolve
+          label: "Resolve"
+          description: "Mark as resolved"
+          requires_input: true
+      timeout:
+        duration: 300
+        action: auto_escalate
+      context_for_human:
+        - conversation_history
+        - customer_account
+        - agent_reasoning
+        - routing_decisions
+    connections:
+      take_over: human_takeover_terminal
+      send_back: orchestrator
+      resolve: resolved_terminal
+      timeout: timeout_terminal
+
+  # Output guardrail
+  - id: output_guard
+    type: guardrail
+    spec:
+      position: output
+      checks:
+        - type: tone
+          required: professional
+          action: rewrite
+        - type: no_hallucinated_urls
+          action: block
+        - type: schema_validation
+          schema:
+            type: object
+            required: [message]
+            properties:
+              message: { type: string, max_length: 2000 }
+    connections:
+      pass: resolved_terminal
+      block: fallback_terminal
+
+  # Terminals
+  - id: resolved_terminal
+    type: terminal
+    spec:
+      status: 200
+      body:
+        message: "$.agent_response"
+        conversation_id: "$.conversation_id"
+        handled_by: "$.routing.agent_id"
+
+  - id: blocked_response
+    type: terminal
+    spec:
+      status: 400
+      body: { error: "Message could not be processed", code: CONTENT_BLOCKED }
+
+  - id: error_response
+    type: terminal
+    spec:
+      status: 500
+      body: { error: "An error occurred", code: AGENT_ERROR }
+
+  - id: human_takeover_terminal
+    type: terminal
+    spec:
+      status: 200
+      body:
+        message: "You've been connected with a human agent."
+        conversation_id: "$.conversation_id"
+
+  - id: timeout_terminal
+    type: terminal
+    spec:
+      status: 504
+      body: { error: "Request timed out", code: ESCALATION_TIMEOUT }
+
+  - id: fallback_terminal
+    type: terminal
+    spec:
+      status: 200
+      body:
+        message: "I apologize, let me connect you with a team member who can help."
+        conversation_id: "$.conversation_id"
+
+metadata:
+  created_by: murat
+  created_at: 2025-02-13
+  completeness: 100
 ```
 
-### Agent Error Codes
+### Orchestration Patterns Summary
+
+| Pattern | Nodes Used | Level 2 Visual | Description |
+|---------|-----------|----------------|-------------|
+| **Supervisor** | Orchestrator (⊛) + Agent Group ([⊛]) | Group boundary + supervisor arrows | One orchestrator monitors and manages multiple agents |
+| **Router → Specialists** | Smart Router (◇◇+) → Agent flows | Router block → flow blocks | Classify then delegate to best agent |
+| **Consult** | Handoff (⇄) in consult mode | Bidirectional dashed arrow | Agent A asks Agent B, gets answer back |
+| **Transfer** | Handoff (⇄) in transfer mode | One-way dashed arrow | Agent A hands off completely to Agent B |
+| **Collaborate** | Handoff (⇄) in collaborate mode + shared memory | Bidirectional arrow + shared memory badge | Both agents active with shared context |
+| **Pipeline** | Event/sub-flow connections | Sequential flow blocks | Agent A → Agent B → Agent C |
+| **Broadcast** | Orchestrator (strategy: broadcast) | Multiple supervisor arrows | Send to all, merge results |
+| **Consensus** | Orchestrator (strategy: consensus) | Multiple supervisor arrows + merge indicator | All respond, supervisor picks best |
+| **Fallback Chain** | Smart Router fallback_chain | Dashed arrows labeled "fallback" | Try A, if fails try B, then C |
+| **A/B Testing** | Smart Router ab_testing | Split arrow with percentage labels | Route N% to experimental agent |
+| **Human-in-the-Loop** | Human Gate (✋) | Gate block with approval options | Pause for human decision |
+| **Circuit Breaker** | Smart Router policies.circuit_breaker | Status indicator on route arrows | Stop routing to failing agent |
+
+### Agent & Orchestration Error Codes
 
 ```yaml
 # Add to specs/shared/errors.yaml
+
 agent:
   AGENT_ERROR:
     http_status: 500
@@ -1093,6 +1813,47 @@ agent:
     http_status: 500
     message_template: "Intent router could not classify request"
     log_level: WARNING
+
+orchestration:
+  ORCHESTRATOR_ERROR:
+    http_status: 500
+    message_template: "Orchestrator failed: {reason}"
+    log_level: ERROR
+
+  AGENT_REASSIGNED:
+    http_status: 200
+    message_template: "Request reassigned from {from_agent} to {to_agent}"
+    log_level: INFO
+
+  HANDOFF_FAILED:
+    http_status: 500
+    message_template: "Handoff to {target_agent} failed: {reason}"
+    log_level: ERROR
+
+  HANDOFF_TIMEOUT:
+    http_status: 504
+    message_template: "Handoff to {target_agent} timed out after {timeout}s"
+    log_level: WARNING
+
+  CIRCUIT_BREAKER_OPEN:
+    http_status: 503
+    message_template: "Route to {agent} is temporarily unavailable (circuit open)"
+    log_level: WARNING
+
+  ALL_ROUTES_EXHAUSTED:
+    http_status: 503
+    message_template: "All routes exhausted including fallback chain"
+    log_level: ERROR
+
+  CONTEXT_TRANSFER_FAILED:
+    http_status: 500
+    message_template: "Failed to transfer context to {target_agent}: {reason}"
+    log_level: ERROR
+
+  SUPERVISION_INTERVENTION:
+    http_status: 200
+    message_template: "Supervisor intervened: {intervention_reason}"
+    log_level: INFO
 ```
 
 ---
@@ -2358,11 +3119,13 @@ Public marketplace:
 - Breadcrumb navigation between levels
 - Canvas + 5 basic node types for traditional flows (Level 3)
 - Agent flow support: Agent Loop, Tool, LLM Call, Memory, Guardrail, Human Gate, Router nodes
+- Orchestration support: Orchestrator, Smart Router, Handoff, Agent Group nodes
 - Agent-centric canvas layout for agent flows
+- Orchestration visualization on Level 2 (supervisor arrows, handoff arrows, group boundaries)
 - Auto-generated System Map and Domain Map (Levels 1-2)
 - Portal nodes for cross-domain navigation
-- Spec panel (basic fields + agent-specific panels)
-- YAML export (both traditional and agent flow formats)
+- Spec panel (basic fields + agent-specific + orchestration panels)
+- YAML export (traditional, agent, and orchestration flow formats)
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage

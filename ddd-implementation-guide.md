@@ -98,12 +98,17 @@ ddd-tool/
 │   │   │   │   ├── DecisionNode.tsx
 │   │   │   │   ├── TerminalNode.tsx
 │   │   │   │   └── SubFlowNode.tsx
-│   │   │   └── agent-nodes/        # Agent flow nodes
-│   │   │       ├── AgentLoopBlock.tsx
-│   │   │       ├── GuardrailBlock.tsx
-│   │   │       ├── HumanGateBlock.tsx
-│   │   │       ├── ToolPalette.tsx
-│   │   │       └── MemoryBlock.tsx
+│   │   │   ├── agent-nodes/        # Agent flow nodes
+│   │   │   │   ├── AgentLoopBlock.tsx
+│   │   │   │   ├── GuardrailBlock.tsx
+│   │   │   │   ├── HumanGateBlock.tsx
+│   │   │   │   ├── ToolPalette.tsx
+│   │   │   │   └── MemoryBlock.tsx
+│   │   │   └── orchestration-nodes/ # Orchestration nodes
+│   │   │       ├── OrchestratorBlock.tsx
+│   │   │       ├── SmartRouterBlock.tsx
+│   │   │       ├── HandoffBlock.tsx
+│   │   │       └── AgentGroupBoundary.tsx
 │   │   ├── SpecPanel/
 │   │   │   ├── SpecPanel.tsx
 │   │   │   ├── TriggerSpec.tsx
@@ -115,8 +120,12 @@ ddd-tool/
 │   │   │   ├── ToolSpec.tsx         # Tool definition editor
 │   │   │   ├── GuardrailSpec.tsx    # Guardrail checks editor
 │   │   │   ├── HumanGateSpec.tsx    # Human gate config editor
-│   │   │   ├── RouterSpec.tsx       # Router config editor
-│   │   │   └── LLMCallSpec.tsx      # LLM call config editor
+│   │   │   ├── RouterSpec.tsx       # Basic router config editor
+│   │   │   ├── LLMCallSpec.tsx      # LLM call config editor
+│   │   │   ├── OrchestratorSpec.tsx # Orchestrator config (strategy, agents, supervision)
+│   │   │   ├── SmartRouterSpec.tsx  # Smart router (rules, LLM, policies, A/B)
+│   │   │   ├── HandoffSpec.tsx      # Handoff config (mode, context, failure)
+│   │   │   └── AgentGroupSpec.tsx   # Agent group (members, shared memory, coordination)
 │   │   ├── Sidebar/
 │   │   │   ├── FlowList.tsx
 │   │   │   ├── NodePalette.tsx
@@ -491,12 +500,195 @@ export interface RouterNode extends BaseNode {
 
 export type AgentNode = LLMCallNode | AgentLoopNode | ToolNode | MemoryNode | GuardrailNode | HumanGateNode | RouterNode;
 
-export type AnyNode = FlowNode | AgentNode;
+// ─── Orchestration Node Types ───
+
+export type OrchestrationNodeType = 'orchestrator' | 'smart_router' | 'handoff' | 'agent_group';
+
+export interface OrchestratorAgent {
+  id: string;
+  flow: string;
+  domain?: string;
+  specialization: string;
+  priority: number;
+}
+
+export interface SupervisionRule {
+  condition: 'agent_iterations_exceeded' | 'confidence_below' | 'customer_sentiment' | 'agent_error' | 'timeout';
+  threshold?: number;
+  sentiment?: string;
+  action: 'reassign' | 'add_instructions' | 'escalate_to_human' | 'retry_with_different_agent';
+  target?: string;
+  instructions_prompt?: string;
+  max_retries?: number;
+}
+
+export interface OrchestratorNode extends BaseNode {
+  type: 'orchestrator';
+  spec: {
+    strategy: 'supervisor' | 'round_robin' | 'broadcast' | 'consensus';
+    model: string;
+    supervisor_prompt: string;
+    agents: OrchestratorAgent[];
+    routing: {
+      primary: string;               // Node ID of the Smart Router
+      fallback_chain: string[];      // Agent IDs to try in order
+    };
+    shared_memory?: Array<{
+      name: string;
+      type: string;
+      access: 'read_write' | 'read_only';
+      fields?: string[];
+    }>;
+    supervision: {
+      monitor_iterations: boolean;
+      monitor_tool_calls?: boolean;
+      monitor_confidence?: boolean;
+      intervene_on: SupervisionRule[];
+    };
+    result_merge: {
+      strategy: 'last_wins' | 'best_of' | 'combine' | 'supervisor_picks';
+    };
+  };
+}
+
+export interface SmartRouterRule {
+  id: string;
+  condition: string;                 // Expression evaluated against context
+  route: string;                     // Agent ID or connection name
+  priority: number;
+}
+
+export interface SmartRouterNode extends BaseNode {
+  type: 'smart_router';
+  spec: {
+    rules: SmartRouterRule[];
+    llm_routing: {
+      enabled: boolean;
+      model: string;
+      routing_prompt: string;
+      confidence_threshold: number;
+      temperature?: number;
+      routes: Record<string, string>;  // label → agent ID
+    };
+    fallback_chain: string[];
+    policies: {
+      retry?: {
+        max_attempts: number;
+        on_failure: 'next_in_fallback_chain' | 'error';
+        delay_ms?: number;
+      };
+      timeout?: {
+        per_route: number;
+        total: number;
+        action: 'next_in_fallback_chain' | 'error';
+      };
+      circuit_breaker?: {
+        enabled: boolean;
+        failure_threshold: number;
+        recovery_time: number;
+        half_open_requests?: number;
+        on_open: 'next_in_fallback_chain' | 'error';
+      };
+    };
+    ab_testing?: {
+      enabled: boolean;
+      experiments: Array<{
+        name: string;
+        route: string;
+        percentage: number;
+        original_route: string;
+        metrics?: string[];
+      }>;
+    };
+    context_routing?: {
+      enabled: boolean;
+      rules: Array<{
+        condition: string;
+        route: string;
+        reason: string;
+      }>;
+    };
+  };
+}
+
+export interface HandoffNode extends BaseNode {
+  type: 'handoff';
+  spec: {
+    mode: 'transfer' | 'consult' | 'collaborate';
+    target: {
+      flow: string;
+      domain: string;
+    };
+    context_transfer: {
+      include: Array<{
+        type: 'conversation_summary' | 'structured_data' | 'task_description';
+        [key: string]: any;
+      }>;
+      exclude?: string[];
+      max_context_tokens: number;
+    };
+    on_complete: {
+      return_to: 'source_agent' | 'orchestrator' | 'terminal';
+      merge_strategy: 'append' | 'replace' | 'summarize';
+      summarize_prompt?: string;
+    };
+    on_failure: {
+      action: 'return_with_error' | 'retry' | 'escalate';
+      fallback?: string;
+      timeout: number;
+    };
+    notify_customer?: boolean;
+    notification_message?: string;
+  };
+}
+
+export interface AgentGroupMember {
+  flow: string;
+  domain?: string;
+}
+
+export interface AgentGroupNode extends BaseNode {
+  type: 'agent_group';
+  spec: {
+    name: string;
+    description: string;
+    members: AgentGroupMember[];
+    shared_memory: Array<{
+      name: string;
+      type: string;
+      access: 'read_write' | 'read_only';
+      fields?: string[];
+      provider?: string;
+    }>;
+    coordination: {
+      communication: 'via_orchestrator' | 'direct' | 'blackboard';
+      concurrency: {
+        max_active_agents: number;
+      };
+      selection: {
+        strategy: 'router_first' | 'round_robin' | 'least_busy' | 'random';
+        sticky_session: boolean;
+        sticky_timeout?: number;
+      };
+    };
+    guardrails?: {
+      input: Array<Record<string, any>>;
+      output: Array<Record<string, any>>;
+    };
+    metrics?: {
+      track: string[];
+    };
+  };
+}
+
+export type OrchestrationNode = OrchestratorNode | SmartRouterNode | HandoffNode | AgentGroupNode;
+
+export type AnyNode = FlowNode | AgentNode | OrchestrationNode;
 ```
 
 **File: `src/types/flow.ts`**
 ```typescript
-import { FlowNode, AgentNode, AnyNode, ToolDefinition } from './node';
+import { FlowNode, AgentNode, OrchestrationNode, AnyNode, ToolDefinition } from './node';
 
 export type FlowType = 'traditional' | 'agent';
 
@@ -2208,6 +2400,577 @@ export function AgentLoopSpec({ spec, onChange }: AgentLoopSpecProps) {
 }
 ```
 
+### Week 1.75: Orchestration Components
+
+#### Orchestration Canvas
+
+The orchestration nodes extend the AgentCanvas with supervisor topology rendering. The `AgentCanvas` detects orchestration nodes and renders them accordingly.
+
+**File: `src/components/Canvas/orchestration-nodes/OrchestratorBlock.tsx`**
+```typescript
+import React from 'react';
+import { OrchestratorNode } from '../../../types/node';
+import { Network, Eye } from 'lucide-react';
+
+interface OrchestratorBlockProps {
+  node: OrchestratorNode;
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+export function OrchestratorBlock({ node, isSelected, onSelect }: OrchestratorBlockProps) {
+  const { spec } = node;
+  const strategyLabels = {
+    supervisor: 'Supervisor',
+    round_robin: 'Round Robin',
+    broadcast: 'Broadcast',
+    consensus: 'Consensus',
+  };
+
+  return (
+    <div
+      className={`
+        orchestrator-block border-2 rounded-xl p-6 min-w-[450px] cursor-pointer
+        ${isSelected ? 'border-indigo-400 bg-gray-800' : 'border-indigo-700 bg-gray-900'}
+      `}
+      onClick={onSelect}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-4">
+        <Network size={20} className="text-indigo-400" />
+        <span className="font-semibold text-white text-lg">Orchestrator</span>
+        <span className="ml-auto px-2 py-0.5 rounded bg-indigo-900 text-indigo-300 text-xs">
+          {strategyLabels[spec.strategy]}
+        </span>
+      </div>
+
+      {/* Model + Prompt preview */}
+      <div className="mb-4 text-sm">
+        <div className="text-gray-400">Model: <span className="text-white">{spec.model}</span></div>
+        <div className="text-gray-400 mt-1 line-clamp-2 italic">
+          {spec.supervisor_prompt.slice(0, 120)}...
+        </div>
+      </div>
+
+      {/* Managed Agents */}
+      <div className="mb-4">
+        <div className="text-xs text-gray-500 mb-2">Managed Agents ({spec.agents.length})</div>
+        <div className="flex flex-col gap-1">
+          {spec.agents
+            .sort((a, b) => a.priority - b.priority)
+            .map(agent => (
+            <div key={agent.id} className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 rounded border border-gray-700 text-sm">
+              <span className="text-indigo-400 font-mono text-xs">P{agent.priority}</span>
+              <span className="text-white font-medium">{agent.id}</span>
+              <span className="text-gray-500 text-xs ml-auto">{agent.specialization}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Supervision Rules */}
+      <div className="mb-4">
+        <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+          <Eye size={12} /> Supervision Rules ({spec.supervision.intervene_on.length})
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {spec.supervision.intervene_on.map((rule, i) => (
+            <span key={i} className="px-2 py-0.5 bg-orange-950 border border-orange-800 rounded text-xs text-orange-300">
+              {rule.condition}{rule.threshold ? ` > ${rule.threshold}` : ''} → {rule.action}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Shared Memory */}
+      {spec.shared_memory && spec.shared_memory.length > 0 && (
+        <div>
+          <div className="text-xs text-gray-500 mb-1">Shared Memory</div>
+          <div className="flex gap-2">
+            {spec.shared_memory.map((mem, i) => (
+              <span key={i} className="px-2 py-0.5 bg-purple-950 border border-purple-800 rounded text-xs text-purple-300">
+                ◈ {mem.name} ({mem.access})
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Result Merge */}
+      <div className="mt-3 text-xs text-gray-500">
+        Merge: <span className="text-gray-300">{spec.result_merge.strategy}</span>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/Canvas/orchestration-nodes/SmartRouterBlock.tsx`**
+```typescript
+import React from 'react';
+import { SmartRouterNode } from '../../../types/node';
+import { GitBranch, Zap, FlaskConical, ShieldOff } from 'lucide-react';
+
+interface SmartRouterBlockProps {
+  node: SmartRouterNode;
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+export function SmartRouterBlock({ node, isSelected, onSelect }: SmartRouterBlockProps) {
+  const { spec } = node;
+  const hasCircuitBreaker = spec.policies.circuit_breaker?.enabled;
+  const hasABTesting = spec.ab_testing?.enabled;
+
+  return (
+    <div
+      className={`
+        smart-router-block border-2 rounded-xl p-5 min-w-[380px] cursor-pointer
+        ${isSelected ? 'border-cyan-400 bg-gray-800' : 'border-cyan-700 bg-gray-900'}
+      `}
+      onClick={onSelect}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-3">
+        <GitBranch size={18} className="text-cyan-400" />
+        <span className="font-semibold text-white">Smart Router</span>
+        <div className="ml-auto flex gap-1">
+          {hasCircuitBreaker && (
+            <span title="Circuit breaker enabled" className="px-1.5 py-0.5 bg-red-950 border border-red-800 rounded text-xs text-red-400">
+              <ShieldOff size={10} className="inline" /> CB
+            </span>
+          )}
+          {hasABTesting && (
+            <span title="A/B testing enabled" className="px-1.5 py-0.5 bg-green-950 border border-green-800 rounded text-xs text-green-400">
+              <FlaskConical size={10} className="inline" /> A/B
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Rule-based routes */}
+      {spec.rules.length > 0 && (
+        <div className="mb-3">
+          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+            <Zap size={10} /> Rules ({spec.rules.length})
+          </div>
+          {spec.rules
+            .sort((a, b) => a.priority - b.priority)
+            .map(rule => (
+            <div key={rule.id} className="flex items-center gap-2 text-xs py-0.5">
+              <span className="text-cyan-600 font-mono">P{rule.priority}</span>
+              <span className="text-gray-400 truncate max-w-[200px]">{rule.condition}</span>
+              <span className="text-gray-600">→</span>
+              <span className="text-cyan-300">{rule.route}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* LLM routing */}
+      {spec.llm_routing.enabled && (
+        <div className="mb-3">
+          <div className="text-xs text-gray-500 mb-1">LLM Fallback: {spec.llm_routing.model}</div>
+          <div className="text-xs text-gray-400">
+            Confidence threshold: {spec.llm_routing.confidence_threshold}
+          </div>
+        </div>
+      )}
+
+      {/* Fallback chain */}
+      <div className="text-xs text-gray-500">
+        Fallback: {spec.fallback_chain.join(' → ')}
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/Canvas/orchestration-nodes/HandoffBlock.tsx`**
+```typescript
+import React from 'react';
+import { HandoffNode } from '../../../types/node';
+import { ArrowLeftRight, ArrowRight, Users } from 'lucide-react';
+
+interface HandoffBlockProps {
+  node: HandoffNode;
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+const modeIcons = {
+  transfer: ArrowRight,
+  consult: ArrowLeftRight,
+  collaborate: Users,
+};
+
+const modeColors = {
+  transfer: 'border-amber-700 bg-amber-950 text-amber-300',
+  consult: 'border-teal-700 bg-teal-950 text-teal-300',
+  collaborate: 'border-pink-700 bg-pink-950 text-pink-300',
+};
+
+export function HandoffBlock({ node, isSelected, onSelect }: HandoffBlockProps) {
+  const { spec } = node;
+  const ModeIcon = modeIcons[spec.mode];
+
+  return (
+    <div
+      className={`
+        handoff-block border-2 rounded-lg px-4 py-3 cursor-pointer min-w-[220px]
+        ${isSelected ? 'border-white' : modeColors[spec.mode].split(' ')[0]}
+        ${modeColors[spec.mode].split(' ').slice(1).join(' ')}
+      `}
+      onClick={onSelect}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <ModeIcon size={16} />
+        <span className="font-medium text-sm capitalize">{spec.mode} Handoff</span>
+      </div>
+      <div className="text-xs opacity-70">
+        → {spec.target.flow}
+        {spec.target.domain && <span className="ml-1">({spec.target.domain})</span>}
+      </div>
+      <div className="text-xs opacity-50 mt-1">
+        Context: {spec.context_transfer.max_context_tokens} tokens
+        | Timeout: {spec.on_failure.timeout}s
+      </div>
+      {spec.notify_customer && (
+        <div className="text-xs opacity-50 mt-1">Notifies customer</div>
+      )}
+    </div>
+  );
+}
+```
+
+**File: `src/components/Canvas/orchestration-nodes/AgentGroupBoundary.tsx`**
+```typescript
+import React from 'react';
+import { AgentGroupNode } from '../../../types/node';
+import { Box } from 'lucide-react';
+
+interface AgentGroupBoundaryProps {
+  node: AgentGroupNode;
+  isSelected: boolean;
+  onSelect: () => void;
+  children: React.ReactNode;        // The orchestrator + agents rendered inside
+}
+
+export function AgentGroupBoundary({ node, isSelected, onSelect, children }: AgentGroupBoundaryProps) {
+  const { spec } = node;
+
+  return (
+    <div
+      className={`
+        agent-group-boundary border-2 border-dashed rounded-2xl p-6 relative
+        ${isSelected ? 'border-gray-300' : 'border-gray-700'}
+      `}
+      onClick={(e) => { e.stopPropagation(); onSelect(); }}
+    >
+      {/* Group header */}
+      <div className="absolute -top-3 left-4 bg-gray-900 px-3 py-0.5 rounded flex items-center gap-2">
+        <Box size={14} className="text-gray-400" />
+        <span className="text-sm text-gray-300 font-medium">{spec.name}</span>
+        <span className="text-xs text-gray-600">
+          {spec.members.length} agents | {spec.coordination.communication}
+        </span>
+      </div>
+
+      {/* Children (orchestrator + agent blocks) */}
+      <div className="mt-2">
+        {children}
+      </div>
+
+      {/* Shared memory footer */}
+      {spec.shared_memory.length > 0 && (
+        <div className="mt-4 flex gap-2 items-center">
+          <span className="text-xs text-gray-500">Shared:</span>
+          {spec.shared_memory.map((mem, i) => (
+            <span key={i} className="px-2 py-0.5 bg-purple-950 border border-purple-800 rounded text-xs text-purple-300">
+              ◈ {mem.name}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Metrics */}
+      {spec.metrics && (
+        <div className="mt-2 text-xs text-gray-600">
+          Tracking: {spec.metrics.track.join(', ')}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+#### Orchestration Spec Panels
+
+**File: `src/components/SpecPanel/OrchestratorSpec.tsx`**
+```typescript
+import React from 'react';
+import { OrchestratorNode, OrchestratorAgent, SupervisionRule } from '../../types/node';
+import { Plus, Trash2 } from 'lucide-react';
+
+interface OrchestratorSpecProps {
+  spec: OrchestratorNode['spec'];
+  onChange: (spec: OrchestratorNode['spec']) => void;
+}
+
+export function OrchestratorSpec({ spec, onChange }: OrchestratorSpecProps) {
+  const addAgent = () => {
+    const newAgent: OrchestratorAgent = {
+      id: `agent_${spec.agents.length + 1}`,
+      flow: '',
+      specialization: '',
+      priority: spec.agents.length + 1,
+    };
+    onChange({ ...spec, agents: [...spec.agents, newAgent] });
+  };
+
+  const updateAgent = (index: number, updates: Partial<OrchestratorAgent>) => {
+    const agents = [...spec.agents];
+    agents[index] = { ...agents[index], ...updates };
+    onChange({ ...spec, agents });
+  };
+
+  const removeAgent = (index: number) => {
+    onChange({ ...spec, agents: spec.agents.filter((_, i) => i !== index) });
+  };
+
+  const addSupervisionRule = () => {
+    const rule: SupervisionRule = {
+      condition: 'agent_iterations_exceeded',
+      threshold: 5,
+      action: 'reassign',
+    };
+    onChange({
+      ...spec,
+      supervision: {
+        ...spec.supervision,
+        intervene_on: [...spec.supervision.intervene_on, rule],
+      },
+    });
+  };
+
+  return (
+    <div className="orchestrator-spec space-y-4">
+      {/* Strategy */}
+      <div className="spec-section">
+        <h4>Strategy</h4>
+        <select
+          value={spec.strategy}
+          onChange={(e) => onChange({ ...spec, strategy: e.target.value as any })}
+          className="select-field"
+        >
+          <option value="supervisor">Supervisor (LLM decides)</option>
+          <option value="round_robin">Round Robin (even distribution)</option>
+          <option value="broadcast">Broadcast (all agents, merge results)</option>
+          <option value="consensus">Consensus (all respond, pick best)</option>
+        </select>
+      </div>
+
+      {/* Model */}
+      <div className="spec-section">
+        <h4>Supervisor Model</h4>
+        <select
+          value={spec.model}
+          onChange={(e) => onChange({ ...spec, model: e.target.value })}
+          className="select-field"
+        >
+          <option value="claude-opus-4-6">Claude Opus 4.6</option>
+          <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+        </select>
+      </div>
+
+      {/* Supervisor Prompt */}
+      <div className="spec-section">
+        <h4>Supervisor Prompt</h4>
+        <textarea
+          value={spec.supervisor_prompt}
+          onChange={(e) => onChange({ ...spec, supervisor_prompt: e.target.value })}
+          className="textarea-field"
+          rows={6}
+        />
+      </div>
+
+      {/* Managed Agents */}
+      <div className="spec-section">
+        <div className="section-header">
+          <h4>Managed Agents</h4>
+          <button onClick={addAgent} className="btn-icon"><Plus size={16} /></button>
+        </div>
+        {spec.agents.map((agent, i) => (
+          <div key={i} className="flex gap-2 items-center mb-2 p-2 bg-gray-800 rounded">
+            <input type="text" value={agent.id} placeholder="Agent ID"
+              onChange={(e) => updateAgent(i, { id: e.target.value })}
+              className="input-field flex-1" />
+            <input type="text" value={agent.flow} placeholder="Flow ID"
+              onChange={(e) => updateAgent(i, { flow: e.target.value })}
+              className="input-field flex-1" />
+            <input type="number" value={agent.priority} min={0}
+              onChange={(e) => updateAgent(i, { priority: parseInt(e.target.value) })}
+              className="input-field w-16" title="Priority" />
+            <button onClick={() => removeAgent(i)} className="btn-icon danger">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Supervision Rules */}
+      <div className="spec-section">
+        <div className="section-header">
+          <h4>Supervision Rules</h4>
+          <button onClick={addSupervisionRule} className="btn-icon"><Plus size={16} /></button>
+        </div>
+        {spec.supervision.intervene_on.map((rule, i) => (
+          <div key={i} className="flex gap-2 items-center mb-1 text-sm">
+            <select value={rule.condition}
+              onChange={(e) => {
+                const rules = [...spec.supervision.intervene_on];
+                rules[i] = { ...rules[i], condition: e.target.value as any };
+                onChange({ ...spec, supervision: { ...spec.supervision, intervene_on: rules } });
+              }}
+              className="select-field flex-1">
+              <option value="agent_iterations_exceeded">Iterations exceeded</option>
+              <option value="confidence_below">Confidence below</option>
+              <option value="customer_sentiment">Customer sentiment</option>
+              <option value="agent_error">Agent error</option>
+              <option value="timeout">Timeout</option>
+            </select>
+            <select value={rule.action}
+              onChange={(e) => {
+                const rules = [...spec.supervision.intervene_on];
+                rules[i] = { ...rules[i], action: e.target.value as any };
+                onChange({ ...spec, supervision: { ...spec.supervision, intervene_on: rules } });
+              }}
+              className="select-field flex-1">
+              <option value="reassign">Reassign</option>
+              <option value="add_instructions">Add instructions</option>
+              <option value="escalate_to_human">Escalate to human</option>
+              <option value="retry_with_different_agent">Retry different agent</option>
+            </select>
+          </div>
+        ))}
+      </div>
+
+      {/* Result Merge */}
+      <div className="spec-section">
+        <h4>Result Merge Strategy</h4>
+        <select
+          value={spec.result_merge.strategy}
+          onChange={(e) => onChange({ ...spec, result_merge: { strategy: e.target.value as any } })}
+          className="select-field"
+        >
+          <option value="last_wins">Last wins</option>
+          <option value="best_of">Best of (supervisor evaluates)</option>
+          <option value="combine">Combine (supervisor synthesizes)</option>
+          <option value="supervisor_picks">Supervisor picks</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/SpecPanel/HandoffSpec.tsx`**
+```typescript
+import React from 'react';
+import { HandoffNode } from '../../types/node';
+
+interface HandoffSpecProps {
+  spec: HandoffNode['spec'];
+  onChange: (spec: HandoffNode['spec']) => void;
+}
+
+export function HandoffSpec({ spec, onChange }: HandoffSpecProps) {
+  return (
+    <div className="handoff-spec space-y-4">
+      {/* Mode */}
+      <div className="spec-section">
+        <h4>Handoff Mode</h4>
+        <select
+          value={spec.mode}
+          onChange={(e) => onChange({ ...spec, mode: e.target.value as any })}
+          className="select-field"
+        >
+          <option value="transfer">Transfer (source stops, target takes over)</option>
+          <option value="consult">Consult (source waits, target answers, result returns)</option>
+          <option value="collaborate">Collaborate (both active, shared context)</option>
+        </select>
+      </div>
+
+      {/* Target */}
+      <div className="spec-section">
+        <h4>Target</h4>
+        <div className="flex gap-2">
+          <input type="text" value={spec.target.flow} placeholder="Flow ID"
+            onChange={(e) => onChange({ ...spec, target: { ...spec.target, flow: e.target.value } })}
+            className="input-field flex-1" />
+          <input type="text" value={spec.target.domain} placeholder="Domain"
+            onChange={(e) => onChange({ ...spec, target: { ...spec.target, domain: e.target.value } })}
+            className="input-field flex-1" />
+        </div>
+      </div>
+
+      {/* Context Transfer */}
+      <div className="spec-section">
+        <h4>Max Context Tokens</h4>
+        <input type="number" value={spec.context_transfer.max_context_tokens}
+          onChange={(e) => onChange({
+            ...spec,
+            context_transfer: { ...spec.context_transfer, max_context_tokens: parseInt(e.target.value) }
+          })}
+          className="input-field" min={100} max={10000} />
+      </div>
+
+      {/* On Complete */}
+      <div className="spec-section">
+        <h4>On Complete</h4>
+        <div className="flex gap-2">
+          <select value={spec.on_complete.return_to}
+            onChange={(e) => onChange({ ...spec, on_complete: { ...spec.on_complete, return_to: e.target.value as any } })}
+            className="select-field flex-1">
+            <option value="source_agent">Return to source agent</option>
+            <option value="orchestrator">Return to orchestrator</option>
+            <option value="terminal">End flow</option>
+          </select>
+          <select value={spec.on_complete.merge_strategy}
+            onChange={(e) => onChange({ ...spec, on_complete: { ...spec.on_complete, merge_strategy: e.target.value as any } })}
+            className="select-field flex-1">
+            <option value="append">Append result</option>
+            <option value="replace">Replace context</option>
+            <option value="summarize">Summarize</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Failure Handling */}
+      <div className="spec-section">
+        <h4>Timeout (seconds)</h4>
+        <input type="number" value={spec.on_failure.timeout}
+          onChange={(e) => onChange({
+            ...spec,
+            on_failure: { ...spec.on_failure, timeout: parseInt(e.target.value) }
+          })}
+          className="input-field" min={5} max={600} />
+      </div>
+
+      {/* Customer Notification */}
+      <div className="spec-section">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={spec.notify_customer || false}
+            onChange={(e) => onChange({ ...spec, notify_customer: e.target.checked })} />
+          <span className="text-sm">Notify customer about handoff</span>
+        </label>
+      </div>
+    </div>
+  );
+}
+```
+
 ### Week 2: File Operations & Git
 
 #### Day 8-9: Tauri File Commands
@@ -2488,17 +3251,36 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
    - [ ] Can add/remove/edit tools
    - [ ] Can add/remove guardrail checks
 
-10. **Save flow**
+10. **Orchestration canvas**
+    - [ ] Orchestrator block shows strategy, managed agents, supervision rules
+    - [ ] Smart Router block shows rules, LLM fallback, circuit breaker badge, A/B badge
+    - [ ] Handoff block shows mode (transfer/consult/collaborate) and target
+    - [ ] Agent Group boundary wraps grouped agents with dashed border
+    - [ ] Agent Group shows shared memory badges at bottom
+    - [ ] Selecting orchestrator → spec panel shows orchestrator config
+    - [ ] Can add/remove managed agents and supervision rules
+    - [ ] Selecting smart router → spec panel shows rules, policies, A/B config
+    - [ ] Selecting handoff → spec panel shows mode, context, failure config
+
+11. **Orchestration on Level 2**
+    - [ ] Agent flow blocks show agent badge (▣⊛)
+    - [ ] Supervisor arrows (⊛▶) connect orchestrator to managed agents
+    - [ ] Handoff arrows (⇄) shown between agents with mode label
+    - [ ] Agent Group appears as dashed boundary on Domain Map
+
+12. **Save flow**
     - [ ] Click Save on traditional flow → correct YAML
     - [ ] Click Save on agent flow → YAML includes agent_config, tools, memory, guardrails
+    - [ ] Click Save on orchestration flow → YAML includes agent_group, orchestrator, smart_router, handoff
     - [ ] File content matches flow
 
-11. **Load flow**
+13. **Load flow**
     - [ ] Load traditional YAML → traditional canvas
     - [ ] Load agent YAML → agent canvas
-    - [ ] Spec panel shows correct data for both types
+    - [ ] Load orchestration YAML → orchestration canvas with group boundaries
+    - [ ] Spec panel shows correct data for all types
 
-12. **Git status**
+14. **Git status**
     - [ ] Panel shows current branch
     - [ ] Changed files listed
     - [ ] Stage/commit works
@@ -2539,6 +3321,15 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
    - Tools live inside the agent loop spec, not as separate canvas nodes
    - Agent spec panels are distinct from traditional spec panels
 
+6. **Orchestration Rendering**
+   - Orchestration nodes (Orchestrator, Smart Router, Handoff, Agent Group) extend the AgentCanvas
+   - Agent Group renders as a wrapper/boundary around its child components
+   - Orchestrator sits at the top of the group, with managed agents below
+   - Smart Router renders within the orchestrator's routing section
+   - Handoff arrows are bidirectional for consult/collaborate, one-way for transfer
+   - Level 2 Domain Map derives orchestration topology from flow YAML (agent_group, orchestrator nodes)
+   - Level 2 uses special arrow types: supervisor (⊛▶), handoff (⇄), event (──▶)
+
 ### Common Pitfalls
 
 1. **Don't** build code generation in MVP
@@ -2546,12 +3337,14 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 3. **Don't** build reverse engineering
 4. **Don't** make L1/L2 editable beyond repositioning — they are derived views
 5. **Don't** try to run/test agents within the DDD Tool in MVP — just design them
-6. **Do** focus on visual editing → YAML output
-7. **Do** build multi-level navigation early — it's the core UX
-8. **Do** parse domain.yaml files on project load to populate L1/L2
-9. **Do** support both flow types in the same canvas routing
-10. **Do** make sure Git integration works
-11. **Do** validate YAML output format (both traditional and agent)
+6. **Don't** try to execute routing rules or circuit breakers — DDD is a design tool, not a runtime
+7. **Do** focus on visual editing → YAML output
+8. **Do** build multi-level navigation early — it's the core UX
+9. **Do** parse domain.yaml files on project load to populate L1/L2
+10. **Do** support all three flow types (traditional, agent, orchestration) in canvas routing
+11. **Do** derive Level 2 orchestration visuals from flow YAML automatically
+12. **Do** make sure Git integration works
+13. **Do** validate YAML output format (traditional, agent, and orchestration)
 
 ---
 
@@ -2613,8 +3406,30 @@ npm run tauri dev
 - [ ] Can configure human gate options and timeout
 - [ ] Agent flow YAML includes agent_config, tools, memory, guardrails sections
 
+### Orchestration (L3 + L2)
+- [ ] Orchestrator block renders with strategy badge, managed agents list, supervision rules
+- [ ] Can add/remove/edit managed agents in orchestrator spec panel
+- [ ] Can configure supervision rules (conditions, thresholds, actions)
+- [ ] Can select orchestration strategy (supervisor, round_robin, broadcast, consensus)
+- [ ] Can set result merge strategy
+- [ ] Smart Router block renders with rule-based routes, LLM fallback, policies
+- [ ] Can add/remove/edit routing rules with conditions and priorities
+- [ ] Can configure routing policies (retry, timeout, circuit breaker)
+- [ ] Can configure A/B testing experiments
+- [ ] Can configure context-aware routing rules
+- [ ] Handoff block renders with mode indicator (transfer/consult/collaborate)
+- [ ] Can configure context transfer (include/exclude, max tokens)
+- [ ] Can configure on_complete behavior (return_to, merge strategy)
+- [ ] Agent Group renders as dashed boundary around grouped agents
+- [ ] Agent Group shows shared memory indicators and coordination settings
+- [ ] Level 2 Domain Map shows supervisor arrows (⊛▶) from orchestrator to agents
+- [ ] Level 2 Domain Map shows handoff arrows (⇄) between agents with mode label
+- [ ] Level 2 Domain Map shows agent group boundaries as dashed rectangles
+- [ ] Level 2 distinguishes agent flow blocks (▣⊛) from traditional flow blocks (▣)
+- [ ] Orchestration flow YAML includes agent_group, orchestrator, smart_router, handoff nodes
+
 ### File Operations
-- [ ] Can save flow as YAML file (both traditional and agent formats)
+- [ ] Can save flow as YAML file (traditional, agent, and orchestration formats)
 - [ ] Can load flow from YAML file (detects type automatically)
 - [ ] Can see Git status
 - [ ] Can stage and commit changes
@@ -2636,6 +3451,8 @@ npm run tauri dev
 9. Add live agent testing/debugging (run agent from within DDD Tool)
 10. Add Router node visual (multi-output classification)
 11. Add Memory node visual (vector store / conversation config)
+12. Add orchestration observability dashboard (which agent handled what, latency, errors)
+13. Add circuit breaker status indicators on routing arrows
 
 ---
 
