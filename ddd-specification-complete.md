@@ -3988,6 +3988,405 @@ Ghost nodes become real nodes on Apply. The user can also click **Edit in chat**
 | `Escape` | Discard ghost preview |
 | `Enter` (in ghost preview) | Apply ghost preview to canvas |
 
+### App Shell & User Experience
+
+The DDD Tool needs a cohesive app shell that handles project management, settings, onboarding, error recovery, and undo/redo. These are the "glue" between features.
+
+#### 1. Project Management (Create / Open / Recent)
+
+The app launches to a **Project Launcher** screen — not directly into a canvas. This is the entry point for all sessions.
+
+**Project Launcher screen:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                                                                │
+│                        DDD Tool                               │
+│                   Diagram-Driven Development                  │
+│                                                                │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │  Recent Projects                                         │  │
+│  │                                                           │  │
+│  │  📁 Obligo         ~/code/obligo        2 min ago       │  │
+│  │  📁 SaaS Starter   ~/code/saas-kit      3 days ago     │  │
+│  │  📁 Invoice App    ~/code/invoicely     1 week ago     │  │
+│  │                                                           │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  [+ New Project]    [Open Existing]    [Import from Git]     │
+│                                                                │
+│                                          ⚙ Settings          │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**"New Project" wizard (3 steps):**
+
+```
+Step 1: Basics
+┌──────────────────────────────────────────────────────────────┐
+│  Project Name:    [my-project          ]                     │
+│  Location:        [~/code/my-project   ] [Browse]           │
+│  Description:     [My awesome project  ]                     │
+│                                                                │
+│  Initialize Git:  [✓]  (checked by default)                 │
+│                                         [Cancel] [Next →]   │
+└──────────────────────────────────────────────────────────────┘
+
+Step 2: Tech Stack
+┌──────────────────────────────────────────────────────────────┐
+│  Language:    [Python ▾]     Version:  [3.11 ▾]             │
+│  Framework:   [FastAPI ▾]                                    │
+│  Database:    [PostgreSQL ▾]                                 │
+│  ORM:         [SQLAlchemy ▾]                                 │
+│  Cache:       [Redis ▾]  (optional)                          │
+│                                                                │
+│  Or: [Import from existing architecture.yaml]                │
+│                                         [← Back] [Next →]   │
+└──────────────────────────────────────────────────────────────┘
+
+Step 3: Domains
+┌──────────────────────────────────────────────────────────────┐
+│  Define your initial domains:                                 │
+│                                                                │
+│  [users        ] User management                    [✕]     │
+│  [billing      ] Subscription and payments          [✕]     │
+│  [+ Add domain]                                              │
+│                                                                │
+│  Or: [Start blank — add domains later]                       │
+│                                         [← Back] [Create]   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**What "Create" does:**
+1. Creates the project directory
+2. Initializes Git (if checked)
+3. Creates `specs/system.yaml` from wizard inputs
+4. Creates `specs/architecture.yaml` from template + tech stack choices
+5. Creates `specs/config.yaml` from template
+6. Creates `specs/shared/errors.yaml` from template
+7. Creates `specs/domains/{name}/domain.yaml` for each domain
+8. Creates `.ddd/config.yaml` with defaults
+9. Creates `.ddd/mapping.yaml` (empty)
+10. Generates `CLAUDE.md` from project state
+11. Makes initial Git commit: "Initialize DDD project"
+12. Opens the project on the System Map (Level 1)
+
+**"Open Existing" flow:**
+- Standard OS file picker → select a folder
+- DDD Tool looks for `specs/system.yaml` or `.ddd/config.yaml`
+- If found: opens project, parses all specs, populates canvas
+- If not found: shows error "This folder doesn't appear to be a DDD project. [Initialize as DDD project?]"
+
+**"Import from Git" flow:**
+- User enters a Git URL → DDD Tool clones into selected location
+- Same detection as "Open Existing" after clone
+
+**Recent Projects:**
+- Stored in app-level config: `~/.ddd-tool/recent-projects.json`
+- Tracks: path, name, last opened timestamp
+- Max 20 entries, pruned on load (remove entries where folder no longer exists)
+- Click to open, right-click for "Remove from recent" or "Open in terminal"
+
+#### 2. Settings Screen
+
+Accessible from Project Launcher (⚙) and from within any project (menu bar → Settings or `Cmd+,`).
+
+**Two levels: Global settings (apply to all projects) and Project settings (per-project overrides).**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Settings                                     [Global ▾]      │
+│──────────────────────────────────────────────────────────────│
+│                                                                │
+│ ┌──────────┐                                                  │
+│ │ LLM      │  LLM Configuration                              │
+│ │ Models   │                                                  │
+│ │ Claude   │  ┌─────────────────────────────────────────┐    │
+│ │ Testing  │  │ Model Registry                           │    │
+│ │ Editor   │  │                                           │    │
+│ │ Git      │  │ Anthropic                                 │    │
+│ │ Advanced │  │   API Key: [ANTHROPIC_API_KEY   ] (env)  │    │
+│ │          │  │   Models: claude-sonnet-4-5, claude-haiku-4-5      │    │
+│ │          │  │   [Test connection]  ✓ Connected          │    │
+│ │          │  │                                           │    │
+│ │          │  │ OpenAI                                    │    │
+│ │          │  │   API Key: [OPENAI_API_KEY      ] (env)  │    │
+│ │          │  │   Models: gpt-4o, gpt-4o-mini            │    │
+│ │          │  │   [Test connection]  ✓ Connected          │    │
+│ │          │  │                                           │    │
+│ │          │  │ Ollama (Local)                            │    │
+│ │          │  │   URL: [http://localhost:11434  ]         │    │
+│ │          │  │   Models: [Refresh] llama3, codellama    │    │
+│ │          │  │   [Test connection]  ✓ Running            │    │
+│ │          │  │                                           │    │
+│ │          │  │ [+ Add Provider]                          │    │
+│ │          │  └─────────────────────────────────────────┘    │
+│ └──────────┘                                                  │
+│                                           [Cancel] [Save]    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Settings tabs:**
+
+| Tab | What it configures |
+|-----|-------------------|
+| **LLM** | Provider API keys (stored as env var names, never raw keys), provider URLs, connection testing |
+| **Models** | Task-to-model routing (which model for generate/review/suggest/explain), fallback chains, cost limits |
+| **Claude Code** | CLI command path, post-implementation actions (run tests, run lint, auto-commit), prompt options |
+| **Testing** | Test command, args, scoped test pattern, auto-run toggle |
+| **Editor** | Canvas grid snap, auto-save interval, theme (light/dark), font size, ghost preview animation toggle |
+| **Git** | Auto-commit messages, branch naming, commit signing |
+| **Advanced** | Reconciliation settings, test generation settings, cache management, debug logging |
+
+**API key security:**
+- Settings UI shows env var names (e.g., `ANTHROPIC_API_KEY`), not raw values
+- Keys are read from environment at runtime: `process.env[key_name]`
+- `.ddd/config.yaml` stores only the env var name, never the secret
+- "Test connection" makes a minimal API call to verify the key works
+- Keys can also be entered directly in a secure input field — stored in OS keychain via Tauri's `keyring` plugin, never written to disk in plain text
+
+**Project-level overrides:**
+- Toggle dropdown: "Global" ↔ "Project: {name}"
+- When on "Project," settings are saved to `.ddd/config.yaml` and override global
+- Example: project A uses Claude for everything, project B uses GPT-4o — set via project-level model routing
+
+**Global settings location:** `~/.ddd-tool/settings.json`
+
+#### 3. First-Run Experience
+
+The very first time a user opens the DDD Tool (no `~/.ddd-tool/` directory exists), they see a guided setup:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                                                                │
+│                    Welcome to DDD Tool                        │
+│              Diagram-Driven Development                       │
+│                                                                │
+│  DDD lets you design software visually and have AI            │
+│  implement it. Specs are the source of truth.                 │
+│                                                                │
+│  Let's get you set up:                                        │
+│                                                                │
+│  Step 1 of 3: Connect an LLM                                 │
+│  ──────────────────────────────────────                       │
+│  DDD uses LLMs for design assistance, code generation,       │
+│  and spec review. Set up at least one provider.               │
+│                                                                │
+│  ○ Anthropic (Claude) — recommended                          │
+│    API Key env var: [ANTHROPIC_API_KEY    ]                  │
+│    [Test connection]                                          │
+│                                                                │
+│  ○ OpenAI (GPT-4o)                                           │
+│    API Key env var: [OPENAI_API_KEY       ]                  │
+│                                                                │
+│  ○ Ollama (Local — free, no API key)                         │
+│    URL: [http://localhost:11434    ]                          │
+│    [Detect models]                                            │
+│                                                                │
+│  ○ Skip for now — I'll configure later                       │
+│                                                                │
+│                                              [Next →]        │
+└──────────────────────────────────────────────────────────────┘
+
+Step 2 of 3: Claude Code (optional)
+┌──────────────────────────────────────────────────────────────┐
+│  DDD can send specs directly to Claude Code for              │
+│  implementation. Do you have Claude Code installed?           │
+│                                                                │
+│  [Check] → ✓ Found: claude v1.x at /usr/local/bin/claude   │
+│                                                                │
+│  ○ Yes, use Claude Code for implementation                   │
+│  ○ No, I'll generate prompts and copy them manually          │
+│                                                                │
+│                                   [← Back]   [Next →]       │
+└──────────────────────────────────────────────────────────────┘
+
+Step 3 of 3: Your first project
+┌──────────────────────────────────────────────────────────────┐
+│  How would you like to start?                                 │
+│                                                                │
+│  ● Create a new project (recommended)                        │
+│    → Opens the New Project wizard                            │
+│                                                                │
+│  ○ Open an existing DDD project                              │
+│    → File picker to select a folder with specs/              │
+│                                                                │
+│  ○ Explore with a sample project                             │
+│    → Opens a pre-built example project (read-only)           │
+│    → Includes a sample domain with 3 flows to click around   │
+│                                                                │
+│                                   [← Back]   [Get Started]  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**What first-run creates:**
+- `~/.ddd-tool/` directory
+- `~/.ddd-tool/settings.json` with chosen LLM config
+- `~/.ddd-tool/recent-projects.json` (empty)
+- `~/.ddd-tool/first-run-completed: true` flag
+
+**Sample project:** A bundled read-only project (embedded in the app binary) with:
+- 2 domains (users, billing)
+- 3 flows (user-register, user-login, create-subscription)
+- Pre-filled specs with all node types demonstrated
+- User can browse all 3 canvas levels, open spec panel, see how everything connects
+- Cannot be modified — a banner says "This is a sample project. Create your own to start editing."
+
+#### 4. Error States and Recovery
+
+Every operation in the DDD Tool can fail. Each failure type has a defined behavior:
+
+**File operation errors:**
+
+| Error | User sees | Recovery |
+|-------|-----------|----------|
+| YAML parse error | Red banner on spec panel: "Invalid YAML at line 23: unexpected mapping" + highlight line | Auto-revert to last valid state. User fixes in spec panel or text editor. |
+| File not found | Toast: "Flow spec not found: {path}. Was it deleted outside DDD?" | Remove from project index. Offer to recreate from last known state if cached. |
+| Permission denied | Toast: "Cannot write to {path}. Check file permissions." | No auto-retry. User must fix permissions. |
+| Disk full | Modal: "Cannot save — disk full. Free up space and try again." | Block further saves until resolved. |
+
+**Git operation errors:**
+
+| Error | User sees | Recovery |
+|-------|-----------|----------|
+| Merge conflict | Modal: "Merge conflict in {files}. Resolve in terminal or editor." + show conflicting files | Open files in external editor. After resolution, user clicks "Mark resolved." |
+| Uncommitted changes on pull | Toast: "Cannot pull — uncommitted changes. Commit or stash first." | Offer [Commit now] or [Stash & pull] buttons. |
+| Push rejected | Toast: "Push rejected — remote has new changes. Pull first." | Offer [Pull & retry] button. |
+| Auth failed | Toast: "Git authentication failed. Check your credentials." | Link to Git settings. |
+
+**LLM errors:**
+
+| Error | User sees | Recovery |
+|-------|-----------|----------|
+| API key invalid | Chat panel: "API key invalid for {provider}. Check Settings → LLM." | Link to settings. |
+| Rate limited | Chat panel: "Rate limited by {provider}. Retrying in {seconds}..." | Auto-retry with exponential backoff (3 attempts, 5s/15s/45s). |
+| Timeout (30s) | Chat panel: "Request timed out. The model may be overloaded." | [Retry] button. If repeated, suggest switching model. |
+| Context too long | Chat panel: "Context exceeds model limit. Reducing context..." | Auto-trim: remove oldest chat messages, summarize memory layers, retry. |
+| Provider down | Chat panel: "Cannot reach {provider}." | Auto-fallback to next model in the fallback chain. Toast: "Fell back to {model}." |
+| Malformed response | Chat panel: "Couldn't parse LLM response. Retrying..." | Retry once. If still malformed, show raw response with "Report bug" link. |
+
+**Claude Code / PTY errors:**
+
+| Error | User sees | Recovery |
+|-------|-----------|----------|
+| Claude Code not found | Implementation panel: "Claude Code CLI not found. [Install] [Configure path]" | Link to install instructions + settings. |
+| PTY spawn failed | Implementation panel: "Failed to start terminal session." | [Retry] button. Check if another PTY session is stuck — offer to kill it. |
+| PTY disconnected | Terminal shows: "Session disconnected." | [Reconnect] or [New session] buttons. Terminal output preserved. |
+| Claude Code error exit | Red banner: "Claude Code exited with error. See terminal output." | Terminal scrolls to error. [Re-run] button with same prompt. |
+
+**Canvas / UI errors:**
+
+| Error | User sees | Recovery |
+|-------|-----------|----------|
+| Invalid connection | Node connection rejected (snap-back animation) | Toast: "Cannot connect {type} to {type} — incompatible." |
+| Circular dependency | Connection rejected | Toast: "This connection would create a cycle." |
+| Orphaned nodes | Yellow dot on disconnected nodes | Warning in validation panel: "3 nodes are not connected to any path." |
+
+**Global error handling pattern:**
+
+```
+Severity levels:
+  INFO    → Toast notification (auto-dismiss 5s)
+  WARNING → Toast notification (manual dismiss) + yellow indicator
+  ERROR   → Red banner in relevant panel + blocks related actions
+  FATAL   → Modal dialog + blocks all actions until resolved
+
+All errors are logged to: ~/.ddd-tool/logs/ddd-tool.log
+Log rotation: 10MB max, keep 5 files
+Logs include: timestamp, severity, component, message, stack trace (if error)
+```
+
+**Auto-save and crash recovery:**
+- Auto-save every 30 seconds (configurable in settings)
+- On crash, next launch detects unsaved state in `.ddd/autosave/`
+- Recovery dialog: "DDD Tool didn't shut down cleanly. Recover unsaved changes?" → [Recover] / [Discard]
+- Auto-save writes to `.ddd/autosave/{flow_id}.yaml` (not the real spec file) to avoid corrupting specs
+
+#### 5. Undo/Redo System
+
+The DDD Tool supports full undo/redo for all canvas and spec operations. This is essential for a design tool — users must be able to experiment freely.
+
+**Scope:** Undo/redo is **per-flow** (each Level 3 flow sheet has its own history). Level 1 and Level 2 are derived views with no editable state, so they don't need undo.
+
+**What is undoable:**
+
+| Action | Undo behavior |
+|--------|--------------|
+| Add node | Remove the node |
+| Delete node | Restore node + its connections |
+| Move node | Return to previous position |
+| Connect nodes | Remove the connection |
+| Disconnect nodes | Restore the connection |
+| Edit spec field | Revert to previous value |
+| Apply ghost preview | Remove all ghost-applied nodes/connections |
+| Accept reconciliation item | Revert spec to pre-accept state |
+| Bulk operations (paste, duplicate) | Remove all pasted/duplicated items |
+
+**What is NOT undoable (side-effects outside the flow):**
+
+| Action | Why not undoable |
+|--------|-----------------|
+| Git commit | Use `git revert` — Git's own undo |
+| Claude Code implementation | Code is in files — use Git to revert |
+| File save (YAML write) | Previous version in Git history |
+| LLM chat messages | Chat is append-only log |
+| Settings changes | Not flow-level state |
+
+**Implementation approach: Command pattern with immutable snapshots**
+
+```
+Each flow has an undo stack:
+
+  undoStack: FlowSnapshot[]    ← past states (max 100)
+  redoStack: FlowSnapshot[]    ← future states (cleared on new action)
+  current:   FlowSnapshot      ← the live state
+
+FlowSnapshot = {
+  nodes: DddNode[]             ← deep copy of all nodes
+  connections: Connection[]    ← deep copy of all connections
+  specValues: Record<string, any>  ← spec field values for all nodes
+  timestamp: number
+  description: string          ← "Added process node", "Moved decision node", etc.
+}
+```
+
+**How it works:**
+
+1. Before any mutation, push `current` onto `undoStack`
+2. Apply the mutation to `current`
+3. Clear `redoStack` (new action invalidates redo history)
+4. On **Undo** (`Cmd+Z`): push `current` onto `redoStack`, pop `undoStack` into `current`
+5. On **Redo** (`Cmd+Shift+Z`): push `current` onto `undoStack`, pop `redoStack` into `current`
+
+**Coalescing rapid changes:**
+- Typing in a spec field doesn't create a snapshot per keystroke
+- Instead, coalesce: if the last snapshot was the same field and < 500ms ago, overwrite it
+- Drag operations: only create snapshot on mouse-up, not during drag
+
+**Undo stack limits:**
+- Max 100 snapshots per flow (configurable)
+- When limit reached, oldest snapshot is dropped
+- Stack is in-memory only — lost on app close (Git is the persistent undo)
+
+**UI indicators:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ [← ↩ Undo] [Redo ↪ →]    "Added process node"              │
+│              ↑ grayed out when empty                         │
+│              ↑ tooltip shows description of what will be     │
+│                undone/redone                                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Keyboard shortcuts:**
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+Z` / `Ctrl+Z` | Undo |
+| `Cmd+Shift+Z` / `Ctrl+Shift+Z` | Redo |
+| `Cmd+Y` / `Ctrl+Y` | Redo (alternative) |
+
 ### Claude Code Integration
 
 The DDD Tool integrates with Claude Code CLI to turn specs into running code without leaving the application. Five components work together: an **Implementation Panel** with interactive terminal, a **Prompt Builder** that constructs optimal prompts from specs, **Stale Detection** that tracks spec-vs-code drift, a **Test Runner** that shows results linked to flows, and **CLAUDE.md Auto-Generation** that keeps Claude Code instructions in sync with the project.
@@ -5665,6 +6064,11 @@ Claude Code reads all of these sections and generates the corresponding infrastr
 - **Security Layer:** Rate limiting, CORS, security headers, input sanitization, audit logging — defined in architecture.yaml and auto-generated
 - **Deployment/IaC Generation:** Auto-generate Dockerfile, docker-compose, Kubernetes manifests from architecture.yaml deployment config
 - **Diagram-Derived Test Generation:** Auto-derive test cases from flow paths + validation boundaries, generate test code (pytest/jest), spec compliance validation after implementation
+- **Project Launcher:** Create new project wizard (3-step), open existing, import from Git, recent projects list
+- **Settings Screen:** Global + per-project settings for LLM providers, models, Claude Code, testing, editor preferences, Git
+- **First-Run Experience:** Guided setup wizard (connect LLM, detect Claude Code, create/open/sample project)
+- **Error Handling:** Defined recovery for file, Git, LLM, PTY, and canvas errors with auto-retry, fallback, and crash recovery
+- **Undo/Redo:** Per-flow command pattern with immutable snapshots (Cmd+Z / Cmd+Shift+Z), 100-level history
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage

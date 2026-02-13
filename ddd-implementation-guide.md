@@ -164,6 +164,20 @@ ddd-tool/
 │   │   │   ├── DecisionList.tsx       # Design decisions with add/edit
 │   │   │   ├── DecisionForm.tsx       # Add/edit decision dialog
 │   │   │   └── FlowDependencies.tsx   # Flow map for current flow
+│   │   ├── ProjectLauncher/
+│   │   │   ├── ProjectLauncher.tsx    # Main launcher screen (recent projects + actions)
+│   │   │   ├── NewProjectWizard.tsx   # 3-step project creation wizard
+│   │   │   └── RecentProjects.tsx     # Recent projects list with open/remove
+│   │   ├── Settings/
+│   │   │   ├── SettingsDialog.tsx     # Modal settings with tab navigation
+│   │   │   ├── LLMSettings.tsx        # Provider API keys, connection testing
+│   │   │   ├── ModelSettings.tsx      # Task-to-model routing, fallback chains
+│   │   │   ├── ClaudeCodeSettings.tsx # CLI path, post-implementation options
+│   │   │   ├── TestingSettings.tsx    # Test command, args, auto-run
+│   │   │   ├── EditorSettings.tsx     # Grid snap, auto-save, theme, font size
+│   │   │   └── GitSettings.tsx        # Commit messages, branch naming
+│   │   ├── FirstRun/
+│   │   │   └── FirstRunWizard.tsx     # First-time setup (LLM + Claude Code + project)
 │   │   └── shared/
 │   │       ├── Button.tsx
 │   │       ├── Input.tsx
@@ -177,7 +191,9 @@ ddd-tool/
 │   │   ├── git-store.ts       # Git state
 │   │   ├── llm-store.ts       # Chat state, ghost nodes, LLM config
 │   │   ├── memory-store.ts    # Project memory layers, refresh triggers
-│   │   └── implementation-store.ts  # Implementation panel state, queue, test results
+│   │   ├── implementation-store.ts  # Implementation panel state, queue, test results
+│   │   ├── app-store.ts         # App-level state: current view, recent projects, first-run
+│   │   └── undo-store.ts        # Per-flow undo/redo stacks
 │   ├── types/
 │   │   ├── sheet.ts           # Sheet levels, navigation, breadcrumb types
 │   │   ├── domain.ts          # Domain config, event wiring, portal types
@@ -188,7 +204,8 @@ ddd-tool/
 │   │   ├── llm.ts             # Chat messages, LLM config, ghost node types
 │   │   ├── memory.ts          # Project memory layer types
 │   │   ├── implementation.ts  # Implementation panel, prompt builder, test runner types
-│   │   └── test-generator.ts  # Derived test cases, test paths, boundary tests, spec compliance
+│   │   ├── test-generator.ts  # Derived test cases, test paths, boundary tests, spec compliance
+│   │   └── app.ts             # App shell types: recent projects, settings, first-run, undo
 │   ├── utils/
 │   │   ├── yaml.ts
 │   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
@@ -9661,6 +9678,965 @@ if (config.test_generation?.include_in_prompt && generatedTestCode) {
 
 ---
 
+### App Shell & UX Fundamentals
+
+**File: `src/types/app.ts`**
+```typescript
+/** Recent project entry */
+export interface RecentProject {
+  name: string;
+  path: string;
+  lastOpenedAt: string;
+  description?: string;
+}
+
+/** New project wizard state */
+export interface NewProjectConfig {
+  name: string;
+  location: string;
+  description: string;
+  initGit: boolean;
+  techStack: {
+    language: string;
+    languageVersion: string;
+    framework: string;
+    database: string;
+    orm: string;
+    cache?: string;
+  };
+  domains: Array<{ name: string; description: string }>;
+}
+
+/** App-level view state */
+export type AppView = 'launcher' | 'first-run' | 'project';
+
+/** Global settings (stored in ~/.ddd-tool/settings.json) */
+export interface GlobalSettings {
+  llm: {
+    providers: ProviderConfig[];
+  };
+  models: {
+    taskRouting: Record<string, string>;    // task → model ID
+    fallbackChain: string[];                // ordered fallback model IDs
+    costLimit?: { daily: number; monthly: number };
+  };
+  claudeCode: {
+    enabled: boolean;
+    command: string;                        // CLI path
+    postImplement: {
+      runTests: boolean;
+      runLint: boolean;
+      autoCommit: boolean;
+      regenerateClaudeMd: boolean;
+    };
+  };
+  testing: {
+    command: string;
+    args: string[];
+    scoped: boolean;
+    scopePattern: string;
+    autoRun: boolean;
+  };
+  editor: {
+    gridSnap: boolean;
+    autoSaveInterval: number;               // seconds, 0 = disabled
+    theme: 'light' | 'dark' | 'system';
+    fontSize: number;
+    ghostPreviewAnimation: boolean;
+  };
+  git: {
+    autoCommitMessage: string;              // template with {flow_id}, {action}
+    branchNaming: string;                   // template
+  };
+  reconciliation: {
+    autoRun: boolean;
+    autoAcceptMatching: boolean;
+    notifyOnDrift: boolean;
+  };
+  testGeneration: {
+    autoDerive: boolean;
+    includeInPrompt: boolean;
+    complianceCheck: boolean;
+  };
+}
+
+export interface ProviderConfig {
+  id: string;
+  name: string;
+  type: 'anthropic' | 'openai' | 'ollama' | 'openai_compatible';
+  apiKeyEnvVar?: string;                    // env var name — never store raw key
+  baseUrl?: string;
+  models: string[];
+  enabled: boolean;
+}
+
+/** Undo/redo snapshot for a flow */
+export interface FlowSnapshot {
+  nodes: any[];                             // deep copy of DddNode[]
+  connections: any[];                       // deep copy of Connection[]
+  specValues: Record<string, any>;          // spec field values per node
+  timestamp: number;
+  description: string;                      // "Added process node", "Moved node", etc.
+}
+
+/** Undo/redo state per flow */
+export interface UndoState {
+  undoStack: FlowSnapshot[];
+  redoStack: FlowSnapshot[];
+  maxHistory: number;                       // default 100
+}
+
+/** Error notification */
+export interface AppError {
+  id: string;
+  severity: 'info' | 'warning' | 'error' | 'fatal';
+  component: string;                        // which subsystem: 'file', 'git', 'llm', 'pty', 'canvas'
+  message: string;
+  detail?: string;
+  recoveryAction?: {
+    label: string;
+    action: () => void;
+  };
+  timestamp: number;
+  dismissed: boolean;
+}
+```
+
+**File: `src/stores/app-store.ts`**
+```typescript
+import { create } from 'zustand';
+import { invoke } from '@tauri-apps/api/core';
+import {
+  AppView, RecentProject, NewProjectConfig,
+  GlobalSettings, AppError,
+} from '../types/app';
+
+interface AppStore {
+  // View state
+  view: AppView;
+  setView: (view: AppView) => void;
+
+  // Recent projects
+  recentProjects: RecentProject[];
+  loadRecentProjects: () => Promise<void>;
+  addRecentProject: (project: RecentProject) => void;
+  removeRecentProject: (path: string) => void;
+
+  // First-run
+  isFirstRun: boolean;
+  checkFirstRun: () => Promise<void>;
+  completeFirstRun: () => void;
+
+  // Settings
+  globalSettings: GlobalSettings;
+  loadGlobalSettings: () => Promise<void>;
+  saveGlobalSettings: (settings: Partial<GlobalSettings>) => Promise<void>;
+
+  // Project creation
+  createProject: (config: NewProjectConfig) => Promise<string>;
+
+  // Error handling
+  errors: AppError[];
+  pushError: (error: Omit<AppError, 'id' | 'timestamp' | 'dismissed'>) => void;
+  dismissError: (id: string) => void;
+  clearErrors: () => void;
+
+  // Auto-save
+  autoSaveTimer: ReturnType<typeof setInterval> | null;
+  startAutoSave: (intervalSeconds: number) => void;
+  stopAutoSave: () => void;
+}
+
+export const useAppStore = create<AppStore>((set, get) => ({
+  view: 'launcher',
+  setView: (view) => set({ view }),
+
+  recentProjects: [],
+  loadRecentProjects: async () => {
+    try {
+      const data = await invoke<string>('read_file', {
+        path: '~/.ddd-tool/recent-projects.json',
+      });
+      const projects: RecentProject[] = JSON.parse(data);
+      // Prune entries where folder no longer exists
+      const valid: RecentProject[] = [];
+      for (const p of projects) {
+        const exists = await invoke<boolean>('path_exists', { path: p.path });
+        if (exists) valid.push(p);
+      }
+      set({ recentProjects: valid.slice(0, 20) });
+    } catch {
+      set({ recentProjects: [] });
+    }
+  },
+
+  addRecentProject: (project) => {
+    const current = get().recentProjects.filter(p => p.path !== project.path);
+    const updated = [project, ...current].slice(0, 20);
+    set({ recentProjects: updated });
+    // Persist
+    invoke('write_file', {
+      path: '~/.ddd-tool/recent-projects.json',
+      content: JSON.stringify(updated, null, 2),
+    });
+  },
+
+  removeRecentProject: (path) => {
+    const updated = get().recentProjects.filter(p => p.path !== path);
+    set({ recentProjects: updated });
+    invoke('write_file', {
+      path: '~/.ddd-tool/recent-projects.json',
+      content: JSON.stringify(updated, null, 2),
+    });
+  },
+
+  isFirstRun: false,
+  checkFirstRun: async () => {
+    try {
+      const exists = await invoke<boolean>('path_exists', {
+        path: '~/.ddd-tool/settings.json',
+      });
+      set({ isFirstRun: !exists, view: exists ? 'launcher' : 'first-run' });
+    } catch {
+      set({ isFirstRun: true, view: 'first-run' });
+    }
+  },
+
+  completeFirstRun: () => {
+    set({ isFirstRun: false, view: 'launcher' });
+  },
+
+  globalSettings: {} as GlobalSettings,
+  loadGlobalSettings: async () => {
+    try {
+      const data = await invoke<string>('read_file', {
+        path: '~/.ddd-tool/settings.json',
+      });
+      set({ globalSettings: JSON.parse(data) });
+    } catch {
+      // Use defaults
+      set({ globalSettings: getDefaultSettings() });
+    }
+  },
+
+  saveGlobalSettings: async (partial) => {
+    const merged = { ...get().globalSettings, ...partial };
+    set({ globalSettings: merged });
+    await invoke('write_file', {
+      path: '~/.ddd-tool/settings.json',
+      content: JSON.stringify(merged, null, 2),
+    });
+  },
+
+  createProject: async (config) => {
+    // 1. Create directory
+    await invoke('create_directory', { path: config.location });
+
+    // 2. Create specs/ structure
+    const specsDir = `${config.location}/specs`;
+    await invoke('create_directory', { path: specsDir });
+    await invoke('create_directory', { path: `${specsDir}/domains` });
+    await invoke('create_directory', { path: `${specsDir}/schemas` });
+    await invoke('create_directory', { path: `${specsDir}/shared` });
+
+    // 3. Generate system.yaml
+    const systemYaml = generateSystemYaml(config);
+    await invoke('write_file', { path: `${specsDir}/system.yaml`, content: systemYaml });
+
+    // 4. Copy + customize templates (architecture, config, errors)
+    const archYaml = generateArchitectureYaml(config.techStack);
+    await invoke('write_file', { path: `${specsDir}/architecture.yaml`, content: archYaml });
+    await invoke('write_file', { path: `${specsDir}/config.yaml`, content: generateConfigYaml(config) });
+    await invoke('write_file', { path: `${specsDir}/shared/errors.yaml`, content: getErrorsTemplate() });
+
+    // 5. Create domain directories + domain.yaml per domain
+    for (const domain of config.domains) {
+      const domainDir = `${specsDir}/domains/${domain.name}`;
+      await invoke('create_directory', { path: domainDir });
+      await invoke('create_directory', { path: `${domainDir}/flows` });
+      await invoke('write_file', {
+        path: `${domainDir}/domain.yaml`,
+        content: generateDomainYaml(domain),
+      });
+    }
+
+    // 6. Create .ddd/ directory
+    await invoke('create_directory', { path: `${config.location}/.ddd` });
+    await invoke('write_file', {
+      path: `${config.location}/.ddd/config.yaml`,
+      content: getDefaultDddConfig(),
+    });
+    await invoke('write_file', {
+      path: `${config.location}/.ddd/mapping.yaml`,
+      content: 'flows: {}\nschemas: {}\n',
+    });
+
+    // 7. Init Git + initial commit
+    if (config.initGit) {
+      await invoke('git_init', { path: config.location });
+      await invoke('git_add_all', { path: config.location });
+      await invoke('git_commit', {
+        path: config.location,
+        message: 'Initialize DDD project',
+      });
+    }
+
+    // 8. Add to recent projects
+    get().addRecentProject({
+      name: config.name,
+      path: config.location,
+      lastOpenedAt: new Date().toISOString(),
+      description: config.description,
+    });
+
+    return config.location;
+  },
+
+  errors: [],
+  pushError: (error) => {
+    const full: AppError = {
+      ...error,
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      dismissed: false,
+    };
+    set({ errors: [...get().errors, full] });
+    // Auto-dismiss info after 5s
+    if (error.severity === 'info') {
+      setTimeout(() => get().dismissError(full.id), 5000);
+    }
+  },
+
+  dismissError: (id) => {
+    set({ errors: get().errors.map(e => e.id === id ? { ...e, dismissed: true } : e) });
+  },
+
+  clearErrors: () => set({ errors: [] }),
+
+  autoSaveTimer: null,
+  startAutoSave: (intervalSeconds) => {
+    get().stopAutoSave();
+    if (intervalSeconds <= 0) return;
+    const timer = setInterval(async () => {
+      // Save current flow to .ddd/autosave/{flow_id}.yaml
+      const flowStore = (await import('./flow-store')).useFlowStore.getState();
+      const flow = flowStore.currentFlow;
+      if (!flow) return;
+      try {
+        await invoke('write_file', {
+          path: `.ddd/autosave/${flow.id}.yaml`,
+          content: flowStore.serializeToYaml(flow),
+        });
+      } catch {
+        // Silent fail — autosave should never interrupt
+      }
+    }, intervalSeconds * 1000);
+    set({ autoSaveTimer: timer });
+  },
+
+  stopAutoSave: () => {
+    const timer = get().autoSaveTimer;
+    if (timer) clearInterval(timer);
+    set({ autoSaveTimer: null });
+  },
+}));
+
+function getDefaultSettings(): GlobalSettings {
+  return {
+    llm: { providers: [] },
+    models: { taskRouting: {}, fallbackChain: [] },
+    claudeCode: {
+      enabled: false, command: 'claude',
+      postImplement: { runTests: true, runLint: false, autoCommit: false, regenerateClaudeMd: true },
+    },
+    testing: { command: 'pytest', args: ['--tb=short', '-q'], scoped: true, scopePattern: 'tests/**/test_{flow_id}*', autoRun: true },
+    editor: { gridSnap: true, autoSaveInterval: 30, theme: 'system', fontSize: 14, ghostPreviewAnimation: true },
+    git: { autoCommitMessage: 'Update {flow_id}', branchNaming: 'feature/{flow_id}' },
+    reconciliation: { autoRun: true, autoAcceptMatching: true, notifyOnDrift: true },
+    testGeneration: { autoDerive: true, includeInPrompt: true, complianceCheck: true },
+  };
+}
+```
+
+**File: `src/stores/undo-store.ts`**
+```typescript
+import { create } from 'zustand';
+import { FlowSnapshot, UndoState } from '../types/app';
+import { useFlowStore } from './flow-store';
+
+interface UndoStore {
+  // Per-flow undo states
+  flowStates: Record<string, UndoState>;
+
+  // Actions
+  pushSnapshot: (flowId: string, description: string) => void;
+  undo: (flowId: string) => void;
+  redo: (flowId: string) => void;
+  canUndo: (flowId: string) => boolean;
+  canRedo: (flowId: string) => boolean;
+  getLastDescription: (flowId: string, direction: 'undo' | 'redo') => string | null;
+  clearHistory: (flowId: string) => void;
+}
+
+const MAX_HISTORY = 100;
+const COALESCE_MS = 500;
+
+export const useUndoStore = create<UndoStore>((set, get) => ({
+  flowStates: {},
+
+  pushSnapshot: (flowId, description) => {
+    const states = { ...get().flowStates };
+    const state = states[flowId] || { undoStack: [], redoStack: [], maxHistory: MAX_HISTORY };
+
+    // Take snapshot of current flow state
+    const flowStore = useFlowStore.getState();
+    const snapshot: FlowSnapshot = {
+      nodes: structuredClone(flowStore.currentFlow?.nodes || []),
+      connections: structuredClone(flowStore.currentFlow?.connections || []),
+      specValues: structuredClone(flowStore.getSpecValues?.() || {}),
+      timestamp: Date.now(),
+      description,
+    };
+
+    // Coalesce rapid changes to the same description
+    const last = state.undoStack[state.undoStack.length - 1];
+    if (last && last.description === description && snapshot.timestamp - last.timestamp < COALESCE_MS) {
+      // Overwrite the last snapshot instead of pushing a new one
+      state.undoStack[state.undoStack.length - 1] = snapshot;
+    } else {
+      state.undoStack.push(snapshot);
+      // Trim to max history
+      if (state.undoStack.length > state.maxHistory) {
+        state.undoStack.shift();
+      }
+    }
+
+    // New action clears redo stack
+    state.redoStack = [];
+    states[flowId] = state;
+    set({ flowStates: states });
+  },
+
+  undo: (flowId) => {
+    const states = { ...get().flowStates };
+    const state = states[flowId];
+    if (!state || state.undoStack.length === 0) return;
+
+    // Save current state to redo stack
+    const flowStore = useFlowStore.getState();
+    const currentSnapshot: FlowSnapshot = {
+      nodes: structuredClone(flowStore.currentFlow?.nodes || []),
+      connections: structuredClone(flowStore.currentFlow?.connections || []),
+      specValues: structuredClone(flowStore.getSpecValues?.() || {}),
+      timestamp: Date.now(),
+      description: 'current',
+    };
+    state.redoStack.push(currentSnapshot);
+
+    // Pop from undo stack and restore
+    const snapshot = state.undoStack.pop()!;
+    flowStore.restoreFromSnapshot(snapshot);
+
+    states[flowId] = state;
+    set({ flowStates: states });
+  },
+
+  redo: (flowId) => {
+    const states = { ...get().flowStates };
+    const state = states[flowId];
+    if (!state || state.redoStack.length === 0) return;
+
+    // Save current to undo stack
+    const flowStore = useFlowStore.getState();
+    const currentSnapshot: FlowSnapshot = {
+      nodes: structuredClone(flowStore.currentFlow?.nodes || []),
+      connections: structuredClone(flowStore.currentFlow?.connections || []),
+      specValues: structuredClone(flowStore.getSpecValues?.() || {}),
+      timestamp: Date.now(),
+      description: 'current',
+    };
+    state.undoStack.push(currentSnapshot);
+
+    // Pop from redo stack and restore
+    const snapshot = state.redoStack.pop()!;
+    flowStore.restoreFromSnapshot(snapshot);
+
+    states[flowId] = state;
+    set({ flowStates: states });
+  },
+
+  canUndo: (flowId) => {
+    const state = get().flowStates[flowId];
+    return !!state && state.undoStack.length > 0;
+  },
+
+  canRedo: (flowId) => {
+    const state = get().flowStates[flowId];
+    return !!state && state.redoStack.length > 0;
+  },
+
+  getLastDescription: (flowId, direction) => {
+    const state = get().flowStates[flowId];
+    if (!state) return null;
+    const stack = direction === 'undo' ? state.undoStack : state.redoStack;
+    return stack.length > 0 ? stack[stack.length - 1].description : null;
+  },
+
+  clearHistory: (flowId) => {
+    const states = { ...get().flowStates };
+    states[flowId] = { undoStack: [], redoStack: [], maxHistory: MAX_HISTORY };
+    set({ flowStates: states });
+  },
+}));
+```
+
+**Component: `src/components/ProjectLauncher/ProjectLauncher.tsx`**
+```tsx
+import { useAppStore } from '../../stores/app-store';
+import { RecentProjects } from './RecentProjects';
+import { NewProjectWizard } from './NewProjectWizard';
+import { useState } from 'react';
+
+export function ProjectLauncher() {
+  const { recentProjects, removeRecentProject } = useAppStore();
+  const [showWizard, setShowWizard] = useState(false);
+
+  if (showWizard) {
+    return <NewProjectWizard onCancel={() => setShowWizard(false)} />;
+  }
+
+  const openExisting = async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const selected = await open({ directory: true, title: 'Open DDD Project' });
+    if (selected) {
+      await openProject(selected as string);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center h-screen bg-gray-50">
+      <h1 className="text-3xl font-bold mb-2">DDD Tool</h1>
+      <p className="text-gray-500 mb-8">Diagram-Driven Development</p>
+
+      {recentProjects.length > 0 && (
+        <RecentProjects
+          projects={recentProjects}
+          onOpen={openProject}
+          onRemove={removeRecentProject}
+        />
+      )}
+
+      <div className="flex gap-3 mt-6">
+        <button onClick={() => setShowWizard(true)} className="btn btn-primary">
+          + New Project
+        </button>
+        <button onClick={openExisting} className="btn btn-secondary">
+          Open Existing
+        </button>
+      </div>
+    </div>
+  );
+}
+
+async function openProject(path: string) {
+  const { invoke } = await import('@tauri-apps/api/core');
+  // Check if this is a DDD project
+  const hasSystem = await invoke<boolean>('path_exists', {
+    path: `${path}/specs/system.yaml`,
+  });
+  const hasDdd = await invoke<boolean>('path_exists', {
+    path: `${path}/.ddd/config.yaml`,
+  });
+
+  if (!hasSystem && !hasDdd) {
+    useAppStore.getState().pushError({
+      severity: 'error',
+      component: 'file',
+      message: "This folder doesn't appear to be a DDD project.",
+      recoveryAction: {
+        label: 'Initialize as DDD project',
+        action: () => { /* open wizard with path pre-filled */ },
+      },
+    });
+    return;
+  }
+
+  // Load project
+  useAppStore.getState().addRecentProject({
+    name: path.split('/').pop() || 'project',
+    path,
+    lastOpenedAt: new Date().toISOString(),
+  });
+
+  const projectStore = (await import('../../stores/project-store')).useProjectStore.getState();
+  await projectStore.loadProject(path);
+  useAppStore.getState().setView('project');
+}
+```
+
+**Component: `src/components/ProjectLauncher/NewProjectWizard.tsx`**
+```tsx
+import { useState } from 'react';
+import { useAppStore } from '../../stores/app-store';
+import { NewProjectConfig } from '../../types/app';
+
+export function NewProjectWizard({ onCancel }: { onCancel: () => void }) {
+  const [step, setStep] = useState(1);
+  const [config, setConfig] = useState<NewProjectConfig>({
+    name: '', location: '', description: '', initGit: true,
+    techStack: { language: 'python', languageVersion: '3.11', framework: 'fastapi', database: 'postgresql', orm: 'sqlalchemy' },
+    domains: [{ name: '', description: '' }],
+  });
+  const { createProject, setView } = useAppStore();
+
+  const handleCreate = async () => {
+    // Filter out empty domains
+    const finalConfig = {
+      ...config,
+      domains: config.domains.filter(d => d.name.trim()),
+    };
+    const path = await createProject(finalConfig);
+
+    // Load and navigate
+    const projectStore = (await import('../../stores/project-store')).useProjectStore.getState();
+    await projectStore.loadProject(path);
+    setView('project');
+  };
+
+  return (
+    <div className="max-w-lg mx-auto mt-16 p-6">
+      <h2 className="text-xl font-bold mb-4">New Project — Step {step} of 3</h2>
+
+      {step === 1 && (
+        <div className="space-y-4">
+          <label>Project Name
+            <input value={config.name} onChange={e => setConfig({ ...config, name: e.target.value })}
+              className="input w-full" placeholder="my-project" />
+          </label>
+          <label>Location
+            <div className="flex gap-2">
+              <input value={config.location} onChange={e => setConfig({ ...config, location: e.target.value })}
+                className="input flex-1" placeholder="~/code/my-project" />
+              <button onClick={async () => {
+                const { open } = await import('@tauri-apps/plugin-dialog');
+                const dir = await open({ directory: true });
+                if (dir) setConfig({ ...config, location: `${dir}/${config.name}` });
+              }} className="btn btn-sm">Browse</button>
+            </div>
+          </label>
+          <label>Description
+            <input value={config.description} onChange={e => setConfig({ ...config, description: e.target.value })}
+              className="input w-full" placeholder="My awesome project" />
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={config.initGit}
+              onChange={e => setConfig({ ...config, initGit: e.target.checked })} />
+            Initialize Git repository
+          </label>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="space-y-4">
+          <label>Language
+            <select value={config.techStack.language}
+              onChange={e => setConfig({ ...config, techStack: { ...config.techStack, language: e.target.value } })}
+              className="select w-full">
+              <option value="python">Python</option>
+              <option value="typescript">TypeScript</option>
+              <option value="go">Go</option>
+            </select>
+          </label>
+          <label>Framework
+            <select value={config.techStack.framework}
+              onChange={e => setConfig({ ...config, techStack: { ...config.techStack, framework: e.target.value } })}
+              className="select w-full">
+              <option value="fastapi">FastAPI</option>
+              <option value="django">Django</option>
+              <option value="nestjs">NestJS</option>
+              <option value="express">Express</option>
+              <option value="gin">Gin</option>
+            </select>
+          </label>
+          <label>Database
+            <select value={config.techStack.database}
+              onChange={e => setConfig({ ...config, techStack: { ...config.techStack, database: e.target.value } })}
+              className="select w-full">
+              <option value="postgresql">PostgreSQL</option>
+              <option value="mysql">MySQL</option>
+              <option value="sqlite">SQLite</option>
+              <option value="mongodb">MongoDB</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">Define your initial domains:</p>
+          {config.domains.map((d, i) => (
+            <div key={i} className="flex gap-2">
+              <input value={d.name} placeholder="users"
+                onChange={e => {
+                  const domains = [...config.domains];
+                  domains[i] = { ...d, name: e.target.value };
+                  setConfig({ ...config, domains });
+                }} className="input flex-1" />
+              <input value={d.description} placeholder="User management"
+                onChange={e => {
+                  const domains = [...config.domains];
+                  domains[i] = { ...d, description: e.target.value };
+                  setConfig({ ...config, domains });
+                }} className="input flex-1" />
+              <button onClick={() => {
+                setConfig({ ...config, domains: config.domains.filter((_, j) => j !== i) });
+              }} className="btn btn-sm text-red-500">x</button>
+            </div>
+          ))}
+          <button onClick={() => {
+            setConfig({ ...config, domains: [...config.domains, { name: '', description: '' }] });
+          }} className="btn btn-sm">+ Add domain</button>
+        </div>
+      )}
+
+      <div className="flex justify-between mt-6">
+        <button onClick={step === 1 ? onCancel : () => setStep(step - 1)} className="btn btn-secondary">
+          {step === 1 ? 'Cancel' : '← Back'}
+        </button>
+        <button onClick={step === 3 ? handleCreate : () => setStep(step + 1)} className="btn btn-primary">
+          {step === 3 ? 'Create' : 'Next →'}
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+**Component: `src/components/Settings/SettingsDialog.tsx`**
+```tsx
+import { useState } from 'react';
+import { useAppStore } from '../../stores/app-store';
+import { LLMSettings } from './LLMSettings';
+import { ModelSettings } from './ModelSettings';
+import { ClaudeCodeSettings } from './ClaudeCodeSettings';
+import { TestingSettings } from './TestingSettings';
+import { EditorSettings } from './EditorSettings';
+import { GitSettings } from './GitSettings';
+
+const TABS = ['LLM', 'Models', 'Claude Code', 'Testing', 'Editor', 'Git'] as const;
+type Tab = typeof TABS[number];
+
+export function SettingsDialog({ onClose }: { onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<Tab>('LLM');
+  const [scope, setScope] = useState<'global' | 'project'>('global');
+  const { globalSettings, saveGlobalSettings } = useAppStore();
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl w-[700px] h-[500px] flex">
+        {/* Sidebar */}
+        <div className="w-40 border-r p-3 space-y-1">
+          <select value={scope} onChange={e => setScope(e.target.value as any)}
+            className="select w-full text-sm mb-3">
+            <option value="global">Global</option>
+            <option value="project">Project</option>
+          </select>
+          {TABS.map(tab => (
+            <button key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`block w-full text-left px-3 py-1.5 rounded text-sm ${
+                activeTab === tab ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
+              }`}>
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 p-4 overflow-auto">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-bold">{activeTab}</h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+
+          {activeTab === 'LLM' && <LLMSettings settings={globalSettings} onSave={saveGlobalSettings} />}
+          {activeTab === 'Models' && <ModelSettings settings={globalSettings} onSave={saveGlobalSettings} />}
+          {activeTab === 'Claude Code' && <ClaudeCodeSettings settings={globalSettings} onSave={saveGlobalSettings} />}
+          {activeTab === 'Testing' && <TestingSettings settings={globalSettings} onSave={saveGlobalSettings} />}
+          {activeTab === 'Editor' && <EditorSettings settings={globalSettings} onSave={saveGlobalSettings} />}
+          {activeTab === 'Git' && <GitSettings settings={globalSettings} onSave={saveGlobalSettings} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+**Update `src/App.tsx` — route between views:**
+```tsx
+import { useEffect } from 'react';
+import { useAppStore } from './stores/app-store';
+import { ProjectLauncher } from './components/ProjectLauncher/ProjectLauncher';
+import { FirstRunWizard } from './components/FirstRun/FirstRunWizard';
+import { AppShell } from './AppShell'; // existing canvas + panels layout
+
+export default function App() {
+  const { view, checkFirstRun, loadRecentProjects, loadGlobalSettings, startAutoSave } = useAppStore();
+
+  useEffect(() => {
+    // Boot sequence
+    checkFirstRun().then(() => {
+      loadGlobalSettings();
+      loadRecentProjects();
+    });
+  }, []);
+
+  useEffect(() => {
+    // Start auto-save when in project view
+    const settings = useAppStore.getState().globalSettings;
+    if (view === 'project' && settings.editor?.autoSaveInterval) {
+      startAutoSave(settings.editor.autoSaveInterval);
+    }
+    return () => useAppStore.getState().stopAutoSave();
+  }, [view]);
+
+  switch (view) {
+    case 'first-run':
+      return <FirstRunWizard />;
+    case 'launcher':
+      return <ProjectLauncher />;
+    case 'project':
+      return <AppShell />;
+  }
+}
+```
+
+**Error notification component (add to AppShell):**
+```tsx
+import { useAppStore } from '../../stores/app-store';
+
+export function ErrorToasts() {
+  const { errors, dismissError } = useAppStore();
+  const visible = errors.filter(e => !e.dismissed);
+
+  return (
+    <div className="fixed bottom-4 right-4 space-y-2 z-50">
+      {visible.map(error => (
+        <div key={error.id} className={`rounded-lg shadow-lg p-3 max-w-sm flex gap-3 ${
+          error.severity === 'info' ? 'bg-blue-50 border-blue-200' :
+          error.severity === 'warning' ? 'bg-yellow-50 border-yellow-200' :
+          error.severity === 'error' ? 'bg-red-50 border-red-200' :
+          'bg-red-100 border-red-300'
+        } border`}>
+          <div className="flex-1">
+            <p className="text-sm font-medium">{error.message}</p>
+            {error.detail && <p className="text-xs text-gray-500 mt-1">{error.detail}</p>}
+            {error.recoveryAction && (
+              <button onClick={error.recoveryAction.action}
+                className="text-xs text-blue-600 underline mt-1">
+                {error.recoveryAction.label}
+              </button>
+            )}
+          </div>
+          <button onClick={() => dismissError(error.id)}
+            className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+**Undo/redo toolbar buttons (add to Canvas toolbar):**
+```tsx
+import { useUndoStore } from '../../stores/undo-store';
+
+export function UndoRedoButtons({ flowId }: { flowId: string }) {
+  const { canUndo, canRedo, undo, redo, getLastDescription } = useUndoStore();
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={() => undo(flowId)}
+        disabled={!canUndo(flowId)}
+        title={canUndo(flowId) ? `Undo: ${getLastDescription(flowId, 'undo')}` : 'Nothing to undo'}
+        className="btn btn-sm disabled:opacity-30"
+      >
+        ↩ Undo
+      </button>
+      <button
+        onClick={() => redo(flowId)}
+        disabled={!canRedo(flowId)}
+        title={canRedo(flowId) ? `Redo: ${getLastDescription(flowId, 'redo')}` : 'Nothing to redo'}
+        className="btn btn-sm disabled:opacity-30"
+      >
+        Redo ↪
+      </button>
+    </div>
+  );
+}
+```
+
+**Keyboard shortcut registration (add to Canvas or App level):**
+```typescript
+// Register global undo/redo shortcuts
+useEffect(() => {
+  const handler = (e: KeyboardEvent) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+
+    const flowId = useFlowStore.getState().currentFlow?.id;
+    if (!flowId) return;
+
+    if (e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      useUndoStore.getState().undo(flowId);
+    }
+    if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+      e.preventDefault();
+      useUndoStore.getState().redo(flowId);
+    }
+    if (e.key === ',') {
+      e.preventDefault();
+      setShowSettings(true);
+    }
+  };
+  window.addEventListener('keydown', handler);
+  return () => window.removeEventListener('keydown', handler);
+}, []);
+```
+
+**Integration: push undo snapshots before mutations in flow-store:**
+```typescript
+// In flow-store.ts, wrap every mutation that should be undoable:
+addNode: (node) => {
+  useUndoStore.getState().pushSnapshot(get().currentFlow!.id, `Add ${node.type} node`);
+  // ... existing add logic
+},
+
+deleteNode: (nodeId) => {
+  useUndoStore.getState().pushSnapshot(get().currentFlow!.id, `Delete node`);
+  // ... existing delete logic
+},
+
+moveNode: (nodeId, position) => {
+  useUndoStore.getState().pushSnapshot(get().currentFlow!.id, `Move node`);
+  // ... existing move logic
+},
+
+addConnection: (from, to) => {
+  useUndoStore.getState().pushSnapshot(get().currentFlow!.id, `Connect nodes`);
+  // ... existing connect logic
+},
+
+updateSpec: (nodeId, field, value) => {
+  useUndoStore.getState().pushSnapshot(get().currentFlow!.id, `Edit ${field}`);
+  // ... existing update logic
+},
+```
+
+---
+
 ## Phase 4: Testing the MVP
 
 ### Manual Test Checklist
@@ -10012,6 +10988,61 @@ if (config.test_generation?.include_in_prompt && generatedTestCode) {
     - [ ] "Fix all non-compliant" batches all issues into one prompt
     - [ ] Compliance data persisted in mapping.yaml (score, issues, timestamps)
 
+44. **Project Launcher**
+    - [ ] App launches to Project Launcher (not directly into canvas)
+    - [ ] Recent projects listed with name, path, last opened timestamp
+    - [ ] Click recent project → loads project and navigates to System Map
+    - [ ] Right-click recent project → "Remove from recent"
+    - [ ] "New Project" opens 3-step wizard (basics, tech stack, domains)
+    - [ ] Wizard creates specs/ directory, system.yaml, architecture.yaml, domain.yaml files
+    - [ ] Wizard initializes Git repo if checkbox checked
+    - [ ] "Open Existing" shows OS file picker, validates folder is a DDD project
+    - [ ] Non-DDD folder shows error with "Initialize as DDD project?" recovery action
+    - [ ] Recent projects pruned on load (remove entries where folder no longer exists)
+
+45. **Settings Screen**
+    - [ ] Accessible via menu bar → Settings or Cmd+, shortcut
+    - [ ] Tab navigation: LLM, Models, Claude Code, Testing, Editor, Git
+    - [ ] Global vs Project scope toggle
+    - [ ] LLM tab: add/remove providers, env var names for API keys, "Test connection" button
+    - [ ] Models tab: task-to-model routing, fallback chain ordering
+    - [ ] Editor tab: grid snap, auto-save interval, theme (light/dark/system), font size
+    - [ ] Settings persist to ~/.ddd-tool/settings.json (global) and .ddd/config.yaml (project)
+    - [ ] API keys stored as env var names, never raw values
+
+46. **First-Run Experience**
+    - [ ] First-run detected when ~/.ddd-tool/ directory doesn't exist
+    - [ ] 3-step wizard: Connect LLM → Claude Code detection → First project
+    - [ ] "Skip for now" option on LLM step
+    - [ ] Claude Code auto-detection: checks if `claude` is in PATH
+    - [ ] "Explore with sample project" option opens bundled read-only example
+    - [ ] Creates ~/.ddd-tool/ with settings.json and recent-projects.json
+    - [ ] Subsequent launches go straight to Project Launcher
+
+47. **Error Handling**
+    - [ ] Error toasts appear in bottom-right corner
+    - [ ] Info severity auto-dismisses after 5 seconds
+    - [ ] Warning/error severity requires manual dismiss
+    - [ ] Fatal severity shows modal blocking all actions
+    - [ ] YAML parse errors show line number and revert to last valid state
+    - [ ] LLM errors auto-retry with exponential backoff (3 attempts)
+    - [ ] LLM provider down → auto-fallback to next model in chain
+    - [ ] PTY crash → "Reconnect" / "New session" buttons
+    - [ ] Auto-save writes to .ddd/autosave/ (not real spec files)
+    - [ ] Crash recovery dialog on next launch if autosave data exists
+    - [ ] All errors logged to ~/.ddd-tool/logs/ddd-tool.log
+
+48. **Undo/Redo**
+    - [ ] Cmd+Z undoes last canvas action, Cmd+Shift+Z redoes
+    - [ ] Undo/redo is per-flow (each flow has its own history stack)
+    - [ ] Undoable: add/delete/move node, connect/disconnect, edit spec field, apply ghost preview
+    - [ ] NOT undoable: git commit, claude code implementation, file save, chat messages
+    - [ ] History coalesces rapid changes (typing in same field < 500ms apart)
+    - [ ] Max 100 snapshots per flow (oldest dropped when exceeded)
+    - [ ] Undo/redo buttons in toolbar with tooltip showing what will be undone/redone
+    - [ ] Buttons grayed out when stack is empty
+    - [ ] Stack cleared when flow is closed
+
 ---
 
 ## Phase 5: Key Implementation Notes
@@ -10020,13 +11051,15 @@ if (config.test_generation?.include_in_prompt && generatedTestCode) {
 
 1. **State Management**
    - Use Zustand for all state
-   - Keep stores focused (sheet, flow, project, ui, git, llm, implementation)
+   - Keep stores focused (sheet, flow, project, ui, git, llm, implementation, app, undo)
    - `sheet-store` owns navigation state (current level, breadcrumbs, history)
    - `project-store` owns domain configs parsed from domain.yaml files
    - `flow-store` owns current flow being edited (Level 3 only)
    - `llm-store` owns chat state, ghost previews, LLM config
    - `memory-store` owns project memory layers, refresh triggers, decisions
    - `implementation-store` owns panel state, PTY session, queue, test results, mappings
+   - `app-store` owns app-level view state, recent projects, global settings, errors, auto-save
+   - `undo-store` owns per-flow undo/redo stacks with immutable snapshots
    - Never mutate state directly
 
 2. **Tauri Commands**
@@ -10111,6 +11144,15 @@ if (config.test_generation?.include_in_prompt && generatedTestCode) {
 45. **Do** generate boundary tests for every validation field, not just required fields — min/max boundaries catch off-by-one errors that manual testing misses
 46. **Don't** run spec compliance check before tests pass — compliance compares expected vs actual, which is meaningless if tests are failing for other reasons
 47. **Do** persist derived test counts in mapping.yaml — the coverage badge needs this data without re-deriving on every load
+48. **Do** launch to Project Launcher, not directly into canvas — users need to choose/create a project first
+49. **Don't** store raw API keys anywhere on disk — store only env var names in config, read from `process.env` at runtime, or use OS keychain
+50. **Do** validate DDD project folders on open — check for `specs/system.yaml` or `.ddd/config.yaml` before attempting to load
+51. **Don't** auto-save directly to spec files — auto-save writes to `.ddd/autosave/` to prevent corrupting specs on crash
+52. **Do** use `structuredClone` for undo snapshots — shallow copies will share references and corrupt history
+53. **Do** coalesce undo snapshots for rapid keystrokes (< 500ms same field) — otherwise typing a word creates 5 undo entries
+54. **Don't** include undo/redo for side-effects (git, file writes, LLM calls) — only canvas and spec mutations are undoable
+55. **Do** prune recent projects on load — removing entries where the folder no longer exists prevents confusing dead links
+56. **Do** show the first-run wizard only once — set a flag in `~/.ddd-tool/settings.json` after completion
 
 ---
 
@@ -10314,6 +11356,23 @@ npm run tauri dev
 - [ ] Compliance score and issues persisted in mapping.yaml
 - [ ] Test Spec and Compliance tabs accessible in Implementation Panel
 
+### App Shell & UX
+- [ ] App launches to Project Launcher screen (not canvas)
+- [ ] Recent projects load from ~/.ddd-tool/recent-projects.json with pruning
+- [ ] New Project wizard creates specs/, system.yaml, architecture.yaml, domain.yaml, .ddd/, Git init
+- [ ] Open Existing validates folder is a DDD project (checks specs/system.yaml or .ddd/config.yaml)
+- [ ] Settings dialog opens via Cmd+, with tab navigation (LLM, Models, Claude Code, Testing, Editor, Git)
+- [ ] Global vs project scope toggle in settings
+- [ ] API keys stored as env var names (never raw), "Test connection" verifies
+- [ ] First-run wizard detects missing ~/.ddd-tool/ and guides through LLM + Claude Code + project setup
+- [ ] Sample project available as read-only exploration (bundled in app)
+- [ ] Error toasts with severity-based auto-dismiss (info=5s, warning/error=manual, fatal=modal)
+- [ ] LLM errors auto-retry with exponential backoff, auto-fallback to next provider
+- [ ] Auto-save to .ddd/autosave/ every 30s (configurable), crash recovery dialog on relaunch
+- [ ] Undo/redo per-flow with Cmd+Z / Cmd+Shift+Z, max 100 snapshots, coalescing rapid changes
+- [ ] Undo/redo toolbar buttons with tooltips, grayed when empty
+- [ ] All errors logged to ~/.ddd-tool/logs/ddd-tool.log with rotation
+
 ---
 
 ## Next Steps After MVP
@@ -10321,8 +11380,8 @@ npm run tauri dev
 1. Add more node types (data_store, event, loop, parallel, sub_flow)
 2. Add validation presets (email, phone, password)
 3. Add Mermaid export
-4. Add undo/redo
-5. Add keyboard shortcuts
+4. ~~Add undo/redo~~ (now in MVP)
+5. ~~Add keyboard shortcuts~~ (now in MVP)
 6. Add minimap showing position within hierarchy
 7. Add expert agents
 8. Add templates/library
