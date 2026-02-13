@@ -13528,21 +13528,164 @@ npm run tauri dev
 
 ---
 
-## Next Steps After MVP
+## Session 17: Extended Nodes + Enhancements
 
-1. Add more node types (data_store, event, loop, parallel, sub_flow)
-2. Add validation presets (email, phone, password)
-3. Add Mermaid export
-4. ~~Add undo/redo~~ (now in MVP)
-5. ~~Add keyboard shortcuts~~ (now in MVP)
-6. Add minimap showing position within hierarchy
-7. Add expert agents
-8. Add templates/library
-9. Add live agent testing/debugging (run agent from within DDD Tool)
-10. Add Router node visual (multi-output classification)
-11. Add Memory node visual (vector store / conversation config)
-12. Add orchestration observability dashboard (which agent handled what, latency, errors)
-13. Add circuit breaker status indicators on routing arrows
+Session 17 is a post-MVP enhancement session that adds missing node types and quality-of-life features.
+
+### Extended Node Types
+
+Add 6 traditional flow node types to complete the spec's full set of 11:
+
+| Node | Symbol | Purpose | Spec Panel Fields |
+|------|--------|---------|-------------------|
+| `data_store` | ▣ | Database CRUD operations | operation (create/read/update/delete), model, data mapping, query filters |
+| `service_call` | ⇥ | External API/service calls | method, url/service, headers, body, timeout, retry, error mapping |
+| `event` | ⚡ | Emit or consume domain events | event_name, payload mapping, async (fire-and-forget) vs sync |
+| `loop` | ↻ | Iterate over collections | collection expression, iterator variable, body nodes, break condition |
+| `parallel` | ═ | Concurrent execution branches | branches (list of node chains), join strategy (all/any/n-of), timeout |
+| `sub_flow` | ⊞ | Call another flow as subroutine | flow_ref (domain/flow-id), input mapping, output mapping |
+
+**Update `src/types/flow.ts`:**
+```typescript
+export type DddNodeType =
+  | 'trigger' | 'input' | 'process' | 'decision' | 'terminal'
+  | 'data_store' | 'service_call' | 'event' | 'loop' | 'parallel' | 'sub_flow'
+  | 'agent_loop' | 'guardrail' | 'human_gate'
+  | 'orchestrator' | 'smart_router' | 'handoff' | 'agent_group';
+```
+
+**New node spec interfaces — add to `src/types/flow.ts`:**
+```typescript
+export interface DataStoreSpec {
+  operation: 'create' | 'read' | 'update' | 'delete';
+  model: string;                    // Schema model name (e.g. "User")
+  data?: Record<string, string>;    // Field mappings for create/update (e.g. { email: "$.email" })
+  query?: Record<string, string>;   // Filter conditions for read/update/delete
+  description: string;
+}
+
+export interface ServiceCallSpec {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  url: string;                      // URL or service identifier
+  headers?: Record<string, string>;
+  body?: Record<string, string>;    // Body field mappings
+  timeout_ms?: number;
+  retry?: { max_attempts: number; backoff_ms: number };
+  error_mapping?: Record<string, string>;  // HTTP status → error_code
+  description: string;
+}
+
+export interface EventNodeSpec {
+  direction: 'emit' | 'consume';
+  event_name: string;
+  payload: Record<string, string>;  // Field mappings
+  async: boolean;                   // Fire-and-forget or wait for handlers
+  description: string;
+}
+
+export interface LoopSpec {
+  collection: string;               // Expression (e.g. "$.items")
+  iterator: string;                 // Variable name (e.g. "item")
+  break_condition?: string;         // Optional early exit
+  description: string;
+}
+
+export interface ParallelSpec {
+  branches: string[];               // Entry node IDs for each branch
+  join: 'all' | 'any' | 'n_of';    // Wait strategy
+  join_count?: number;              // Required when join = 'n_of'
+  timeout_ms?: number;
+  description: string;
+}
+
+export interface SubFlowSpec {
+  flow_ref: string;                 // "domain/flow-id"
+  input_mapping: Record<string, string>;
+  output_mapping: Record<string, string>;
+  description: string;
+}
+```
+
+**New node components** — create one file per node in `src/components/FlowCanvas/nodes/`:
+- `DataStoreNode.tsx` — database icon, model name, operation badge
+- `ServiceCallNode.tsx` — external link icon, URL preview, method badge
+- `EventNode.tsx` — lightning icon, event name, direction badge (emit/consume)
+- `LoopNode.tsx` — loop icon, collection expression, contains inner nodes
+- `ParallelNode.tsx` — parallel lines icon, branch count, join strategy badge
+- `SubFlowNode.tsx` — nested flow icon, flow reference link (clickable to navigate)
+
+**Update `src/components/FlowCanvas/nodes/index.ts`:**
+```typescript
+import { DataStoreNode } from './DataStoreNode';
+import { ServiceCallNode } from './ServiceCallNode';
+import { EventNode } from './EventNode';
+import { LoopNode } from './LoopNode';
+import { ParallelNode } from './ParallelNode';
+import { SubFlowNode } from './SubFlowNode';
+
+export const nodeTypes: NodeTypes = {
+  // ... existing 12 nodes ...
+  data_store: DataStoreNode,
+  service_call: ServiceCallNode,
+  event: EventNode,
+  loop: LoopNode,
+  parallel: ParallelNode,
+  sub_flow: SubFlowNode,
+};
+```
+
+**Update `NodeToolbar.tsx`** — add to traditional flow palette:
+```typescript
+const extendedTraditionalNodes = [
+  { type: 'input', label: 'Input', icon: FormInput },
+  { type: 'process', label: 'Process', icon: Cog },
+  { type: 'decision', label: 'Decision', icon: GitFork },
+  { type: 'data_store', label: 'Data Store', icon: Database },
+  { type: 'service_call', label: 'Service Call', icon: ExternalLink },
+  { type: 'event', label: 'Event', icon: Zap },
+  { type: 'loop', label: 'Loop', icon: Repeat },
+  { type: 'parallel', label: 'Parallel', icon: Columns },
+  { type: 'sub_flow', label: 'Sub-Flow', icon: GitMerge },
+  { type: 'terminal', label: 'Terminal', icon: Square },
+];
+```
+
+**Update spec panel editors** — add to `src/components/SpecPanel/`:
+- `DataStoreEditor.tsx` — operation dropdown, model selector (from schemas), data mapping table
+- `ServiceCallEditor.tsx` — method dropdown, URL input, headers/body mapping, timeout, retry config
+- `EventEditor.tsx` — direction toggle, event name (autocomplete from domain events), payload mapping
+- `LoopEditor.tsx` — collection expression, iterator name, break condition
+- `ParallelEditor.tsx` — branch list, join strategy dropdown, timeout
+- `SubFlowEditor.tsx` — flow reference picker (browse domains/flows), input/output mapping tables
+
+### Other Enhancements
+
+| Feature | Description |
+|---------|-------------|
+| **Validation presets** | Reusable input validation patterns (email, phone, password, URL, UUID) — dropdown in InputNode spec panel |
+| **Mermaid export** | Generate Mermaid flowchart syntax from any flow — "Export" menu in toolbar |
+| **Minimap** | Small position indicator showing where you are in the L1→L2→L3 hierarchy |
+| **Expert agents** | Pre-built agent archetypes (researcher, coder, reviewer) as templates |
+| **Templates/library** | Reusable flow templates (auth, CRUD, webhook, scheduled job) — "Import template" in Add Flow dialog |
+| **Live agent testing** | Run an agent flow from within DDD Tool with mock inputs, see tool calls and LLM responses in real-time |
+| **Router node** | Multi-output classification visual for agent routing (extends SmartRouter with visual branching) |
+| **Memory node** | Vector store / conversation config visual for agent memory management |
+| **Orchestration observability** | Dashboard showing which agent handled what, latency per step, error rates |
+| **Circuit breaker indicators** | Visual status on routing arrows (closed/open/half-open) |
+
+### Session 17 Success Criteria
+
+- [ ] All 6 new node types render on canvas with correct icons and badges
+- [ ] All 6 node types have spec panel editors with appropriate fields
+- [ ] DataStoreNode model selector shows schemas from project
+- [ ] ServiceCallNode supports timeout and retry configuration
+- [ ] EventNode autocompletes event names from domain.yaml
+- [ ] LoopNode visually contains its body nodes
+- [ ] ParallelNode shows branch count and join strategy
+- [ ] SubFlowNode links to referenced flow (clickable navigation)
+- [ ] All 6 nodes serialize to/from YAML correctly
+- [ ] NodeToolbar shows extended palette for traditional flows
+- [ ] Validation rules added for new node types (e.g. data_store must have model)
 
 ---
 
