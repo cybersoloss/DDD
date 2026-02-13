@@ -1,0 +1,873 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# ARCHITECTURE TEMPLATE v1.0
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# This template defines the complete architecture specification for a project.
+# It enables Claude Code to generate a consistent, production-ready codebase.
+#
+# USAGE:
+#   1. Copy this file to specs/architecture.yaml in your project
+#   2. Replace all {placeholders} with your values
+#   3. Remove or comment out sections that don't apply
+#   4. Adjust settings to match your requirements
+#
+# SECTIONS:
+#   - structure:      Project folder layout and naming conventions
+#   - dependencies:   Package versions for production and development
+#   - infrastructure: Database, cache, queue, storage configuration
+#   - cross_cutting:  Auth, logging, errors, rate limiting, middleware
+#   - api:            REST API conventions
+#   - testing:        Test framework and strategy
+#   - deployment:     Containers, environments, CI/CD
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+architecture:
+  version: 1.0.0
+  
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PROJECT STRUCTURE
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Defines how code is organized. Choose one:
+  #   - domain-driven: Organized by business domains (recommended for DDD)
+  #   - feature-based: Organized by features/use cases
+  #   - layered:       Traditional layers (controllers, services, repositories)
+  
+  structure:
+    type: domain-driven  # domain-driven | feature-based | layered
+    
+    # Folder layout - {domain} is replaced with actual domain names from system.yaml
+    layout:
+      src:
+        # Domain folders (one per domain in system.yaml)
+        domains:
+          "{domain}":
+            router: router.py         # HTTP route handlers
+            schemas: schemas.py       # Request/response schemas
+            services: services.py     # Business logic
+            models: models.py         # Database models
+            events: events.py         # Event publishers/handlers
+            exceptions: exceptions.py # Domain-specific exceptions
+            
+        # Shared code used across domains
+        shared:
+          auth: auth/                 # Authentication/authorization
+          database: database/         # DB connection, base models
+          events: events/             # Event bus infrastructure
+          middleware: middleware/     # HTTP middleware
+          exceptions: exceptions/     # Base exception classes
+          utils: utils/               # Common utilities
+          
+        # Configuration
+        config:
+          settings: settings.py       # Environment-based settings
+          logging: logging.py         # Logging configuration
+          
+      # Test organization
+      tests:
+        unit:
+          domains: "{domain}/"        # Unit tests mirror domain structure
+        integration: integration/     # Integration tests
+        e2e: e2e/                      # End-to-end tests
+        fixtures: fixtures/           # Shared test data
+        factories: factories/         # Model factories
+        
+      # Database migrations
+      migrations:
+        versions: versions/
+        
+      # Utility scripts
+      scripts: scripts/
+      
+    # Naming conventions
+    naming:
+      files: snake_case               # my_module.py
+      classes: PascalCase             # MyClass
+      functions: snake_case           # my_function()
+      variables: snake_case           # my_variable
+      constants: SCREAMING_SNAKE_CASE # MY_CONSTANT
+      private: _leading_underscore    # _private_method()
+      
+      # Database naming
+      database_tables: plural_snake_case   # users, user_profiles
+      database_columns: snake_case         # created_at, user_id
+      foreign_keys: "{table}_id"           # user_id, tenant_id
+      indexes: "ix_{table}_{columns}"      # ix_users_email
+      
+      # API naming
+      api_endpoints: kebab-case            # /user-profiles
+      api_params: snake_case               # ?user_id=123
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # DEPENDENCIES
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Define exact versions for reproducible builds.
+  # Update versions based on your requirements.
+  
+  dependencies:
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ PYTHON STACK                                                           │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    # Uncomment this section for Python projects
+    
+    python: "3.11"
+    
+    production:
+      # Framework (choose one)
+      fastapi: "^0.109.0"          # API framework
+      # flask: "^3.0.0"            # Alternative: Flask
+      # django: "^5.0.0"           # Alternative: Django
+      
+      uvicorn: "^0.27.0"           # ASGI server
+      
+      # Validation
+      pydantic: "^2.5.0"
+      pydantic-settings: "^2.1.0"
+      
+      # Database
+      sqlalchemy: "^2.0.25"        # ORM
+      alembic: "^1.13.0"           # Migrations
+      asyncpg: "^0.29.0"           # Async PostgreSQL driver
+      # psycopg2-binary: "^2.9.0"  # Sync PostgreSQL driver (alternative)
+      
+      # Cache
+      redis: "^5.0.0"
+      
+      # Queue (choose one)
+      aio-pika: "^9.3.0"           # RabbitMQ
+      # celery: "^5.3.0"           # Alternative: Celery
+      # rq: "^1.15.0"              # Alternative: Redis Queue
+      
+      # HTTP client
+      httpx: "^0.26.0"
+      
+      # Auth
+      python-jose: "^3.3.0"        # JWT
+      passlib: "^1.7.4"            # Password hashing
+      bcrypt: "^4.1.0"
+      
+      # Logging & Monitoring
+      structlog: "^24.1.0"
+      # sentry-sdk: "^1.39.0"      # Error tracking (optional)
+      
+    development:
+      pytest: "^7.4.0"
+      pytest-asyncio: "^0.23.0"
+      pytest-cov: "^4.1.0"
+      factory-boy: "^3.3.0"
+      fakeredis: "^2.20.0"
+      httpx: "^0.26.0"             # For test client
+      ruff: "^0.1.0"               # Linter
+      mypy: "^1.8.0"               # Type checker
+      pre-commit: "^3.6.0"
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ TYPESCRIPT/NODE STACK                                                  │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    # Uncomment this section for TypeScript projects
+    
+    # node: "20"
+    # 
+    # production:
+    #   # Framework (choose one)
+    #   "@nestjs/core": "^10.0.0"
+    #   # express: "^4.18.0"       # Alternative: Express
+    #   # fastify: "^4.25.0"       # Alternative: Fastify
+    #   
+    #   # Validation
+    #   zod: "^3.22.0"
+    #   # class-validator: "^0.14.0"  # Alternative for NestJS
+    #   
+    #   # Database
+    #   prisma: "^5.8.0"           # ORM
+    #   # typeorm: "^0.3.0"        # Alternative: TypeORM
+    #   
+    #   # Cache
+    #   ioredis: "^5.3.0"
+    #   
+    # development:
+    #   typescript: "^5.3.0"
+    #   vitest: "^1.2.0"
+    #   "@types/node": "^20.0.0"
+    #   eslint: "^8.56.0"
+    #   prettier: "^3.2.0"
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # INFRASTRUCTURE
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  infrastructure:
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ DATABASE                                                               │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    database:
+      type: postgresql             # postgresql | mysql | sqlite | mongodb
+      async: true                  # Use async driver
+      
+      pool:
+        min_size: 5
+        max_size: 20
+        max_overflow: 10
+        pool_timeout: 30           # Seconds to wait for connection
+        pool_recycle: 3600         # Recycle connections after N seconds
+        
+      conventions:
+        primary_key: uuid          # uuid | serial | bigserial
+        timestamps: true           # Add created_at, updated_at to all tables
+        soft_delete: true          # Use deleted_at instead of DELETE
+        audit_log: false           # Log all changes (enable per-table)
+        
+      # Migration settings
+      migrations:
+        auto_generate: true
+        include_schemas: [public]
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ CACHE                                                                  │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    cache:
+      type: redis                  # redis | memcached | in-memory
+      
+      default_ttl: 3600            # 1 hour
+      max_ttl: 86400               # 24 hours
+      
+      key_prefix: "{system_name}:" # Namespace all keys
+      serializer: json             # json | pickle | msgpack
+      
+      # Common key patterns
+      patterns:
+        session: "session:{user_id}"
+        rate_limit: "rate:{tenant_id}:{endpoint}"
+        cache: "cache:{resource}:{id}"
+        lock: "lock:{resource}:{id}"
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ MESSAGE QUEUE                                                          │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    queue:
+      type: rabbitmq               # rabbitmq | redis | sqs | kafka
+      
+      # RabbitMQ settings
+      exchange: events
+      exchange_type: topic         # topic | direct | fanout
+      durable: true
+      
+      # Retry settings
+      retry:
+        enabled: true
+        max_attempts: 3
+        backoff_type: exponential  # exponential | linear | fixed
+        initial_delay: 1           # Seconds
+        max_delay: 60
+        multiplier: 2
+        
+      # Dead letter queue
+      dead_letter:
+        enabled: true
+        exchange: events.dlx
+        ttl: 604800                # 7 days
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ FILE STORAGE                                                           │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    storage:
+      type: s3                     # s3 | gcs | azure | local
+      provider: aws                # aws | minio | cloudflare | backblaze
+      
+      buckets:
+        uploads: "{system_name}-uploads"
+        exports: "{system_name}-exports"
+        
+      presigned_url_ttl: 3600      # 1 hour
+      max_file_size: 104857600     # 100MB
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CROSS-CUTTING CONCERNS
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  cross_cutting:
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ AUTHENTICATION                                                         │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    authentication:
+      type: jwt                    # jwt | session | api_key | oauth2
+      
+      # JWT settings
+      algorithm: RS256             # RS256 | HS256 | ES256
+      
+      access_token:
+        ttl: 900                   # 15 minutes
+        location: header           # header | cookie
+        header_name: Authorization
+        scheme: Bearer
+        
+      refresh_token:
+        ttl: 604800                # 7 days
+        location: cookie           # header | cookie
+        cookie_name: refresh_token
+        http_only: true
+        secure: true               # HTTPS only
+        same_site: lax             # strict | lax | none
+        
+      # Password requirements
+      password:
+        min_length: 8
+        require_uppercase: true
+        require_lowercase: true
+        require_digit: true
+        require_special: false
+        hash_algorithm: bcrypt
+        hash_rounds: 12
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ AUTHORIZATION                                                          │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    authorization:
+      type: rbac                   # rbac | abac | acl
+      
+      roles:
+        - name: super_admin
+          description: Full system access across all tenants
+          level: 100
+        - name: admin
+          description: Full access within tenant
+          level: 80
+        - name: owner
+          description: Tenant owner with billing access
+          level: 70
+        - name: manager
+          description: Can manage team members
+          level: 50
+        - name: member
+          description: Regular team member
+          level: 30
+        - name: viewer
+          description: Read-only access
+          level: 10
+          
+      default_role: member
+      super_admin_bypass: true     # Super admin skips all permission checks
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ MULTI-TENANCY                                                          │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    multi_tenancy:
+      enabled: true                # Set false for single-tenant apps
+      
+      strategy: row_level          # row_level | schema | database
+      identifier: tenant_id        # Column name for tenant isolation
+      
+      # How tenant is identified in requests
+      resolution:
+        - type: header
+          name: X-Tenant-ID
+        - type: jwt_claim
+          name: tenant_id
+        - type: subdomain          # tenant.example.com
+          
+      enforce_on_all_queries: true
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ LOGGING                                                                │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    logging:
+      format: structured           # structured | text
+      output: json                 # json | text | logfmt
+      
+      # Fields included in every log entry
+      include:
+        always:
+          - timestamp
+          - level
+          - message
+          - logger
+          - request_id
+          - tenant_id
+          - environment
+        on_request:
+          - method
+          - path
+          - status_code
+          - duration_ms
+          - user_id
+          - ip_address
+          - user_agent
+        on_error:
+          - error_type
+          - error_code
+          - error_message
+          - stack_trace
+          
+      # Paths excluded from request logging
+      exclude_paths:
+        - /health
+        - /ready
+        - /metrics
+        - /favicon.ico
+        
+      # Log levels per logger
+      levels:
+        root: INFO
+        sqlalchemy.engine: WARNING
+        httpx: WARNING
+        uvicorn.access: WARNING
+        
+      # Sensitive fields to mask
+      mask_fields:
+        - password
+        - token
+        - secret
+        - api_key
+        - authorization
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ ERROR HANDLING                                                         │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    error_handling:
+      # Standard error response format
+      response_format:
+        error:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Machine-readable error code (e.g., VALIDATION_ERROR)
+        details:
+          type: object
+          description: Additional error context (field errors, etc.)
+        request_id:
+          type: string
+          description: Request ID for support reference
+          
+      # Include stack trace by environment
+      include_stack_trace:
+        development: true
+        staging: true
+        production: false
+        
+      # Standard error codes (define in specs/shared/errors.yaml)
+      standard_codes:
+        - VALIDATION_ERROR         # 422
+        - NOT_FOUND                # 404
+        - UNAUTHORIZED             # 401
+        - FORBIDDEN                # 403
+        - CONFLICT                 # 409
+        - RATE_LIMITED             # 429
+        - INTERNAL_ERROR           # 500
+        - SERVICE_UNAVAILABLE      # 503
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ RATE LIMITING                                                          │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    rate_limiting:
+      enabled: true
+      storage: redis               # redis | memory
+      
+      # Default limits
+      default:
+        requests: 100
+        window_seconds: 60
+        
+      # Tier-based limits (if using subscription tiers)
+      by_tier:
+        free:
+          requests: 60
+          window_seconds: 60
+        starter:
+          requests: 300
+          window_seconds: 60
+        pro:
+          requests: 1000
+          window_seconds: 60
+        enterprise:
+          requests: 10000
+          window_seconds: 60
+          
+      # Endpoint-specific overrides
+      by_endpoint:
+        "/auth/login":
+          requests: 5
+          window_seconds: 60
+        "/auth/register":
+          requests: 3
+          window_seconds: 60
+        "/webhooks/*":
+          requests: 1000
+          window_seconds: 60
+          
+      # Rate limit headers
+      headers:
+        limit: X-RateLimit-Limit
+        remaining: X-RateLimit-Remaining
+        reset: X-RateLimit-Reset
+        retry_after: Retry-After
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ REQUEST CONTEXT                                                        │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    request_context:
+      # Fields available in request context
+      fields:
+        - name: request_id
+          type: uuid
+          source: generated
+        - name: tenant_id
+          type: uuid
+          source: header_or_jwt
+        - name: user_id
+          type: uuid
+          source: jwt
+        - name: roles
+          type: array
+          source: jwt
+        - name: trace_id
+          type: string
+          source: header
+          header: X-Trace-ID
+          
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ MIDDLEWARE ORDER                                                       │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    # Order matters! First middleware runs first on request, last on response.
+    middleware_order:
+      - cors                       # Handle CORS preflight
+      - request_id                 # Generate/extract request ID
+      - logging_start              # Log request start
+      - error_handler              # Catch all exceptions
+      - rate_limiter               # Check rate limits
+      - authentication             # Verify JWT/session
+      - tenant_context             # Set tenant context
+      - authorization              # Check permissions
+      - logging_end                # Log request completion
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # API DESIGN
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  api:
+    base_path: /api
+    
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ VERSIONING                                                             │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    versioning:
+      strategy: url_prefix         # url_prefix | header | query_param
+      current_version: v1
+      supported_versions: [v1]
+      
+      # For header strategy
+      header_name: X-API-Version
+      # For query param strategy
+      query_param: version
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ PAGINATION                                                             │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    pagination:
+      style: cursor                # cursor | offset
+      
+      default_limit: 20
+      max_limit: 100
+      
+      # Query parameters
+      params:
+        limit: limit
+        cursor: cursor             # For cursor pagination
+        offset: offset             # For offset pagination
+        page: page                 # For page-based (alias for offset)
+        
+      # Response fields
+      response:
+        items: items               # Array of results
+        total: total               # Total count (offset only)
+        next_cursor: next_cursor   # Next page cursor
+        prev_cursor: prev_cursor   # Previous page cursor
+        has_more: has_more         # Boolean flag
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ FILTERING                                                              │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    filtering:
+      style: query_params          # query_params | json_body
+      
+      # Operator syntax: field{operator}=value
+      operators:
+        eq: ""                     # ?status=active
+        ne: __ne                   # ?status__ne=deleted
+        gt: __gt                   # ?amount__gt=100
+        gte: __gte                 # ?amount__gte=100
+        lt: __lt                   # ?amount__lt=100
+        lte: __lte                 # ?amount__lte=100
+        in: __in                   # ?status__in=active,pending
+        nin: __nin                 # ?status__nin=deleted,archived
+        contains: __contains       # ?name__contains=john
+        icontains: __icontains     # ?name__icontains=john (case-insensitive)
+        startswith: __startswith   # ?name__startswith=john
+        endswith: __endswith       # ?name__endswith=son
+        isnull: __isnull           # ?deleted_at__isnull=true
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ SORTING                                                                │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    sorting:
+      param: sort
+      format: "field:direction"    # ?sort=created_at:desc
+      
+      multi_sort: true             # Allow multiple sort fields
+      separator: ","               # ?sort=status:asc,created_at:desc
+      max_sort_fields: 3
+      
+      directions:
+        asc: asc
+        desc: desc
+        
+      default: created_at:desc
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ RESPONSE FORMAT                                                        │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    response_envelope:
+      # Single resource
+      success_single:
+        data: object
+        
+      # List of resources
+      success_list:
+        data: array
+        meta:
+          pagination: object
+          filters: object          # Applied filters
+          
+      # Error response
+      error:
+        error: string
+        code: string
+        details: object
+        request_id: string
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ CORS                                                                   │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    cors:
+      enabled: true
+      
+      allowed_origins:
+        development:
+          - "http://localhost:3000"
+          - "http://localhost:5173"
+          - "http://127.0.0.1:3000"
+        staging:
+          - "https://staging.{domain}"
+        production:
+          - "https://app.{domain}"
+          - "https://*.{domain}"
+          
+      allowed_methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+        
+      allowed_headers:
+        - "*"
+        
+      expose_headers:
+        - X-Request-ID
+        - X-RateLimit-Limit
+        - X-RateLimit-Remaining
+        - X-RateLimit-Reset
+        
+      allow_credentials: true
+      max_age: 600                 # Preflight cache duration
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # TESTING
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  testing:
+    framework: pytest              # pytest | unittest | jest | vitest
+    async_mode: auto               # auto | strict
+    
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ COVERAGE                                                               │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    coverage:
+      minimum: 80                  # Minimum coverage percentage
+      fail_under: true             # Fail CI if below minimum
+      
+      exclude:
+        - "*/migrations/*"
+        - "*/config/*"
+        - "*/__init__.py"
+        - "*/tests/*"
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ DATABASE                                                               │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    database:
+      # Strategy for test isolation
+      strategy: transaction_rollback  # transaction_rollback | truncate | recreate
+      
+      use_test_database: true
+      test_database_suffix: _test     # myapp → myapp_test
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ FIXTURES                                                               │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    fixtures:
+      # Fixtures automatically used in all tests
+      auto_use:
+        - db_session
+        - test_client
+        
+      # Named fixtures
+      common:
+        - authenticated_client
+        - admin_client
+        - test_user
+        - test_tenant
+        
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ FACTORIES                                                              │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    factories:
+      library: factory_boy         # factory_boy | faker | custom
+      base_class: AsyncFactory     # For async ORMs
+      location: tests/factories/
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ MOCKS                                                                  │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    mocks:
+      external_apis: true          # Always mock external HTTP calls
+      redis: fakeredis             # Use fakeredis for tests
+      s3: moto                     # Use moto for S3
+      time: freezegun              # Use freezegun for time
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ MARKERS                                                                │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    markers:
+      - name: unit
+        description: Unit tests (no external dependencies)
+      - name: integration
+        description: Integration tests (with database)
+      - name: e2e
+        description: End-to-end tests (full stack)
+      - name: slow
+        description: Slow tests (skip in fast mode)
+        
+  # ─────────────────────────────────────────────────────────────────────────────
+  # DEPLOYMENT
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  deployment:
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ CONTAINERIZATION                                                       │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    containerization:
+      enabled: true
+      runtime: docker              # docker | podman
+      
+      base_image: python:3.11-slim # Or node:20-slim for TypeScript
+      multi_stage: true            # Use multi-stage builds
+      
+      # Security
+      non_root_user: true
+      read_only_filesystem: false
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ ENVIRONMENTS                                                           │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    environments:
+      development:
+        debug: true
+        log_level: DEBUG
+        replicas: 1
+        
+      staging:
+        debug: false
+        log_level: INFO
+        replicas: 2
+        
+      production:
+        debug: false
+        log_level: INFO
+        replicas: 3
+        auto_scaling:
+          enabled: true
+          min_replicas: 3
+          max_replicas: 10
+          target_cpu_percent: 70
+          target_memory_percent: 80
+          
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ HEALTH CHECKS                                                          │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    health_checks:
+      liveness:
+        path: /health
+        interval_seconds: 10
+        timeout_seconds: 5
+        failure_threshold: 3
+        
+      readiness:
+        path: /ready
+        interval_seconds: 5
+        timeout_seconds: 3
+        failure_threshold: 3
+        checks:
+          - database
+          - redis
+          - queue
+          
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ CI/CD                                                                  │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    ci_cd:
+      provider: github_actions     # github_actions | gitlab_ci | circleci
+      
+      # Branch to environment mapping
+      branches:
+        main: production
+        staging: staging
+        develop: development
+        
+      # Pipeline stages
+      stages:
+        - name: lint
+          run: ruff check .
+        - name: type_check
+          run: mypy src/
+        - name: test
+          run: pytest --cov --cov-fail-under=80
+        - name: security
+          run: bandit -r src/
+        - name: build
+          run: docker build -t {image_name} .
+        - name: push
+          run: docker push {image_name}
+        - name: deploy
+          run: kubectl apply -k k8s/{environment}
+          
+      # Required checks before merge
+      required_checks:
+        - lint
+        - type_check
+        - test
+        
+# ═══════════════════════════════════════════════════════════════════════════════
+# END OF TEMPLATE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# NEXT STEPS:
+#   1. Create specs/system.yaml with your project name and domains
+#   2. Create specs/config.yaml with your environment variables
+#   3. Create specs/shared/errors.yaml with your error codes
+#   4. Create domain flows in specs/domains/{domain}/flows/
+#   5. Run: ddd validate to check your specs
+#   6. Run: ddd generate to scaffold code
+#
+# ═══════════════════════════════════════════════════════════════════════════════

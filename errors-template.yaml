@@ -1,0 +1,426 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# ERROR CODES TEMPLATE v1.0
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Defines all error codes and their HTTP status mappings.
+# Claude Code uses this to:
+#   - Generate exception classes
+#   - Create error response handlers
+#   - Ensure consistent error messages
+#
+# USAGE:
+#   - Use these codes in flow specs for on_failure responses
+#   - Add domain-specific errors in domain.yaml files
+#   - Keep error messages user-friendly
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+errors:
+  version: 1.0.0
+  
+  # ─────────────────────────────────────────────────────────────────────────────
+  # RESPONSE FORMAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  response_format:
+    # All error responses follow this structure
+    schema:
+      error:
+        type: string
+        description: Human-readable error message
+        required: true
+      code:
+        type: string
+        description: Machine-readable error code
+        required: true
+      details:
+        type: object
+        description: Additional error context
+        required: false
+      request_id:
+        type: string
+        description: Request ID for support
+        required: true
+        
+    example:
+      error: "Email address is already registered"
+      code: "DUPLICATE_ENTRY"
+      details:
+        field: "email"
+        value: "user@example.com"
+      request_id: "req_abc123"
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # VALIDATION ERRORS (422)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  validation:
+    VALIDATION_ERROR:
+      http_status: 422
+      message: "Validation failed"
+      description: Generic validation error (usually includes field-level details)
+      details_schema:
+        errors:
+          type: array
+          items:
+            field: string
+            message: string
+            code: string
+            
+    INVALID_INPUT:
+      http_status: 422
+      message_template: "Invalid input: {reason}"
+      description: Invalid input data format or type
+      
+    MISSING_FIELD:
+      http_status: 422
+      message_template: "Missing required field: {field}"
+      description: Required field is missing from request
+      
+    INVALID_FORMAT:
+      http_status: 422
+      message_template: "Invalid format for {field}: {reason}"
+      description: Field value doesn't match expected format
+      examples:
+        - field: email
+          reason: "must be a valid email address"
+        - field: phone
+          reason: "must be in E.164 format"
+          
+    INVALID_LENGTH:
+      http_status: 422
+      message_template: "{field} must be between {min} and {max} characters"
+      description: Field length outside allowed range
+      
+    INVALID_RANGE:
+      http_status: 422
+      message_template: "{field} must be between {min} and {max}"
+      description: Numeric value outside allowed range
+      
+    INVALID_ENUM:
+      http_status: 422
+      message_template: "{field} must be one of: {allowed_values}"
+      description: Value not in allowed enum
+      
+    INVALID_JSON:
+      http_status: 422
+      message: "Request body must be valid JSON"
+      description: Malformed JSON in request body
+      
+    FILE_TOO_LARGE:
+      http_status: 422
+      message_template: "File size exceeds maximum of {max_size}"
+      description: Uploaded file exceeds size limit
+      
+    INVALID_FILE_TYPE:
+      http_status: 422
+      message_template: "File type '{type}' is not allowed. Allowed types: {allowed_types}"
+      description: Uploaded file type not permitted
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # AUTHENTICATION ERRORS (401)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  authentication:
+    UNAUTHORIZED:
+      http_status: 401
+      message: "Authentication required"
+      description: No authentication credentials provided
+      headers:
+        WWW-Authenticate: "Bearer"
+        
+    INVALID_TOKEN:
+      http_status: 401
+      message: "Invalid or malformed token"
+      description: Token cannot be decoded or has invalid signature
+      
+    TOKEN_EXPIRED:
+      http_status: 401
+      message: "Token has expired"
+      description: Token was valid but has expired
+      
+    INVALID_CREDENTIALS:
+      http_status: 401
+      message: "Invalid email or password"
+      description: Login credentials don't match
+      note: "Never specify which field is wrong for security"
+      
+    ACCOUNT_DISABLED:
+      http_status: 401
+      message: "Account has been disabled"
+      description: User account is disabled by admin
+      
+    ACCOUNT_LOCKED:
+      http_status: 401
+      message_template: "Account locked. Try again in {minutes} minutes"
+      description: Too many failed login attempts
+      
+    SESSION_EXPIRED:
+      http_status: 401
+      message: "Session has expired. Please log in again"
+      description: Session or refresh token expired
+      
+    REFRESH_TOKEN_INVALID:
+      http_status: 401
+      message: "Invalid refresh token"
+      description: Refresh token is invalid or revoked
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # AUTHORIZATION ERRORS (403)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  authorization:
+    FORBIDDEN:
+      http_status: 403
+      message: "You don't have permission to perform this action"
+      description: User authenticated but lacks permission
+      
+    INSUFFICIENT_ROLE:
+      http_status: 403
+      message_template: "This action requires {required_role} role"
+      description: User's role insufficient for action
+      
+    TENANT_MISMATCH:
+      http_status: 403
+      message: "Access denied to this resource"
+      description: Resource belongs to different tenant
+      note: "Don't reveal that resource exists for security"
+      
+    OWNERSHIP_REQUIRED:
+      http_status: 403
+      message: "You can only modify your own resources"
+      description: Action requires resource ownership
+      
+    SUBSCRIPTION_REQUIRED:
+      http_status: 403
+      message_template: "This feature requires a {required_plan} subscription"
+      description: Feature gated behind subscription tier
+      
+    FEATURE_DISABLED:
+      http_status: 403
+      message_template: "Feature '{feature}' is not enabled for your account"
+      description: Feature flag not enabled
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # NOT FOUND ERRORS (404)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  not_found:
+    NOT_FOUND:
+      http_status: 404
+      message: "Resource not found"
+      description: Generic not found
+      
+    ENTITY_NOT_FOUND:
+      http_status: 404
+      message_template: "{entity} not found"
+      description: Specific entity not found
+      examples:
+        - entity: User
+        - entity: Contract
+        - entity: Obligation
+        
+    ENDPOINT_NOT_FOUND:
+      http_status: 404
+      message: "Endpoint not found"
+      description: API endpoint doesn't exist
+      
+    FILE_NOT_FOUND:
+      http_status: 404
+      message: "File not found"
+      description: Requested file doesn't exist
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CONFLICT ERRORS (409)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  conflict:
+    CONFLICT:
+      http_status: 409
+      message: "Resource conflict"
+      description: Generic conflict error
+      
+    DUPLICATE_ENTRY:
+      http_status: 409
+      message_template: "{entity} with this {field} already exists"
+      description: Unique constraint violation
+      examples:
+        - entity: User
+          field: email
+        - entity: Tenant
+          field: slug
+          
+    ALREADY_EXISTS:
+      http_status: 409
+      message_template: "{entity} already exists"
+      description: Attempted to create duplicate resource
+      
+    STATE_CONFLICT:
+      http_status: 409
+      message_template: "Cannot {action} {entity} in {current_state} state"
+      description: Action invalid for current resource state
+      examples:
+        - action: cancel
+          entity: order
+          current_state: shipped
+          
+    CONCURRENT_MODIFICATION:
+      http_status: 409
+      message: "Resource was modified by another request"
+      description: Optimistic locking failure
+      
+    VERSION_MISMATCH:
+      http_status: 409
+      message_template: "Expected version {expected}, but found {actual}"
+      description: Version conflict during update
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # RATE LIMITING ERRORS (429)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  rate_limiting:
+    RATE_LIMITED:
+      http_status: 429
+      message_template: "Rate limit exceeded. Retry after {retry_after} seconds"
+      description: Too many requests
+      headers:
+        Retry-After: "{retry_after}"
+        X-RateLimit-Limit: "{limit}"
+        X-RateLimit-Remaining: "0"
+        X-RateLimit-Reset: "{reset_timestamp}"
+        
+    QUOTA_EXCEEDED:
+      http_status: 429
+      message_template: "Monthly quota exceeded. Limit: {limit}, Used: {used}"
+      description: Monthly/billing quota exceeded
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CLIENT ERRORS (400)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  client:
+    BAD_REQUEST:
+      http_status: 400
+      message: "Bad request"
+      description: Generic bad request
+      
+    INVALID_QUERY_PARAM:
+      http_status: 400
+      message_template: "Invalid query parameter: {param}"
+      description: Query parameter invalid
+      
+    INVALID_PATH_PARAM:
+      http_status: 400
+      message_template: "Invalid path parameter: {param}"
+      description: Path parameter invalid
+      
+    INVALID_SORT:
+      http_status: 400
+      message_template: "Cannot sort by '{field}'. Allowed: {allowed_fields}"
+      description: Invalid sort field
+      
+    INVALID_FILTER:
+      http_status: 400
+      message_template: "Cannot filter by '{field}'. Allowed: {allowed_fields}"
+      description: Invalid filter field
+      
+    UNSUPPORTED_MEDIA_TYPE:
+      http_status: 415
+      message_template: "Unsupported media type: {content_type}"
+      description: Content-Type not supported
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SERVER ERRORS (5xx)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  server:
+    INTERNAL_ERROR:
+      http_status: 500
+      message: "An unexpected error occurred"
+      description: Generic server error
+      log_level: ERROR
+      alert: true
+      note: "Never expose internal details to client"
+      
+    DATABASE_ERROR:
+      http_status: 500
+      message: "A database error occurred"
+      description: Database operation failed
+      log_level: ERROR
+      alert: true
+      
+    EXTERNAL_SERVICE_ERROR:
+      http_status: 502
+      message_template: "External service unavailable: {service}"
+      description: Third-party API failed
+      log_level: WARNING
+      
+    SERVICE_UNAVAILABLE:
+      http_status: 503
+      message: "Service temporarily unavailable"
+      description: Service is down for maintenance
+      headers:
+        Retry-After: "300"
+        
+    TIMEOUT:
+      http_status: 504
+      message: "Request timed out"
+      description: Operation took too long
+      log_level: WARNING
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # BUSINESS LOGIC ERRORS (422)
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Add your domain-specific business errors here
+  
+  business:
+    INSUFFICIENT_BALANCE:
+      http_status: 422
+      message_template: "Insufficient balance. Required: {required}, Available: {available}"
+      description: Not enough balance for operation
+      
+    PAYMENT_FAILED:
+      http_status: 422
+      message_template: "Payment failed: {reason}"
+      description: Payment processing failed
+      
+    LIMIT_REACHED:
+      http_status: 422
+      message_template: "Limit reached for {resource}. Maximum: {limit}"
+      description: Resource limit reached
+      
+    INVALID_OPERATION:
+      http_status: 422
+      message_template: "Cannot {operation}: {reason}"
+      description: Business rule prevents operation
+      
+    PREREQUISITE_NOT_MET:
+      http_status: 422
+      message_template: "Cannot proceed: {prerequisite} is required"
+      description: Required precondition not satisfied
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # WEBHOOK ERRORS (for incoming webhooks)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  webhook:
+    INVALID_SIGNATURE:
+      http_status: 401
+      message: "Invalid webhook signature"
+      description: Webhook signature verification failed
+      log_level: WARNING
+      
+    INVALID_PAYLOAD:
+      http_status: 422
+      message: "Invalid webhook payload"
+      description: Webhook payload doesn't match expected schema
+      
+    DUPLICATE_EVENT:
+      http_status: 200  # Return 200 to prevent retries
+      message: "Event already processed"
+      description: Idempotency check caught duplicate
+      
+    UNKNOWN_EVENT_TYPE:
+      http_status: 200  # Return 200 - we just don't process it
+      message_template: "Unknown event type: {event_type}"
+      description: Event type not handled

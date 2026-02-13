@@ -1,0 +1,298 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION TEMPLATE v1.0
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Defines environment variables and secrets required by the application.
+# Claude Code uses this to:
+#   - Generate Pydantic Settings classes
+#   - Create .env.example file
+#   - Validate environment at startup
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+config:
+  version: 1.0.0
+  
+  # ─────────────────────────────────────────────────────────────────────────────
+  # REQUIRED VARIABLES
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Application will fail to start if these are missing
+  
+  required:
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ DATABASE                                                               │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    DATABASE_URL:
+      type: string
+      format: "postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+      description: PostgreSQL connection string (async driver)
+      example: "postgresql+asyncpg://postgres:password@localhost:5432/myapp"
+      
+    # For sync operations (migrations)
+    DATABASE_URL_SYNC:
+      type: string
+      format: "postgresql://{user}:{password}@{host}:{port}/{database}"
+      description: PostgreSQL connection string (sync driver for migrations)
+      example: "postgresql://postgres:password@localhost:5432/myapp"
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ REDIS                                                                  │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    REDIS_URL:
+      type: string
+      format: "redis://{host}:{port}/{db}"
+      description: Redis connection string
+      example: "redis://localhost:6379/0"
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ AUTHENTICATION                                                         │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    JWT_PRIVATE_KEY:
+      type: string
+      sensitive: true
+      multiline: true
+      description: RSA private key for signing JWTs (PEM format)
+      example: "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
+      generation: "openssl genrsa -out private.pem 2048"
+      
+    JWT_PUBLIC_KEY:
+      type: string
+      sensitive: true
+      multiline: true
+      description: RSA public key for verifying JWTs (PEM format)
+      example: "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
+      generation: "openssl rsa -in private.pem -pubout -out public.pem"
+      
+    # Alternative: Single secret key (for HS256)
+    # JWT_SECRET_KEY:
+    #   type: string
+    #   sensitive: true
+    #   min_length: 32
+    #   description: Secret key for JWT signing (HS256)
+    #   example: "your-256-bit-secret-key-here-min-32-chars"
+    #   generation: "openssl rand -hex 32"
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # OPTIONAL VARIABLES (with defaults)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  optional:
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ APPLICATION                                                            │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    ENVIRONMENT:
+      type: string
+      default: development
+      enum: [development, staging, production]
+      description: Current environment
+      
+    DEBUG:
+      type: boolean
+      default: false
+      description: Enable debug mode (never in production!)
+      
+    APP_NAME:
+      type: string
+      default: "{system_name}"
+      description: Application name for logging and display
+      
+    APP_VERSION:
+      type: string
+      default: "0.1.0"
+      description: Application version
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ SERVER                                                                 │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    HOST:
+      type: string
+      default: "0.0.0.0"
+      description: Server bind host
+      
+    PORT:
+      type: integer
+      default: 8000
+      min: 1
+      max: 65535
+      description: Server bind port
+      
+    WORKERS:
+      type: integer
+      default: 1
+      min: 1
+      max: 32
+      description: Number of worker processes (use 1 for development)
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ LOGGING                                                                │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    LOG_LEVEL:
+      type: string
+      default: INFO
+      enum: [DEBUG, INFO, WARNING, ERROR, CRITICAL]
+      description: Minimum log level
+      
+    LOG_FORMAT:
+      type: string
+      default: json
+      enum: [json, text]
+      description: Log output format
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ CORS                                                                   │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    CORS_ORIGINS:
+      type: array
+      default: ["http://localhost:3000"]
+      description: Allowed CORS origins (comma-separated in env)
+      example: "http://localhost:3000,http://localhost:5173"
+      
+    CORS_ALLOW_CREDENTIALS:
+      type: boolean
+      default: true
+      description: Allow credentials in CORS requests
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ RATE LIMITING                                                          │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    RATE_LIMIT_ENABLED:
+      type: boolean
+      default: true
+      description: Enable rate limiting
+      
+    RATE_LIMIT_REQUESTS:
+      type: integer
+      default: 100
+      description: Default requests per window
+      
+    RATE_LIMIT_WINDOW:
+      type: integer
+      default: 60
+      description: Rate limit window in seconds
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ DATABASE POOL                                                          │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    DB_POOL_SIZE:
+      type: integer
+      default: 5
+      min: 1
+      max: 100
+      description: Database connection pool size
+      
+    DB_POOL_MAX_OVERFLOW:
+      type: integer
+      default: 10
+      min: 0
+      max: 100
+      description: Max connections beyond pool size
+      
+    DB_POOL_TIMEOUT:
+      type: integer
+      default: 30
+      description: Seconds to wait for connection
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ QUEUE (RabbitMQ)                                                       │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    RABBITMQ_URL:
+      type: string
+      format: "amqp://{user}:{password}@{host}:{port}/{vhost}"
+      default: "amqp://guest:guest@localhost:5672/"
+      description: RabbitMQ connection string
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ STORAGE (S3)                                                           │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    AWS_ACCESS_KEY_ID:
+      type: string
+      sensitive: true
+      description: AWS access key for S3
+      
+    AWS_SECRET_ACCESS_KEY:
+      type: string
+      sensitive: true
+      description: AWS secret key for S3
+      
+    AWS_REGION:
+      type: string
+      default: us-east-1
+      description: AWS region
+      
+    S3_BUCKET:
+      type: string
+      default: "{system_name}-uploads"
+      description: S3 bucket for uploads
+      
+    S3_ENDPOINT_URL:
+      type: string
+      description: Custom S3 endpoint (for MinIO, LocalStack)
+      example: "http://localhost:9000"
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ MONITORING                                                             │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    SENTRY_DSN:
+      type: string
+      sensitive: true
+      description: Sentry DSN for error tracking
+      
+    SENTRY_ENVIRONMENT:
+      type: string
+      default: "{ENVIRONMENT}"
+      description: Sentry environment tag
+      
+    SENTRY_TRACES_SAMPLE_RATE:
+      type: float
+      default: 0.1
+      min: 0.0
+      max: 1.0
+      description: Sentry traces sample rate (0.0-1.0)
+      
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ EXTERNAL SERVICES (add your integrations here)                         │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    # Example: OpenAI
+    # OPENAI_API_KEY:
+    #   type: string
+    #   sensitive: true
+    #   description: OpenAI API key
+    
+    # Example: Stripe
+    # STRIPE_SECRET_KEY:
+    #   type: string
+    #   sensitive: true
+    #   description: Stripe secret key
+    
+    # STRIPE_WEBHOOK_SECRET:
+    #   type: string
+    #   sensitive: true
+    #   description: Stripe webhook signing secret
+      
+  # ─────────────────────────────────────────────────────────────────────────────
+  # VALIDATION RULES
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  validation:
+    # Require certain variables in production
+    production_required:
+      - JWT_PRIVATE_KEY
+      - JWT_PUBLIC_KEY
+      - SENTRY_DSN
+      
+    # Disallow certain values in production
+    production_disallowed:
+      DEBUG: true
+      LOG_LEVEL: DEBUG
+      
+    # Custom validation rules
+    rules:
+      - name: database_url_not_localhost_in_production
+        condition: "ENVIRONMENT == 'production'"
+        check: "'localhost' not in DATABASE_URL"
+        message: "DATABASE_URL cannot use localhost in production"
+        
+      - name: cors_not_wildcard_in_production
+        condition: "ENVIRONMENT == 'production'"
+        check: "'*' not in CORS_ORIGINS"
+        message: "CORS_ORIGINS cannot be wildcard in production"
