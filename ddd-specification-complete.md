@@ -3092,14 +3092,489 @@ Right-click actions that provide targeted LLM help without opening the chat pane
 | **✨ Review architecture** | Checks domain boundaries, event wiring completeness, circular dependencies |
 | **✨ Generate from description** | "Describe your application" → generates system.yaml with domains |
 
+#### Project Memory System
+
+The LLM needs more than just what's on screen — it needs cumulative understanding of the entire project. The **Project Memory** system provides five layers of persistent, auto-maintained context that give the LLM full awareness of what's being built, why certain decisions were made, and how everything connects.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PROJECT MEMORY LAYERS                                            │
+│                                                                   │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ 1. PROJECT SUMMARY          (.ddd/memory/summary.md)      │  │
+│  │    Auto-maintained plain-language description of the        │  │
+│  │    entire project: what it does, all domains, key patterns  │  │
+│  │    Regenerated when specs change.                           │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                   │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ 2. SPEC INDEX               (.ddd/memory/spec-index.yaml) │  │
+│  │    Condensed index of ALL flows, ALL domains, ALL schemas  │  │
+│  │    — not full YAML, but enough for the LLM to understand   │  │
+│  │    what exists and how things connect.                      │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                   │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ 3. DECISION LOG             (.ddd/memory/decisions.md)     │  │
+│  │    User-authored + LLM-captured design rationale.          │  │
+│  │    "Why did we split auth from users?" stored here.        │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                   │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ 4. CROSS-FLOW MAP           (.ddd/memory/flow-map.yaml)   │  │
+│  │    Derived graph: which flows call which, event wiring,    │  │
+│  │    shared schemas, agent delegations, handoffs.            │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                   │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ 5. IMPLEMENTATION STATUS    (.ddd/memory/status.yaml)      │  │
+│  │    Which specs have code, which are pending, which changed │  │
+│  │    since last code gen. From .ddd/mapping.yaml + git diff. │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+##### Layer 1: Project Summary
+
+Auto-generated plain-language description of the project. Regenerated whenever domain configs or system.yaml change. The LLM can read this to instantly understand the project without parsing every YAML file.
+
+```markdown
+<!-- .ddd/memory/summary.md — auto-generated, do not edit manually -->
+
+# Obligo — Cyber Liability Operating System
+
+A SaaS platform that creates an "Operational Obligations Graph" from contracts.
+Users upload contracts → system extracts obligations → tracks compliance → sends notifications.
+
+## Tech Stack
+Python 3.11 / FastAPI / SQLAlchemy / PostgreSQL / Redis / Celery
+
+## Domains (4)
+
+### ingestion (4 flows)
+Handles contract document intake from multiple sources.
+- **webhook-ingestion**: Receives documents via partner webhooks (POST /webhooks/{source})
+- **scheduled-sync**: Polls external systems on cron schedule
+- **manual-upload**: User uploads documents via UI (POST /api/documents/upload)
+- **email-intake**: Processes documents from email attachments
+- Publishes: contract.ingested, webhook.received, document.uploaded
+
+### analysis (3 flows)
+Extracts obligations and clauses from ingested contracts using LLM.
+- **extract-obligations**: Agent flow — LLM reads contract, extracts structured obligations
+- **classify-risk**: Scores obligations by risk level
+- **generate-summary**: Creates human-readable contract summary
+- Consumes: contract.ingested
+- Publishes: analysis.completed, obligations.extracted
+
+### api (5 flows)
+REST API for frontend and integrations.
+- **user-register**, **user-login**, **user-reset-password**, **get-contracts**, **get-obligations**
+- Consumes: webhook.received
+
+### notification (2 flows)
+Sends alerts when obligations approach deadlines.
+- **deadline-alert**: Agent flow — checks upcoming deadlines, drafts notifications
+- **compliance-report**: Generates periodic compliance reports
+- Consumes: analysis.completed, obligation.deadline_approaching
+
+## Key Patterns
+- Auth: JWT with refresh tokens, RBAC (admin, manager, viewer)
+- Multi-tenancy: organization_id on all models
+- Soft delete: all entities use deleted_at timestamp
+- Event-driven: domains communicate via async events
+```
+
+**When it regenerates:** On project load, and whenever system.yaml, any domain.yaml, or architecture.yaml changes. The LLM itself generates this summary by reading all specs — so it understands the project in its own words.
+
+##### Layer 2: Spec Index
+
+A condensed index of every flow, schema, and domain — not the full YAML, but enough structure for the LLM to know what exists, what each flow does, and how they connect.
+
+```yaml
+# .ddd/memory/spec-index.yaml — auto-generated from specs/
+
+domains:
+  ingestion:
+    description: "Contract document intake from multiple sources"
+    flows:
+      webhook-ingestion:
+        type: traditional
+        trigger: { type: http, method: POST, path: "/webhooks/{source}" }
+        nodes: [validate_signature, rate_limit_check, validate_payload, normalize, store_document, publish_event]
+        publishes: [contract.ingested]
+        schemas_used: [Document, WebhookPayload]
+        error_codes: [INVALID_SIGNATURE, RATE_LIMIT_EXCEEDED, VALIDATION_ERROR]
+
+      scheduled-sync:
+        type: traditional
+        trigger: { type: cron, schedule: "*/15 * * * *" }
+        nodes: [fetch_sources, diff_check, process_new, store_documents, publish_events]
+        publishes: [contract.ingested]
+
+      manual-upload:
+        type: traditional
+        trigger: { type: http, method: POST, path: "/api/documents/upload" }
+        nodes: [auth_check, validate_file, extract_metadata, store_document, publish_event]
+        publishes: [document.uploaded]
+        schemas_used: [Document, UploadRequest]
+
+      email-intake:
+        type: traditional
+        trigger: { type: event, event: email.received }
+        nodes: [parse_email, extract_attachments, validate_documents, store_documents]
+        publishes: [contract.ingested]
+
+  analysis:
+    description: "Extract obligations and clauses from contracts using LLM"
+    flows:
+      extract-obligations:
+        type: agent
+        trigger: { type: event, event: contract.ingested }
+        agent_model: claude-sonnet-4-5-20250929
+        tools: [read_document, extract_clause, classify_obligation, save_obligation]
+        guardrails: [pii_filter, hallucination_check]
+        publishes: [obligations.extracted]
+        schemas_used: [Contract, Obligation, Clause]
+
+      classify-risk:
+        type: traditional
+        trigger: { type: event, event: obligations.extracted }
+        nodes: [load_obligations, score_risk, update_risk_levels, publish_results]
+        publishes: [analysis.completed]
+
+      generate-summary:
+        type: traditional
+        trigger: { type: event, event: obligations.extracted }
+        nodes: [load_contract, llm_summarize, store_summary]
+        schemas_used: [Contract, ContractSummary]
+
+  # ... (api, notification domains similarly indexed)
+
+schemas:
+  Document: { fields: [id, organization_id, filename, content_type, size_bytes, uploaded_by, status, created_at] }
+  Contract: { fields: [id, organization_id, document_id, title, parties, effective_date, expiry_date, status] }
+  Obligation: { fields: [id, contract_id, clause_text, obligation_type, deadline, risk_score, status] }
+  User: { fields: [id, organization_id, email, name, role, created_at] }
+  # ...
+
+events:
+  - contract.ingested: { publisher: ingestion, consumers: [analysis] }
+  - obligations.extracted: { publisher: analysis, consumers: [analysis, notification] }
+  - analysis.completed: { publisher: analysis, consumers: [notification] }
+  - webhook.received: { publisher: ingestion, consumers: [api] }
+  - document.uploaded: { publisher: ingestion, consumers: [] }
+  - obligation.deadline_approaching: { publisher: cron, consumers: [notification] }
+
+shared_error_codes: [VALIDATION_ERROR, NOT_FOUND, UNAUTHORIZED, DUPLICATE_ENTRY, RATE_LIMIT_EXCEEDED, INTERNAL_ERROR]
+```
+
+**When it regenerates:** On project load, and whenever any flow YAML, domain.yaml, schema, or errors.yaml changes. Built by scanning all spec files and extracting the key fields.
+
+##### Layer 3: Decision Log
+
+User-authored and LLM-captured design rationale. When the user explains *why* they made a choice in the chat, the LLM asks if it should save it as a decision. Users can also add decisions manually.
+
+```markdown
+<!-- .ddd/memory/decisions.md -->
+
+## Design Decisions
+
+### 2025-01-15: Separate ingestion from analysis
+**Decision:** Keep document ingestion and obligation extraction as separate domains.
+**Rationale:** Ingestion is I/O-heavy (webhooks, file uploads, email parsing) while analysis is compute-heavy (LLM calls). Different scaling profiles. Also, ingestion should work even if analysis is down — we buffer via events.
+**Affected:** ingestion domain, analysis domain, contract.ingested event
+
+### 2025-01-16: Agent flow for obligation extraction
+**Decision:** Use an agent flow (not traditional) for extract-obligations.
+**Rationale:** Contract formats vary wildly — fixed logic can't handle all cases. The LLM needs to reason about document structure, iterate over clauses, and decide when it's found all obligations. Agent loop with tools is the right pattern.
+**Affected:** analysis/flows/extract-obligations.yaml
+
+### 2025-01-18: JWT over sessions
+**Decision:** Use JWT with refresh tokens for authentication, not server-side sessions.
+**Rationale:** Stateless — works with horizontal scaling without sticky sessions or shared session store. Refresh tokens handle long-lived access.
+**Affected:** architecture.yaml auth section, api domain
+
+### 2025-01-20: Soft delete everywhere
+**Decision:** All entities use soft delete (deleted_at timestamp) instead of hard delete.
+**Rationale:** Compliance requirement — need audit trail. Also allows undo.
+**Affected:** architecture.yaml database section, all schemas
+```
+
+**How decisions are captured:**
+1. **Manually:** User clicks "Add Decision" in the Memory panel or types `/decide` in chat
+2. **LLM-prompted:** When the user explains reasoning in chat (e.g., "I'm splitting these because…"), the LLM detects rationale and asks: *"Should I save this as a design decision?"*
+3. **Inline:** Right-click a domain/flow → "✨ Add design note" → enters decision with context pre-filled
+
+##### Layer 4: Cross-Flow Map
+
+A derived dependency graph showing how every flow connects to every other flow — via events, sub-flow calls, shared schemas, agent delegations, and handoffs.
+
+```yaml
+# .ddd/memory/flow-map.yaml — auto-derived from all flow specs
+
+graph:
+  # Event-based connections (async)
+  events:
+    - from: ingestion/webhook-ingestion
+      to: analysis/extract-obligations
+      via: contract.ingested
+      type: event
+
+    - from: ingestion/manual-upload
+      to: analysis/extract-obligations
+      via: contract.ingested
+      type: event
+
+    - from: analysis/extract-obligations
+      to: analysis/classify-risk
+      via: obligations.extracted
+      type: event
+
+    - from: analysis/extract-obligations
+      to: analysis/generate-summary
+      via: obligations.extracted
+      type: event
+
+    - from: analysis/classify-risk
+      to: notification/deadline-alert
+      via: analysis.completed
+      type: event
+
+  # Direct call connections (sync)
+  sub_flows:
+    - from: api/user-register
+      to: notification/send-welcome-email
+      type: sub_flow
+
+  # Shared schema connections
+  shared_schemas:
+    - schema: Contract
+      used_by: [ingestion/webhook-ingestion, analysis/extract-obligations, analysis/generate-summary]
+    - schema: Obligation
+      used_by: [analysis/extract-obligations, analysis/classify-risk, notification/deadline-alert]
+    - schema: User
+      used_by: [api/user-register, api/user-login, api/user-reset-password]
+
+  # Agent delegations / handoffs
+  agent_connections:
+    - from: support/orchestrator
+      to: support/billing-agent
+      type: orchestrator_manages
+    - from: support/billing-agent
+      to: support/technical-agent
+      type: handoff
+      mode: consult
+
+# Dependency summary per flow
+flow_dependencies:
+  ingestion/webhook-ingestion:
+    depends_on: []
+    depended_on_by: [analysis/extract-obligations]
+    schemas: [Document, WebhookPayload]
+
+  analysis/extract-obligations:
+    depends_on: [ingestion/webhook-ingestion, ingestion/manual-upload, ingestion/email-intake]
+    depended_on_by: [analysis/classify-risk, analysis/generate-summary]
+    schemas: [Contract, Obligation, Clause]
+
+  # ...
+```
+
+**When it regenerates:** On project load, and whenever any flow YAML or domain.yaml changes. Built by scanning all flows for event publications/consumptions, sub-flow references, schema `$ref`s, and orchestrator/handoff nodes.
+
+##### Layer 5: Implementation Status
+
+Tracks which specs have been implemented as code, which are pending, and which changed since last code generation.
+
+```yaml
+# .ddd/memory/status.yaml — derived from .ddd/mapping.yaml + git status
+
+overview:
+  total_flows: 14
+  implemented: 9
+  pending: 3
+  stale: 2          # Spec changed since code was generated
+
+flows:
+  ingestion/webhook-ingestion:
+    status: implemented
+    code_files:
+      - src/domains/ingestion/router.py
+      - src/domains/ingestion/services/webhook.py
+      - tests/unit/domains/ingestion/test_webhook.py
+    last_generated: "2025-01-18T14:30:00Z"
+    spec_changed_since: false
+
+  ingestion/scheduled-sync:
+    status: implemented
+    code_files:
+      - src/domains/ingestion/tasks/sync.py
+    last_generated: "2025-01-18T15:00:00Z"
+    spec_changed_since: true     # ← STALE: spec was modified after code gen
+    changes_since:
+      - "Added rate_limit_check node"
+      - "Changed cron schedule from */30 to */15"
+
+  analysis/extract-obligations:
+    status: implemented
+    code_files:
+      - src/domains/analysis/agents/extract.py
+      - src/domains/analysis/tools/document_tools.py
+    last_generated: "2025-01-19T10:00:00Z"
+    spec_changed_since: false
+
+  notification/compliance-report:
+    status: pending    # ← Not yet implemented
+    code_files: []
+
+  api/get-obligations:
+    status: pending
+    code_files: []
+
+  # ...
+
+schemas:
+  Document:
+    status: implemented
+    migration: "migrations/001_create_documents.py"
+    spec_changed_since: false
+  Obligation:
+    status: implemented
+    migration: "migrations/003_create_obligations.py"
+    spec_changed_since: true    # ← Schema changed, migration needed
+```
+
+**When it updates:** From `.ddd/mapping.yaml` (spec-to-code mapping file) combined with `git diff` to detect spec changes since last code generation timestamp.
+
+##### How Memory Feeds Into LLM Context
+
+The Project Memory layers are integrated into the LLM Context Builder. Not everything is sent with every request — the context is **budgeted** to stay within token limits while maximizing relevance.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ LLM CONTEXT BUDGET                                                │
+│                                                                   │
+│ Priority 1 (always included):                         ~1,500 tok │
+│   ├── Project Summary (summary.md)                               │
+│   └── System config (name, tech stack, domains)                  │
+│                                                                   │
+│ Priority 2 (included on L2/L3):                       ~1,000 tok │
+│   ├── Current domain (flows, events)                             │
+│   └── Related domains (via Cross-Flow Map)                       │
+│                                                                   │
+│ Priority 3 (included on L3):                          ~2,000 tok │
+│   ├── Current flow (full YAML)                                   │
+│   ├── Connected flows (via Cross-Flow Map, condensed)            │
+│   └── Selected node specs                                        │
+│                                                                   │
+│ Priority 4 (included when relevant):                    ~500 tok │
+│   ├── Relevant decisions (from Decision Log)                     │
+│   ├── Implementation status of current flow                      │
+│   └── Error codes + schema definitions                           │
+│                                                                   │
+│ Priority 5 (included on demand):                        ~500 tok │
+│   └── Spec Index (condensed, for cross-project questions)        │
+│                                                                   │
+│ TOTAL BUDGET:                                    ~4,000-5,500 tok │
+│ (leaves room for user message + LLM response within context)     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key rules:**
+- **Project Summary** always included — it's the LLM's "big picture" understanding
+- **Cross-Flow Map** tells the LLM what connects to the current flow, so it can warn about breaking changes
+- **Decision Log** filtered to decisions relevant to the current domain/flow
+- **Implementation Status** tells the LLM whether this flow has code, whether the code is stale
+- **Spec Index** only sent for system-level or cross-domain questions
+
+##### Memory Panel UI
+
+A dedicated panel (accessible via sidebar icon or `Cmd+M` / `Ctrl+M`) for viewing and managing Project Memory.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 🧠 PROJECT MEMORY                                      [Refresh] │
+│                                                                   │
+│ ┌─ Summary ────────────────────────────────────────────────────┐ │
+│ │ Obligo — Cyber Liability Operating System                    │ │
+│ │ 4 domains · 14 flows · 9 implemented · 2 stale              │ │
+│ │ [View full summary]                                          │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│ ┌─ Implementation Status ──────────────────────────────────────┐ │
+│ │ ● ingestion/webhook-ingestion          ✓ implemented         │ │
+│ │ ● ingestion/scheduled-sync             ⚠ stale (2 changes)  │ │
+│ │ ● analysis/extract-obligations         ✓ implemented         │ │
+│ │ ○ notification/compliance-report       ◌ pending             │ │
+│ │ ○ api/get-obligations                  ◌ pending             │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│ ┌─ Decisions (4) ─────────────────────────────────────[+ Add]──┐ │
+│ │ • Separate ingestion from analysis       2025-01-15          │ │
+│ │ • Agent flow for obligation extraction   2025-01-16          │ │
+│ │ • JWT over sessions                      2025-01-18          │ │
+│ │ • Soft delete everywhere                 2025-01-20          │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│ ┌─ Flow Map (current: webhook-ingestion) ──────────────────────┐ │
+│ │ Depends on: (none)                                           │ │
+│ │ Depended on by: analysis/extract-obligations                 │ │
+│ │ Schemas: Document, WebhookPayload                            │ │
+│ │ Events out: contract.ingested                                │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+##### Memory File Storage
+
+All memory files live in `.ddd/memory/` within the project directory:
+
+```
+.ddd/
+├── config.yaml              # DDD Tool settings (LLM provider, etc.)
+├── mapping.yaml             # Spec-to-code mapping
+├── chat-history.json        # Chat threads
+└── memory/
+    ├── summary.md           # Layer 1: Project summary (auto-generated)
+    ├── spec-index.yaml      # Layer 2: Condensed spec index (auto-generated)
+    ├── decisions.md         # Layer 3: Design decisions (user + LLM authored)
+    ├── flow-map.yaml        # Layer 4: Cross-flow dependency graph (auto-generated)
+    └── status.yaml          # Layer 5: Implementation status (auto-generated)
+```
+
+**Git behavior:** Memory files are auto-generated (except `decisions.md`). The `.gitignore` should include auto-generated memory files but NOT `decisions.md` — design decisions are valuable to the team and should be version-controlled.
+
+```gitignore
+# .gitignore
+.ddd/memory/summary.md
+.ddd/memory/spec-index.yaml
+.ddd/memory/flow-map.yaml
+.ddd/memory/status.yaml
+.ddd/chat-history.json
+
+# DO commit: .ddd/memory/decisions.md (design rationale is team knowledge)
+# DO commit: .ddd/config.yaml (shared tool settings, no secrets)
+# DO commit: .ddd/mapping.yaml (spec-to-code mapping)
+```
+
 #### LLM Context Builder
 
-Every LLM request includes structured context so the model understands the project. The context is assembled automatically based on the user's current location and selection.
+Every LLM request includes structured context assembled from the user's current location, selection, and **Project Memory layers**. The context is automatically budgeted to stay within token limits.
 
 ```yaml
 # Context sent with every LLM request
 context:
-  # Always included
+  # From Project Memory Layer 1 (always included)
+  project_summary: |
+    Obligo — Cyber Liability Operating System.
+    SaaS for creating Operational Obligations Graph from contracts.
+    4 domains: ingestion, analysis, api, notification.
+    Python 3.11 / FastAPI / PostgreSQL / Redis.
+
+  # From system.yaml (always included)
   system:
     name: obligo
     tech_stack: { language: python, framework: fastapi }
@@ -3119,11 +3594,29 @@ context:
     yaml: |
       # Full flow YAML here
 
+  # From Project Memory Layer 4 — connected flows (condensed)
+  connected_flows:
+    downstream:
+      - id: analysis/extract-obligations
+        type: agent
+        via_event: contract.ingested
+        summary: "LLM agent that reads contracts and extracts structured obligations"
+    upstream: []
+
   # Included when nodes are selected
   selected_nodes:
     - id: validate_input
       type: input
       spec: { ... }
+
+  # From Project Memory Layer 3 — relevant decisions
+  relevant_decisions:
+    - "Separate ingestion from analysis: different scaling profiles, buffer via events"
+
+  # From Project Memory Layer 5 — implementation status
+  implementation_status:
+    current_flow: implemented
+    spec_changed_since_codegen: false
 
   # Included from project specs
   error_codes:
@@ -3195,6 +3688,7 @@ Ghost nodes become real nodes on Apply. The user can also click **Edit in chat**
 | Shortcut | Action |
 |----------|--------|
 | `Cmd+L` / `Ctrl+L` | Toggle Chat Panel |
+| `Cmd+M` / `Ctrl+M` | Toggle Memory Panel |
 | `Cmd+Shift+G` / `Ctrl+Shift+G` | Generate flow from description (canvas-level) |
 | `Cmd+.` / `Ctrl+.` | Inline assist on selected node (suggest spec) |
 | `Escape` | Discard ghost preview |
@@ -3363,6 +3857,8 @@ Public marketplace:
 - **LLM Design Assistant:** Chat Panel + Inline Assist (context menu) for flow generation, spec auto-fill, review, and suggestions
 - **Ghost Preview:** LLM-generated nodes appear as ghost nodes (dashed borders) with Apply/Discard before committing
 - **LLM Context Builder:** Automatically assembles project context (system, domain, flow, schemas, error codes) for every LLM request
+- **Project Memory:** 5-layer persistent memory (project summary, spec index, decision log, cross-flow map, implementation status) with context budgeting
+- **Memory Panel:** UI for viewing project summary, implementation status, design decisions, and flow dependencies
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage

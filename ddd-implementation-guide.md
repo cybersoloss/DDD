@@ -139,6 +139,13 @@ ddd-tool/
 │   │   │   ├── GhostPreview.tsx       # Ghost nodes overlay + Apply/Discard bar
 │   │   │   ├── InlineAssist.tsx       # Context menu with ✨ actions
 │   │   │   └── FlowPreview.tsx        # Mini flow diagram in chat for generated flows
+│   │   ├── MemoryPanel/
+│   │   │   ├── MemoryPanel.tsx        # Main memory panel (sidebar toggle)
+│   │   │   ├── SummaryCard.tsx        # Project summary display
+│   │   │   ├── StatusList.tsx         # Implementation status per flow
+│   │   │   ├── DecisionList.tsx       # Design decisions with add/edit
+│   │   │   ├── DecisionForm.tsx       # Add/edit decision dialog
+│   │   │   └── FlowDependencies.tsx   # Flow map for current flow
 │   │   └── shared/
 │   │       ├── Button.tsx
 │   │       ├── Input.tsx
@@ -150,7 +157,8 @@ ddd-tool/
 │   │   ├── project-store.ts   # Project/file state, domain configs
 │   │   ├── ui-store.ts        # UI state (selection, panels)
 │   │   ├── git-store.ts       # Git state
-│   │   └── llm-store.ts       # Chat state, ghost nodes, LLM config
+│   │   ├── llm-store.ts       # Chat state, ghost nodes, LLM config
+│   │   └── memory-store.ts    # Project memory layers, refresh triggers
 │   ├── types/
 │   │   ├── sheet.ts           # Sheet levels, navigation, breadcrumb types
 │   │   ├── domain.ts          # Domain config, event wiring, portal types
@@ -158,11 +166,13 @@ ddd-tool/
 │   │   ├── node.ts
 │   │   ├── spec.ts
 │   │   ├── project.ts
-│   │   └── llm.ts             # Chat messages, LLM config, ghost node types
+│   │   ├── llm.ts             # Chat messages, LLM config, ghost node types
+│   │   └── memory.ts          # Project memory layer types
 │   ├── utils/
 │   │   ├── yaml.ts
 │   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
-│   │   ├── llm-context.ts     # Build context object for LLM requests
+│   │   ├── llm-context.ts     # Build context object for LLM requests (uses memory layers)
+│   │   ├── memory-builder.ts  # Scan specs → generate memory layers
 │   │   ├── mermaid.ts
 │   │   └── validation.ts
 │   └── styles/
@@ -4415,12 +4425,13 @@ useEffect(() => {
 }, []);
 ```
 
-**App layout update — ChatPanel sits alongside SpecPanel:**
+**App layout update — ChatPanel and MemoryPanel sit alongside SpecPanel:**
 ```tsx
 // In App.tsx render
 function App() {
   const { current } = useSheetStore();
   const { chatOpen } = useLLMStore();
+  const { memoryPanelOpen } = useMemoryStore();
 
   return (
     <div className="flex h-screen">
@@ -4440,11 +4451,1090 @@ function App() {
         </div>
       </div>
 
-      {/* Right panels — Spec Panel and/or Chat Panel */}
+      {/* Right panels — Spec Panel, Chat Panel, and/or Memory Panel */}
       <SpecPanel />
       {chatOpen && <ChatPanel />}
+      {memoryPanelOpen && <MemoryPanel />}
     </div>
   );
+}
+```
+
+#### Day 18-19: Project Memory System
+
+**File: `src/types/memory.ts`**
+```typescript
+// --- Project Memory Layer Types ---
+
+// Layer 1: Project Summary
+export interface ProjectSummary {
+  content: string;              // Markdown content
+  generatedAt: number;          // Timestamp
+  stale: boolean;               // True if specs changed since generation
+}
+
+// Layer 2: Spec Index
+export interface SpecIndex {
+  domains: Record<string, SpecIndexDomain>;
+  schemas: Record<string, SpecIndexSchema>;
+  events: SpecIndexEvent[];
+  sharedErrorCodes: string[];
+  generatedAt: number;
+}
+
+export interface SpecIndexDomain {
+  description: string;
+  flows: Record<string, SpecIndexFlow>;
+}
+
+export interface SpecIndexFlow {
+  type: 'traditional' | 'agent';
+  trigger: {
+    type: string;
+    method?: string;
+    path?: string;
+    schedule?: string;
+    event?: string;
+  };
+  nodes: string[];               // Node IDs (condensed)
+  publishesEvents: string[];
+  consumesEvents: string[];
+  schemasUsed: string[];
+  errorCodes: string[];
+  // Agent-specific
+  agentModel?: string;
+  tools?: string[];
+  guardrails?: string[];
+}
+
+export interface SpecIndexSchema {
+  fields: string[];              // Field names (condensed)
+}
+
+export interface SpecIndexEvent {
+  name: string;
+  publisher: string;             // domain name
+  consumers: string[];           // domain names
+}
+
+// Layer 3: Decision Log
+export interface Decision {
+  id: string;
+  date: string;                  // ISO date string
+  title: string;
+  rationale: string;
+  affected: string[];            // Domain/flow/file references
+  author: 'user' | 'llm';       // Who captured it
+}
+
+// Layer 4: Cross-Flow Map
+export interface FlowMap {
+  events: FlowMapEdge[];
+  subFlows: FlowMapEdge[];
+  sharedSchemas: FlowMapSchemaUsage[];
+  agentConnections: FlowMapEdge[];
+  flowDependencies: Record<string, FlowDependency>;
+  generatedAt: number;
+}
+
+export interface FlowMapEdge {
+  from: string;                  // "domain/flow"
+  to: string;                   // "domain/flow"
+  via?: string;                  // Event name or ref
+  type: 'event' | 'sub_flow' | 'orchestrator_manages' | 'handoff';
+  mode?: string;                 // For handoffs: transfer/consult/collaborate
+}
+
+export interface FlowMapSchemaUsage {
+  schema: string;
+  usedBy: string[];              // "domain/flow" paths
+}
+
+export interface FlowDependency {
+  dependsOn: string[];           // "domain/flow" paths
+  dependedOnBy: string[];
+  schemas: string[];
+  eventsIn: string[];
+  eventsOut: string[];
+}
+
+// Layer 5: Implementation Status
+export interface ImplementationStatus {
+  overview: {
+    totalFlows: number;
+    implemented: number;
+    pending: number;
+    stale: number;
+  };
+  flows: Record<string, FlowStatus>;
+  schemas: Record<string, SchemaStatus>;
+  generatedAt: number;
+}
+
+export interface FlowStatus {
+  status: 'implemented' | 'pending' | 'stale';
+  codeFiles: string[];
+  lastGenerated?: string;        // ISO timestamp
+  specChangedSince: boolean;
+  changesSince?: string[];       // Human-readable change descriptions
+}
+
+export interface SchemaStatus {
+  status: 'implemented' | 'pending' | 'stale';
+  migration?: string;
+  specChangedSince: boolean;
+}
+
+// --- Memory Panel State ---
+
+export interface MemoryState {
+  summary: ProjectSummary | null;
+  specIndex: SpecIndex | null;
+  decisions: Decision[];
+  flowMap: FlowMap | null;
+  implementationStatus: ImplementationStatus | null;
+  memoryPanelOpen: boolean;
+  isRefreshing: boolean;
+}
+```
+
+**File: `src/stores/memory-store.ts`**
+```typescript
+import { create } from 'zustand';
+import type {
+  MemoryState, ProjectSummary, SpecIndex, Decision,
+  FlowMap, ImplementationStatus, FlowDependency,
+} from '../types/memory';
+import { invoke } from '@tauri-apps/api/core';
+import { nanoid } from 'nanoid';
+
+interface MemoryActions {
+  // Panel
+  toggleMemoryPanel: () => void;
+
+  // Load all memory layers from .ddd/memory/
+  loadMemory: (projectPath: string) => Promise<void>;
+
+  // Refresh auto-generated layers (1, 2, 4, 5)
+  refreshMemory: (projectPath: string) => Promise<void>;
+
+  // Regenerate project summary using LLM
+  regenerateSummary: (projectPath: string) => Promise<void>;
+
+  // Decision log
+  addDecision: (decision: Omit<Decision, 'id'>) => void;
+  editDecision: (id: string, updates: Partial<Decision>) => void;
+  removeDecision: (id: string) => void;
+  saveDecisions: (projectPath: string) => Promise<void>;
+
+  // Contextual getters
+  getFlowDependencies: (flowId: string) => FlowDependency | null;
+  getRelevantDecisions: (domainId?: string, flowId?: string) => Decision[];
+  getFlowStatus: (flowId: string) => FlowStatus | null;
+}
+
+export const useMemoryStore = create<MemoryState & MemoryActions>((set, get) => ({
+  summary: null,
+  specIndex: null,
+  decisions: [],
+  flowMap: null,
+  implementationStatus: null,
+  memoryPanelOpen: false,
+  isRefreshing: false,
+
+  toggleMemoryPanel: () => set(s => ({ memoryPanelOpen: !s.memoryPanelOpen })),
+
+  loadMemory: async (projectPath: string) => {
+    try {
+      const [summary, specIndex, decisions, flowMap, status] = await Promise.all([
+        invoke<ProjectSummary | null>('load_memory_layer', { projectPath, layer: 'summary' }),
+        invoke<SpecIndex | null>('load_memory_layer', { projectPath, layer: 'spec-index' }),
+        invoke<Decision[]>('load_memory_layer', { projectPath, layer: 'decisions' }),
+        invoke<FlowMap | null>('load_memory_layer', { projectPath, layer: 'flow-map' }),
+        invoke<ImplementationStatus | null>('load_memory_layer', { projectPath, layer: 'status' }),
+      ]);
+
+      set({
+        summary,
+        specIndex,
+        decisions: decisions ?? [],
+        flowMap,
+        implementationStatus: status,
+      });
+    } catch (err) {
+      console.error('Failed to load project memory:', err);
+    }
+  },
+
+  refreshMemory: async (projectPath: string) => {
+    set({ isRefreshing: true });
+
+    try {
+      // Rebuild auto-generated layers from specs
+      const [specIndex, flowMap, status] = await Promise.all([
+        invoke<SpecIndex>('build_spec_index', { projectPath }),
+        invoke<FlowMap>('build_flow_map', { projectPath }),
+        invoke<ImplementationStatus>('build_implementation_status', { projectPath }),
+      ]);
+
+      set({
+        specIndex,
+        flowMap,
+        implementationStatus: status,
+        isRefreshing: false,
+      });
+
+      // Save to disk
+      await Promise.all([
+        invoke('save_memory_layer', { projectPath, layer: 'spec-index', data: specIndex }),
+        invoke('save_memory_layer', { projectPath, layer: 'flow-map', data: flowMap }),
+        invoke('save_memory_layer', { projectPath, layer: 'status', data: status }),
+      ]);
+    } catch (err) {
+      console.error('Failed to refresh memory:', err);
+      set({ isRefreshing: false });
+    }
+  },
+
+  regenerateSummary: async (projectPath: string) => {
+    set({ isRefreshing: true });
+
+    try {
+      // Send all specs to LLM to generate project summary
+      const summary = await invoke<ProjectSummary>('generate_project_summary', { projectPath });
+      set({ summary, isRefreshing: false });
+
+      await invoke('save_memory_layer', { projectPath, layer: 'summary', data: summary });
+    } catch (err) {
+      console.error('Failed to regenerate summary:', err);
+      set({ isRefreshing: false });
+    }
+  },
+
+  addDecision: (decision) => {
+    const newDecision: Decision = { ...decision, id: nanoid() };
+    set(s => ({ decisions: [...s.decisions, newDecision] }));
+  },
+
+  editDecision: (id, updates) => {
+    set(s => ({
+      decisions: s.decisions.map(d => d.id === id ? { ...d, ...updates } : d),
+    }));
+  },
+
+  removeDecision: (id) => {
+    set(s => ({ decisions: s.decisions.filter(d => d.id !== id) }));
+  },
+
+  saveDecisions: async (projectPath: string) => {
+    await invoke('save_memory_layer', {
+      projectPath,
+      layer: 'decisions',
+      data: get().decisions,
+    });
+  },
+
+  getFlowDependencies: (flowId: string) => {
+    return get().flowMap?.flowDependencies[flowId] ?? null;
+  },
+
+  getRelevantDecisions: (domainId?: string, flowId?: string) => {
+    const decisions = get().decisions;
+    if (!domainId && !flowId) return decisions;
+
+    return decisions.filter(d =>
+      d.affected.some(ref =>
+        (domainId && ref.includes(domainId)) ||
+        (flowId && ref.includes(flowId))
+      )
+    );
+  },
+
+  getFlowStatus: (flowId: string) => {
+    return get().implementationStatus?.flows[flowId] ?? null;
+  },
+}));
+```
+
+**File: `src/utils/memory-builder.ts`**
+```typescript
+import type { SpecIndex, SpecIndexDomain, SpecIndexFlow, FlowMap, FlowMapEdge, FlowDependency } from '../types/memory';
+
+/**
+ * Build SpecIndex (Layer 2) by scanning all parsed domain configs and flow files.
+ * Called on project load and when specs change.
+ */
+export function buildSpecIndex(
+  systemConfig: any,
+  domainConfigs: Record<string, any>,
+  flowFiles: Record<string, any>,
+  schemas: Record<string, any>,
+  errorCodes: string[]
+): SpecIndex {
+  const domains: Record<string, SpecIndexDomain> = {};
+
+  for (const [domainId, domain] of Object.entries(domainConfigs)) {
+    const flows: Record<string, SpecIndexFlow> = {};
+
+    for (const flowEntry of (domain as any).flows ?? []) {
+      const flowYaml = flowFiles[`${domainId}/${flowEntry.id}`];
+      if (!flowYaml) continue;
+
+      const flow: SpecIndexFlow = {
+        type: flowYaml.flow?.type ?? 'traditional',
+        trigger: {
+          type: flowYaml.trigger?.type ?? 'unknown',
+          method: flowYaml.trigger?.method,
+          path: flowYaml.trigger?.path,
+          schedule: flowYaml.trigger?.schedule,
+          event: flowYaml.trigger?.event,
+        },
+        nodes: (flowYaml.nodes ?? []).map((n: any) => n.id),
+        publishesEvents: extractPublishedEvents(flowYaml),
+        consumesEvents: flowYaml.trigger?.type === 'event' ? [flowYaml.trigger.event] : [],
+        schemasUsed: extractSchemaRefs(flowYaml),
+        errorCodes: extractErrorCodes(flowYaml),
+      };
+
+      // Agent-specific fields
+      if (flow.type === 'agent') {
+        flow.agentModel = flowYaml.agent_config?.model;
+        flow.tools = (flowYaml.tools ?? []).map((t: any) => t.id);
+        flow.guardrails = (flowYaml.guardrails ?? []).map((g: any) => g.id);
+      }
+
+      flows[flowEntry.id] = flow;
+    }
+
+    domains[domainId] = {
+      description: (domain as any).description ?? '',
+      flows,
+    };
+  }
+
+  // Build event map
+  const events = buildEventList(domains);
+
+  return {
+    domains,
+    schemas: Object.fromEntries(
+      Object.entries(schemas).map(([name, schema]) => [
+        name,
+        { fields: Object.keys((schema as any).fields ?? (schema as any).properties ?? {}) },
+      ])
+    ),
+    events,
+    sharedErrorCodes: errorCodes,
+    generatedAt: Date.now(),
+  };
+}
+
+/**
+ * Build FlowMap (Layer 4) from SpecIndex — derive the dependency graph.
+ */
+export function buildFlowMap(specIndex: SpecIndex): FlowMap {
+  const events: FlowMapEdge[] = [];
+  const subFlows: FlowMapEdge[] = [];
+  const agentConnections: FlowMapEdge[] = [];
+  const sharedSchemas: { schema: string; usedBy: string[] }[] = [];
+  const flowDependencies: Record<string, FlowDependency> = {};
+
+  // Initialize dependencies for all flows
+  for (const [domainId, domain] of Object.entries(specIndex.domains)) {
+    for (const flowId of Object.keys(domain.flows)) {
+      const fullId = `${domainId}/${flowId}`;
+      flowDependencies[fullId] = {
+        dependsOn: [],
+        dependedOnBy: [],
+        schemas: domain.flows[flowId].schemasUsed,
+        eventsIn: domain.flows[flowId].consumesEvents,
+        eventsOut: domain.flows[flowId].publishesEvents,
+      };
+    }
+  }
+
+  // Build event edges
+  for (const event of specIndex.events) {
+    for (const [domainId, domain] of Object.entries(specIndex.domains)) {
+      for (const [flowId, flow] of Object.entries(domain.flows)) {
+        const fullId = `${domainId}/${flowId}`;
+
+        if (flow.publishesEvents.includes(event.name)) {
+          // Find consumers
+          for (const [cDomainId, cDomain] of Object.entries(specIndex.domains)) {
+            for (const [cFlowId, cFlow] of Object.entries(cDomain.flows)) {
+              if (cFlow.consumesEvents.includes(event.name)) {
+                const cFullId = `${cDomainId}/${cFlowId}`;
+                events.push({
+                  from: fullId,
+                  to: cFullId,
+                  via: event.name,
+                  type: 'event',
+                });
+                flowDependencies[cFullId]?.dependsOn.push(fullId);
+                flowDependencies[fullId]?.dependedOnBy.push(cFullId);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Build shared schema map
+  const schemaUsage: Record<string, string[]> = {};
+  for (const [domainId, domain] of Object.entries(specIndex.domains)) {
+    for (const [flowId, flow] of Object.entries(domain.flows)) {
+      for (const schema of flow.schemasUsed) {
+        if (!schemaUsage[schema]) schemaUsage[schema] = [];
+        schemaUsage[schema].push(`${domainId}/${flowId}`);
+      }
+    }
+  }
+  for (const [schema, usedBy] of Object.entries(schemaUsage)) {
+    if (usedBy.length > 1) {
+      sharedSchemas.push({ schema, usedBy });
+    }
+  }
+
+  return {
+    events,
+    subFlows,
+    sharedSchemas,
+    agentConnections,
+    flowDependencies,
+    generatedAt: Date.now(),
+  };
+}
+
+// --- Helpers ---
+
+function extractPublishedEvents(flowYaml: any): string[] {
+  const events: string[] = [];
+  for (const node of flowYaml.nodes ?? []) {
+    if (node.type === 'event' && node.spec?.event) {
+      events.push(node.spec.event);
+    }
+  }
+  return events;
+}
+
+function extractSchemaRefs(flowYaml: any): string[] {
+  const refs: string[] = [];
+  const yamlStr = JSON.stringify(flowYaml);
+  const matches = yamlStr.matchAll(/\$ref:\/schemas\/(\w+)/g);
+  for (const match of matches) {
+    refs.push(match[1]);
+  }
+  // Also check model references in data_store nodes
+  for (const node of flowYaml.nodes ?? []) {
+    if (node.spec?.model && typeof node.spec.model === 'string') {
+      refs.push(node.spec.model);
+    }
+  }
+  return [...new Set(refs)];
+}
+
+function extractErrorCodes(flowYaml: any): string[] {
+  const codes: string[] = [];
+  const yamlStr = JSON.stringify(flowYaml);
+  const matches = yamlStr.matchAll(/"error_code"\s*:\s*"(\w+)"/g);
+  for (const match of matches) {
+    codes.push(match[1]);
+  }
+  return [...new Set(codes)];
+}
+
+function buildEventList(domains: Record<string, SpecIndexDomain>) {
+  const eventMap: Record<string, { publisher: string; consumers: string[] }> = {};
+
+  for (const [domainId, domain] of Object.entries(domains)) {
+    for (const flow of Object.values(domain.flows)) {
+      for (const event of flow.publishesEvents) {
+        if (!eventMap[event]) eventMap[event] = { publisher: domainId, consumers: [] };
+        eventMap[event].publisher = domainId;
+      }
+      for (const event of flow.consumesEvents) {
+        if (!eventMap[event]) eventMap[event] = { publisher: '', consumers: [] };
+        if (!eventMap[event].consumers.includes(domainId)) {
+          eventMap[event].consumers.push(domainId);
+        }
+      }
+    }
+  }
+
+  return Object.entries(eventMap).map(([name, info]) => ({
+    name,
+    publisher: info.publisher,
+    consumers: info.consumers,
+  }));
+}
+```
+
+**Update `src/utils/llm-context.ts` — integrate memory layers:**
+```typescript
+import { useProjectStore } from '../stores/project-store';
+import { useSheetStore } from '../stores/sheet-store';
+import { useFlowStore } from '../stores/flow-store';
+import { useMemoryStore } from '../stores/memory-store';
+import type { LLMContext } from '../types/llm';
+
+/**
+ * Build the context object sent with every LLM request.
+ * Integrates all 5 Project Memory layers with priority-based budgeting.
+ */
+export function buildLLMContext(): LLMContext {
+  const project = useProjectStore.getState();
+  const sheet = useSheetStore.getState();
+  const flow = useFlowStore.getState();
+  const memory = useMemoryStore.getState();
+
+  const context: LLMContext = {
+    // Priority 1: Project Summary (Layer 1) — always included
+    projectSummary: memory.summary?.content ?? '',
+
+    system: {
+      name: project.systemConfig?.name ?? '',
+      techStack: project.systemConfig?.tech_stack ?? {},
+      domains: project.domains?.map(d => d.name) ?? [],
+    },
+  };
+
+  // Priority 2: Current domain + related domains (Layer 4)
+  if (sheet.current.level !== 'system' && sheet.current.domainId) {
+    const domain = project.domainConfigs?.[sheet.current.domainId];
+    if (domain) {
+      context.currentDomain = {
+        name: domain.name,
+        flows: domain.flows.map(f => f.id),
+        publishesEvents: domain.publishes_events.map(e => e.event),
+        consumesEvents: domain.consumes_events.map(e => e.event),
+      };
+    }
+  }
+
+  // Priority 3: Current flow + connected flows (Layer 4)
+  if (sheet.current.level === 'flow' && sheet.current.flowId) {
+    const flowId = sheet.current.flowId;
+    const domainId = sheet.current.domainId;
+    const fullFlowId = domainId ? `${domainId}/${flowId}` : flowId;
+
+    context.currentFlow = {
+      id: flowId,
+      type: flow.flowType ?? 'traditional',
+      yaml: flow.toYaml(),
+    };
+
+    // Connected flows from Flow Map (Layer 4)
+    const deps = memory.getFlowDependencies(fullFlowId);
+    if (deps) {
+      context.connectedFlows = {
+        upstream: deps.dependsOn,
+        downstream: deps.dependedOnBy,
+        sharedSchemas: deps.schemas,
+        eventsIn: deps.eventsIn,
+        eventsOut: deps.eventsOut,
+      };
+    }
+
+    // Implementation status (Layer 5)
+    const status = memory.getFlowStatus(fullFlowId);
+    if (status) {
+      context.implementationStatus = {
+        status: status.status,
+        specChangedSince: status.specChangedSince,
+        changesSince: status.changesSince,
+      };
+    }
+  }
+
+  // Selected nodes
+  const selectedNodes = flow.getSelectedNodes?.();
+  if (selectedNodes?.length) {
+    context.selectedNodes = selectedNodes.map(n => ({
+      id: n.id,
+      type: n.type,
+      spec: n.spec,
+    }));
+  }
+
+  // Priority 4: Relevant decisions (Layer 3)
+  const relevantDecisions = memory.getRelevantDecisions(
+    sheet.current.domainId,
+    sheet.current.flowId
+  );
+  if (relevantDecisions.length) {
+    context.relevantDecisions = relevantDecisions.map(d =>
+      `${d.title}: ${d.rationale}`
+    );
+  }
+
+  // Error codes and schemas
+  context.errorCodes = project.errorCodes ?? [];
+  context.schemas = project.schemas ?? {};
+
+  return context;
+}
+```
+
+**File: `src/components/MemoryPanel/MemoryPanel.tsx`**
+```tsx
+import { useMemoryStore } from '../../stores/memory-store';
+import { useProjectStore } from '../../stores/project-store';
+import { useSheetStore } from '../../stores/sheet-store';
+import { SummaryCard } from './SummaryCard';
+import { StatusList } from './StatusList';
+import { DecisionList } from './DecisionList';
+import { FlowDependencies } from './FlowDependencies';
+import { X, Brain, RefreshCw } from 'lucide-react';
+
+export function MemoryPanel() {
+  const {
+    summary, implementationStatus, decisions, flowMap,
+    memoryPanelOpen, isRefreshing,
+    toggleMemoryPanel, refreshMemory, regenerateSummary,
+  } = useMemoryStore();
+  const { projectPath } = useProjectStore();
+  const { current } = useSheetStore();
+
+  if (!memoryPanelOpen) return null;
+
+  return (
+    <div className="w-80 border-l border-gray-200 bg-white flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+        <div className="flex items-center gap-2">
+          <Brain className="w-4 h-4 text-indigo-500" />
+          <span className="font-medium text-sm">Project Memory</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => refreshMemory(projectPath)}
+            disabled={isRefreshing}
+            className="p-1 text-gray-400 hover:text-gray-600 disabled:animate-spin"
+            title="Refresh memory"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={toggleMemoryPanel} className="p-1 text-gray-400 hover:text-gray-600">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {/* Layer 1: Summary */}
+        <SummaryCard
+          summary={summary}
+          status={implementationStatus?.overview}
+          onRegenerate={() => regenerateSummary(projectPath)}
+          isRefreshing={isRefreshing}
+        />
+
+        {/* Layer 5: Implementation Status */}
+        <StatusList status={implementationStatus} />
+
+        {/* Layer 3: Decisions */}
+        <DecisionList decisions={decisions} />
+
+        {/* Layer 4: Flow Dependencies (shown on L3) */}
+        {current.level === 'flow' && current.flowId && current.domainId && (
+          <FlowDependencies
+            flowId={`${current.domainId}/${current.flowId}`}
+            flowMap={flowMap}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/MemoryPanel/SummaryCard.tsx`**
+```tsx
+import type { ProjectSummary } from '../../types/memory';
+import { FileText, RefreshCw } from 'lucide-react';
+
+interface Props {
+  summary: ProjectSummary | null;
+  status?: { totalFlows: number; implemented: number; pending: number; stale: number };
+  onRegenerate: () => void;
+  isRefreshing: boolean;
+}
+
+export function SummaryCard({ summary, status, onRegenerate, isRefreshing }: Props) {
+  return (
+    <div className="border border-gray-200 rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
+          <FileText className="w-3 h-3" />
+          Summary
+        </div>
+        <button
+          onClick={onRegenerate}
+          disabled={isRefreshing}
+          className="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1"
+        >
+          <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+          Regenerate
+        </button>
+      </div>
+
+      {summary ? (
+        <>
+          <div className="text-sm text-gray-700 line-clamp-4 whitespace-pre-wrap">
+            {summary.content.split('\n').slice(0, 4).join('\n')}
+          </div>
+          {summary.stale && (
+            <div className="mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
+              Summary may be outdated — specs changed since generation
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="text-xs text-gray-400">
+          No summary generated yet. Click Regenerate.
+        </div>
+      )}
+
+      {status && (
+        <div className="mt-2 flex gap-3 text-xs">
+          <span className="text-gray-500">{status.totalFlows} flows</span>
+          <span className="text-green-600">✓ {status.implemented}</span>
+          <span className="text-gray-400">◌ {status.pending}</span>
+          {status.stale > 0 && (
+            <span className="text-amber-600">⚠ {status.stale} stale</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**File: `src/components/MemoryPanel/StatusList.tsx`**
+```tsx
+import type { ImplementationStatus } from '../../types/memory';
+import { CheckCircle, Circle, AlertTriangle } from 'lucide-react';
+
+interface Props {
+  status: ImplementationStatus | null;
+}
+
+export function StatusList({ status }: Props) {
+  if (!status) return null;
+
+  const entries = Object.entries(status.flows).sort(([, a], [, b]) => {
+    const order = { stale: 0, pending: 1, implemented: 2 };
+    return order[a.status] - order[b.status];
+  });
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-3">
+      <div className="text-xs font-medium text-gray-500 mb-2">Implementation Status</div>
+      <div className="space-y-1.5 max-h-48 overflow-y-auto">
+        {entries.map(([flowId, flowStatus]) => (
+          <div key={flowId} className="flex items-center gap-2 text-xs">
+            {flowStatus.status === 'implemented' && (
+              <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+            )}
+            {flowStatus.status === 'pending' && (
+              <Circle className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
+            )}
+            {flowStatus.status === 'stale' && (
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+            )}
+            <span className="text-gray-700 truncate flex-1" title={flowId}>
+              {flowId}
+            </span>
+            {flowStatus.status === 'stale' && flowStatus.changesSince && (
+              <span className="text-amber-500" title={flowStatus.changesSince.join(', ')}>
+                {flowStatus.changesSince.length} changes
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/MemoryPanel/DecisionList.tsx`**
+```tsx
+import { useState } from 'react';
+import { useMemoryStore } from '../../stores/memory-store';
+import { useProjectStore } from '../../stores/project-store';
+import { DecisionForm } from './DecisionForm';
+import type { Decision } from '../../types/memory';
+import { Plus, Pencil, Trash2, BookOpen } from 'lucide-react';
+
+interface Props {
+  decisions: Decision[];
+}
+
+export function DecisionList({ decisions }: Props) {
+  const { addDecision, removeDecision, saveDecisions } = useMemoryStore();
+  const { projectPath } = useProjectStore();
+  const [showForm, setShowForm] = useState(false);
+
+  const handleAdd = (decision: Omit<Decision, 'id'>) => {
+    addDecision(decision);
+    saveDecisions(projectPath);
+    setShowForm(false);
+  };
+
+  const handleRemove = (id: string) => {
+    removeDecision(id);
+    saveDecisions(projectPath);
+  };
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
+          <BookOpen className="w-3 h-3" />
+          Decisions ({decisions.length})
+        </div>
+        <button
+          onClick={() => setShowForm(true)}
+          className="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1"
+        >
+          <Plus className="w-3 h-3" /> Add
+        </button>
+      </div>
+
+      <div className="space-y-2 max-h-48 overflow-y-auto">
+        {decisions.map(d => (
+          <div key={d.id} className="bg-gray-50 rounded px-2 py-1.5 group">
+            <div className="flex items-start justify-between">
+              <div className="text-xs font-medium text-gray-700">{d.title}</div>
+              <button
+                onClick={() => handleRemove(d.id)}
+                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{d.rationale}</div>
+            <div className="text-xs text-gray-400 mt-0.5">{d.date}</div>
+          </div>
+        ))}
+      </div>
+
+      {showForm && (
+        <DecisionForm onSave={handleAdd} onCancel={() => setShowForm(false)} />
+      )}
+    </div>
+  );
+}
+```
+
+**File: `src/components/MemoryPanel/DecisionForm.tsx`**
+```tsx
+import { useState } from 'react';
+import type { Decision } from '../../types/memory';
+
+interface Props {
+  onSave: (decision: Omit<Decision, 'id'>) => void;
+  onCancel: () => void;
+}
+
+export function DecisionForm({ onSave, onCancel }: Props) {
+  const [title, setTitle] = useState('');
+  const [rationale, setRationale] = useState('');
+  const [affected, setAffected] = useState('');
+
+  const handleSubmit = () => {
+    if (!title.trim() || !rationale.trim()) return;
+    onSave({
+      date: new Date().toISOString().slice(0, 10),
+      title: title.trim(),
+      rationale: rationale.trim(),
+      affected: affected.split(',').map(s => s.trim()).filter(Boolean),
+      author: 'user',
+    });
+  };
+
+  return (
+    <div className="mt-2 p-2 bg-indigo-50 rounded-lg border border-indigo-200 space-y-2">
+      <input
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        placeholder="Decision title"
+        className="w-full text-xs px-2 py-1 border rounded"
+      />
+      <textarea
+        value={rationale}
+        onChange={e => setRationale(e.target.value)}
+        placeholder="Why this decision was made…"
+        rows={3}
+        className="w-full text-xs px-2 py-1 border rounded resize-none"
+      />
+      <input
+        value={affected}
+        onChange={e => setAffected(e.target.value)}
+        placeholder="Affected (comma-separated: domain, flow, file)"
+        className="w-full text-xs px-2 py-1 border rounded"
+      />
+      <div className="flex gap-2 justify-end">
+        <button onClick={onCancel} className="text-xs px-2 py-1 text-gray-500 hover:text-gray-700">
+          Cancel
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={!title.trim() || !rationale.trim()}
+          className="text-xs px-2 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 disabled:opacity-50"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/MemoryPanel/FlowDependencies.tsx`**
+```tsx
+import type { FlowMap } from '../../types/memory';
+import { ArrowDown, ArrowUp, Layers, Zap } from 'lucide-react';
+
+interface Props {
+  flowId: string;
+  flowMap: FlowMap | null;
+}
+
+export function FlowDependencies({ flowId, flowMap }: Props) {
+  if (!flowMap) return null;
+
+  const deps = flowMap.flowDependencies[flowId];
+  if (!deps) return null;
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-3">
+      <div className="text-xs font-medium text-gray-500 mb-2">Flow Dependencies</div>
+
+      {/* Upstream */}
+      {deps.dependsOn.length > 0 && (
+        <div className="mb-2">
+          <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+            <ArrowDown className="w-3 h-3" /> Depends on
+          </div>
+          {deps.dependsOn.map(id => (
+            <div key={id} className="text-xs text-gray-700 ml-4">{id}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Downstream */}
+      {deps.dependedOnBy.length > 0 && (
+        <div className="mb-2">
+          <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+            <ArrowUp className="w-3 h-3" /> Depended on by
+          </div>
+          {deps.dependedOnBy.map(id => (
+            <div key={id} className="text-xs text-gray-700 ml-4">{id}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Schemas */}
+      {deps.schemas.length > 0 && (
+        <div className="mb-2">
+          <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+            <Layers className="w-3 h-3" /> Schemas
+          </div>
+          <div className="flex flex-wrap gap-1 ml-4">
+            {deps.schemas.map(s => (
+              <span key={s} className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{s}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Events */}
+      {(deps.eventsOut.length > 0 || deps.eventsIn.length > 0) && (
+        <div>
+          <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+            <Zap className="w-3 h-3" /> Events
+          </div>
+          {deps.eventsOut.map(e => (
+            <div key={e} className="text-xs text-gray-700 ml-4">→ {e} (publishes)</div>
+          ))}
+          {deps.eventsIn.map(e => (
+            <div key={e} className="text-xs text-gray-700 ml-4">← {e} (consumes)</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**Add keyboard shortcut for Memory Panel in `src/App.tsx`:**
+```typescript
+// Add to the existing keyboard handler useEffect
+// Cmd+M / Ctrl+M — Toggle Memory Panel
+if (mod && e.key === 'm') {
+  e.preventDefault();
+  useMemoryStore.getState().toggleMemoryPanel();
+}
+```
+
+**Trigger memory refresh on spec changes — add to `src/stores/project-store.ts`:**
+```typescript
+// After loading or saving any spec file, trigger memory refresh
+import { useMemoryStore } from './memory-store';
+
+// In loadProject action:
+async loadProject(path: string) {
+  // ... existing project loading logic ...
+
+  // After all specs are loaded, build memory layers
+  const memoryStore = useMemoryStore.getState();
+  await memoryStore.loadMemory(path);
+
+  // Check if auto-generated layers need refresh
+  if (!memoryStore.specIndex || memoryStore.summary?.stale) {
+    await memoryStore.refreshMemory(path);
+  }
+}
+
+// In saveFlow action:
+async saveFlow(flowId: string) {
+  // ... existing save logic ...
+
+  // Mark memory as potentially stale and refresh
+  const memoryStore = useMemoryStore.getState();
+  await memoryStore.refreshMemory(get().projectPath);
+}
+```
+
+**Decision capture in Chat — update `src/stores/llm-store.ts`:**
+```typescript
+// After receiving an LLM response, check if it detected a design decision
+// Pattern: LLM includes "💡 Decision detected:" in response
+
+sendMessage: async (content: string) => {
+  // ... existing send logic ...
+
+  // After response received, check for decision capture
+  if (response.includes('💡 Decision detected:')) {
+    const decisionMatch = response.match(
+      /💡 Decision detected:\n- Title: (.+)\n- Rationale: (.+)\n- Affected: (.+)/
+    );
+    if (decisionMatch) {
+      // Add to decision log automatically
+      useMemoryStore.getState().addDecision({
+        date: new Date().toISOString().slice(0, 10),
+        title: decisionMatch[1],
+        rationale: decisionMatch[2],
+        affected: decisionMatch[3].split(',').map(s => s.trim()),
+        author: 'llm',
+      });
+    }
+  }
 }
 ```
 
@@ -4595,6 +5685,45 @@ function App() {
     - [ ] Fallback provider works when primary fails
     - [ ] Ollama works for offline use
 
+20. **Project Memory — Summary (Layer 1)**
+    - [ ] Project summary generated on first load (LLM call)
+    - [ ] Summary regenerates when specs change
+    - [ ] Stale indicator shows when summary is outdated
+    - [ ] Summary included in every LLM request context
+
+21. **Project Memory — Spec Index (Layer 2)**
+    - [ ] Spec index built from all flow YAMLs, domain configs, schemas
+    - [ ] Index includes condensed flow info (trigger, nodes, events, schemas, error codes)
+    - [ ] Index auto-refreshes when spec files change
+
+22. **Project Memory — Decision Log (Layer 3)**
+    - [ ] Can add design decisions via Memory Panel
+    - [ ] Can edit and remove decisions
+    - [ ] Decisions saved to .ddd/memory/decisions.md
+    - [ ] decisions.md is NOT in .gitignore (committed to repo)
+    - [ ] LLM auto-detects rationale in chat and offers to save as decision
+    - [ ] Relevant decisions filtered by current domain/flow in LLM context
+
+23. **Project Memory — Flow Map (Layer 4)**
+    - [ ] Cross-flow dependency graph derived from events, sub-flows, schemas
+    - [ ] Flow dependencies shown in Memory Panel when on Level 3
+    - [ ] Connected flows (upstream/downstream) included in LLM context
+    - [ ] Auto-refreshes when flow specs change
+
+24. **Project Memory — Implementation Status (Layer 5)**
+    - [ ] Status list shows implemented/pending/stale per flow
+    - [ ] Stale flows show count of changes since last code generation
+    - [ ] Status derived from .ddd/mapping.yaml + git diff
+    - [ ] Implementation status of current flow included in LLM context
+
+25. **Memory Panel**
+    - [ ] Cmd+M / Ctrl+M toggles memory panel
+    - [ ] Shows summary card with project overview + flow counts
+    - [ ] Shows implementation status list (sorted: stale first)
+    - [ ] Shows decision list with add/edit/remove
+    - [ ] Shows flow dependencies card when on Level 3
+    - [ ] Refresh button triggers memory rebuild
+
 ---
 
 ## Phase 5: Key Implementation Notes
@@ -4608,10 +5737,11 @@ function App() {
    - `project-store` owns domain configs parsed from domain.yaml files
    - `flow-store` owns current flow being edited (Level 3 only)
    - `llm-store` owns chat state, ghost previews, LLM config
+   - `memory-store` owns project memory layers, refresh triggers, decisions
    - Never mutate state directly
 
 2. **Tauri Commands**
-   - All file/git/LLM operations go through Tauri
+   - All file/git/LLM/memory operations go through Tauri
    - Use async/await pattern
    - Handle errors gracefully
 
@@ -4661,6 +5791,10 @@ function App() {
 16. **Do** scope chat threads per flow — switching flows should switch threads
 17. **Do** include full project context in every LLM request (system, domain, flow, schemas, error codes)
 18. **Do** support provider fallback (e.g., Anthropic → Ollama for offline use)
+19. **Do** refresh memory layers when specs change (project load + save)
+20. **Do** keep context budget under ~5,500 tokens — summarize, don't dump raw YAML
+21. **Don't** gitignore `decisions.md` — design decisions are team knowledge
+22. **Do** include connected flows from Flow Map in LLM context so it knows about upstream/downstream impact
 
 ---
 
@@ -4769,6 +5903,18 @@ npm run tauri dev
 - [ ] Provider fallback works (Anthropic → Ollama for offline)
 - [ ] Chat threads scoped per flow, switchable
 - [ ] API key read from env var, never stored in config files
+
+### Project Memory
+- [ ] 5 memory layers stored in .ddd/memory/ (summary.md, spec-index.yaml, decisions.md, flow-map.yaml, status.yaml)
+- [ ] Auto-generated layers (1, 2, 4, 5) rebuild when specs change
+- [ ] Decision log (Layer 3) is user-editable and version-controlled
+- [ ] Project Summary always included in LLM context (~1,500 tokens)
+- [ ] Connected flows from Flow Map included in LLM context on Level 3
+- [ ] Relevant decisions filtered and included in LLM context
+- [ ] Implementation status of current flow included in LLM context
+- [ ] Memory Panel toggles with Cmd+M and shows all layers
+- [ ] LLM auto-detects design rationale in chat and offers to save as decision
+- [ ] Context budget stays within ~4,000-5,500 tokens total
 
 ---
 
