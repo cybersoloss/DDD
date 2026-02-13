@@ -66,12 +66,16 @@ ddd-tool/
 │       │   ├── file.rs        # File operations
 │       │   ├── git.rs         # Git operations
 │       │   ├── project.rs     # Project management
-│       │   └── llm.rs         # LLM API proxy (Anthropic/OpenAI/Ollama)
+│       │   ├── llm.rs         # LLM API proxy (Anthropic/OpenAI/Ollama)
+│       │   ├── pty.rs         # PTY terminal for Claude Code
+│       │   └── test_runner.rs # Run tests and parse output
 │       └── services/
 │           ├── mod.rs
 │           ├── git_service.rs
 │           ├── file_service.rs
-│           └── llm_service.rs  # HTTP client, streaming, provider abstraction
+│           ├── llm_service.rs  # HTTP client, streaming, provider abstraction
+│           ├── pty_service.rs  # PTY process management
+│           └── test_service.rs # Test execution and parsing
 │
 ├── src/
 │   ├── main.tsx
@@ -141,6 +145,13 @@ ddd-tool/
 │   │   │   ├── ModelPicker.tsx        # Model dropdown selector in chat header
 │   │   │   ├── UsageBar.tsx           # Bottom status bar (model + cost tracking)
 │   │   │   └── FlowPreview.tsx        # Mini flow diagram in chat for generated flows
+│   │   ├── ImplementationPanel/
+│   │   │   ├── ImplementationPanel.tsx # Main panel (prompt preview + terminal + test results)
+│   │   │   ├── PromptPreview.tsx       # Editable prompt display with Run button
+│   │   │   ├── TerminalEmbed.tsx       # Embedded PTY terminal for Claude Code
+│   │   │   ├── TestResults.tsx         # Test output display with fix loop
+│   │   │   ├── ImplementationQueue.tsx # Queue view for batch implementation
+│   │   │   └── StaleBanner.tsx         # Stale detection warning banner
 │   │   ├── MemoryPanel/
 │   │   │   ├── MemoryPanel.tsx        # Main memory panel (sidebar toggle)
 │   │   │   ├── SummaryCard.tsx        # Project summary display
@@ -160,7 +171,8 @@ ddd-tool/
 │   │   ├── ui-store.ts        # UI state (selection, panels)
 │   │   ├── git-store.ts       # Git state
 │   │   ├── llm-store.ts       # Chat state, ghost nodes, LLM config
-│   │   └── memory-store.ts    # Project memory layers, refresh triggers
+│   │   ├── memory-store.ts    # Project memory layers, refresh triggers
+│   │   └── implementation-store.ts  # Implementation panel state, queue, test results
 │   ├── types/
 │   │   ├── sheet.ts           # Sheet levels, navigation, breadcrumb types
 │   │   ├── domain.ts          # Domain config, event wiring, portal types
@@ -169,12 +181,15 @@ ddd-tool/
 │   │   ├── spec.ts
 │   │   ├── project.ts
 │   │   ├── llm.ts             # Chat messages, LLM config, ghost node types
-│   │   └── memory.ts          # Project memory layer types
+│   │   ├── memory.ts          # Project memory layer types
+│   │   └── implementation.ts  # Implementation panel, prompt builder, test runner types
 │   ├── utils/
 │   │   ├── yaml.ts
 │   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
 │   │   ├── llm-context.ts     # Build context object for LLM requests (uses memory layers)
 │   │   ├── memory-builder.ts  # Scan specs → generate memory layers
+│   │   ├── prompt-builder.ts  # Build Claude Code prompts from specs
+│   │   ├── claude-md-generator.ts  # Generate/update CLAUDE.md from project state
 │   │   ├── mermaid.ts
 │   │   └── validation.ts
 │   └── styles/
@@ -6057,6 +6072,1482 @@ sendMessage: async (content: string) => {
 
 ---
 
+### Claude Code Integration
+
+**File: `src/types/implementation.ts`**
+```typescript
+/** Panel states */
+export type ImplementationPanelState =
+  | 'idle'
+  | 'prompt_ready'
+  | 'running'
+  | 'done'
+  | 'failed';
+
+/** A single flow's implementation status in the queue */
+export interface QueueItem {
+  flowId: string;          // e.g. "api/user-register"
+  domain: string;
+  flowName: string;
+  status: 'pending' | 'stale' | 'implemented';
+  testResult?: TestSummary;
+  staleChanges?: string[]; // Human-readable list of spec changes
+  selected: boolean;       // For batch operations
+}
+
+/** Prompt built for Claude Code */
+export interface BuiltPrompt {
+  flowId: string;
+  domain: string;
+  content: string;         // The full prompt text
+  specFiles: string[];     // Files referenced in the prompt
+  mode: 'new' | 'update';  // New implementation or update to existing
+  agentFlow: boolean;       // Whether this is an agent flow
+  editedByUser: boolean;    // Whether user has modified the prompt
+}
+
+/** Mapping entry stored in .ddd/mapping.yaml */
+export interface FlowMapping {
+  spec: string;            // Path to spec file
+  spec_hash: string;       // SHA-256 of spec at implementation time
+  files: string[];         // Generated code files
+  implemented_at: string;  // ISO timestamp
+  test_results?: TestSummary;
+}
+
+/** Test execution results */
+export interface TestSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  errors: number;
+  duration_ms: number;
+  tests: TestCase[];
+}
+
+export interface TestCase {
+  name: string;
+  status: 'passed' | 'failed' | 'error' | 'skipped';
+  duration_ms: number;
+  error_message?: string;
+  error_detail?: string;
+}
+
+/** PTY session for embedded terminal */
+export interface PtySession {
+  id: string;
+  running: boolean;
+  exitCode?: number;
+}
+
+/** Stale detection result */
+export interface StaleResult {
+  flowId: string;
+  currentHash: string;
+  storedHash: string;
+  isStale: boolean;
+  changes: string[];       // Human-readable change descriptions
+  cachedSpecPath?: string;  // Path to spec at implementation time
+}
+
+/** Implementation config from .ddd/config.yaml */
+export interface ImplementationConfig {
+  claude_code: {
+    enabled: boolean;
+    command: string;
+    post_implement: {
+      run_tests: boolean;
+      run_lint: boolean;
+      auto_commit: boolean;
+      regenerate_claude_md: boolean;
+    };
+    prompt: {
+      include_architecture: boolean;
+      include_errors: boolean;
+      include_schemas: 'all' | 'auto' | 'none';
+    };
+  };
+  testing: {
+    command: string;
+    args: string[];
+    scoped: boolean;
+    scope_pattern: string;
+    auto_run: boolean;
+  };
+}
+```
+
+**File: `src/stores/implementation-store.ts`**
+```typescript
+import { create } from 'zustand';
+import { invoke } from '@tauri-apps/api/core';
+import type {
+  ImplementationPanelState, QueueItem, BuiltPrompt, FlowMapping,
+  TestSummary, PtySession, StaleResult, ImplementationConfig,
+} from '../types/implementation';
+import { buildPrompt } from '../utils/prompt-builder';
+import { generateClaudeMd } from '../utils/claude-md-generator';
+
+interface ImplementationState {
+  // Panel
+  panelOpen: boolean;
+  panelState: ImplementationPanelState;
+  togglePanel: () => void;
+
+  // Prompt
+  currentPrompt: BuiltPrompt | null;
+  buildPromptForFlow: (flowId: string, domain: string) => Promise<void>;
+  updatePromptContent: (content: string) => void;
+
+  // Terminal (PTY)
+  ptySession: PtySession | null;
+  runClaudeCode: () => Promise<void>;
+  stopClaudeCode: () => Promise<void>;
+  sendToPty: (input: string) => Promise<void>;
+
+  // Test runner
+  testResults: TestSummary | null;
+  isRunningTests: boolean;
+  runTests: (flowId: string) => Promise<void>;
+  fixFailingTest: (flowId: string, errorOutput: string) => Promise<void>;
+
+  // Queue
+  queue: QueueItem[];
+  loadQueue: (projectPath: string) => Promise<void>;
+  toggleQueueItem: (flowId: string) => void;
+  selectAllPending: () => void;
+  implementSelected: () => Promise<void>;
+
+  // Stale detection
+  staleResults: Record<string, StaleResult>;
+  checkAllStale: (projectPath: string) => Promise<void>;
+  checkFlowStale: (flowId: string, projectPath: string) => Promise<StaleResult>;
+
+  // Mapping
+  mappings: Record<string, FlowMapping>;
+  loadMappings: (projectPath: string) => Promise<void>;
+  updateMapping: (flowId: string, mapping: FlowMapping, projectPath: string) => Promise<void>;
+
+  // Config
+  config: ImplementationConfig | null;
+  loadConfig: (projectPath: string) => Promise<void>;
+
+  // CLAUDE.md
+  regenerateClaudeMd: (projectPath: string) => Promise<void>;
+}
+
+export const useImplementationStore = create<ImplementationState>((set, get) => ({
+  panelOpen: false,
+  panelState: 'idle',
+  currentPrompt: null,
+  ptySession: null,
+  testResults: null,
+  isRunningTests: false,
+  queue: [],
+  staleResults: {},
+  mappings: {},
+  config: null,
+
+  togglePanel: () => set(s => ({ panelOpen: !s.panelOpen })),
+
+  buildPromptForFlow: async (flowId, domain) => {
+    const prompt = await buildPrompt(flowId, domain);
+    set({ currentPrompt: prompt, panelState: 'prompt_ready', panelOpen: true });
+  },
+
+  updatePromptContent: (content) => {
+    const current = get().currentPrompt;
+    if (current) {
+      set({ currentPrompt: { ...current, content, editedByUser: true } });
+    }
+  },
+
+  runClaudeCode: async () => {
+    const prompt = get().currentPrompt;
+    if (!prompt) return;
+
+    set({ panelState: 'running' });
+
+    try {
+      // Spawn PTY with claude CLI
+      const sessionId = await invoke<string>('pty_spawn', {
+        command: get().config?.claude_code.command ?? 'claude',
+        args: [prompt.content],
+        cwd: await invoke<string>('get_project_path'),
+      });
+
+      set({ ptySession: { id: sessionId, running: true } });
+
+      // Listen for PTY exit
+      const exitCode = await invoke<number>('pty_wait', { sessionId });
+      set(s => ({
+        ptySession: s.ptySession ? { ...s.ptySession, running: false, exitCode } : null,
+        panelState: exitCode === 0 ? 'done' : 'failed',
+      }));
+
+      // Post-implementation actions
+      if (exitCode === 0) {
+        const config = get().config;
+        const flowId = prompt.flowId;
+        const projectPath = await invoke<string>('get_project_path');
+
+        // Update mapping
+        const specHash = await invoke<string>('hash_file', { path: prompt.specFiles[prompt.specFiles.length - 1] });
+        await get().updateMapping(flowId, {
+          spec: prompt.specFiles[prompt.specFiles.length - 1],
+          spec_hash: specHash,
+          files: [], // Will be populated by git diff
+          implemented_at: new Date().toISOString(),
+        }, projectPath);
+
+        // Cache spec at implementation time
+        await invoke('cache_spec', { flowId, specPath: prompt.specFiles[prompt.specFiles.length - 1] });
+
+        // Auto-run tests
+        if (config?.claude_code.post_implement.run_tests) {
+          await get().runTests(flowId);
+        }
+
+        // Regenerate CLAUDE.md
+        if (config?.claude_code.post_implement.regenerate_claude_md) {
+          await get().regenerateClaudeMd(projectPath);
+        }
+      }
+    } catch (err) {
+      set({ panelState: 'failed' });
+      console.error('Claude Code execution failed:', err);
+    }
+  },
+
+  stopClaudeCode: async () => {
+    const session = get().ptySession;
+    if (session?.running) {
+      await invoke('pty_kill', { sessionId: session.id });
+      set(s => ({
+        ptySession: s.ptySession ? { ...s.ptySession, running: false } : null,
+        panelState: 'failed',
+      }));
+    }
+  },
+
+  sendToPty: async (input) => {
+    const session = get().ptySession;
+    if (session?.running) {
+      await invoke('pty_write', { sessionId: session.id, data: input });
+    }
+  },
+
+  runTests: async (flowId) => {
+    set({ isRunningTests: true, testResults: null });
+    try {
+      const config = get().config;
+      const projectPath = await invoke<string>('get_project_path');
+      const results = await invoke<TestSummary>('run_tests', {
+        command: config?.testing.command ?? 'pytest',
+        args: config?.testing.args ?? [],
+        scoped: config?.testing.scoped ?? true,
+        scopePattern: config?.testing.scope_pattern?.replace('{flow_id}', flowId.split('/').pop() ?? ''),
+        cwd: projectPath,
+      });
+      set({ testResults: results, isRunningTests: false });
+    } catch (err) {
+      set({ isRunningTests: false });
+      console.error('Test execution failed:', err);
+    }
+  },
+
+  fixFailingTest: async (flowId, errorOutput) => {
+    // Build a fix prompt and send to Claude Code
+    const fixPrompt = `This test is failing after implementing ${flowId}. Fix the implementation to match the spec.\n\nError output:\n${errorOutput}`;
+    set({
+      currentPrompt: {
+        flowId,
+        domain: flowId.split('/')[0],
+        content: fixPrompt,
+        specFiles: [],
+        mode: 'update',
+        agentFlow: false,
+        editedByUser: false,
+      },
+      panelState: 'prompt_ready',
+    });
+  },
+
+  loadQueue: async (projectPath) => {
+    const mappings = get().mappings;
+    const staleResults = get().staleResults;
+
+    // Build queue from project flows + mapping status
+    const allFlows = await invoke<Array<{ flowId: string; domain: string; name: string }>>('list_all_flows', { projectPath });
+
+    const queue: QueueItem[] = allFlows.map(f => {
+      const mapping = mappings[f.flowId];
+      const stale = staleResults[f.flowId];
+
+      let status: QueueItem['status'] = 'pending';
+      if (mapping && !stale?.isStale) status = 'implemented';
+      else if (mapping && stale?.isStale) status = 'stale';
+
+      return {
+        flowId: f.flowId,
+        domain: f.domain,
+        flowName: f.name,
+        status,
+        staleChanges: stale?.changes,
+        selected: false,
+      };
+    });
+
+    set({ queue });
+  },
+
+  toggleQueueItem: (flowId) =>
+    set(s => ({
+      queue: s.queue.map(q => q.flowId === flowId ? { ...q, selected: !q.selected } : q),
+    })),
+
+  selectAllPending: () =>
+    set(s => ({
+      queue: s.queue.map(q => ({
+        ...q,
+        selected: q.status === 'pending' || q.status === 'stale',
+      })),
+    })),
+
+  implementSelected: async () => {
+    const selected = get().queue.filter(q => q.selected);
+    for (const item of selected) {
+      await get().buildPromptForFlow(item.flowId, item.domain);
+      await get().runClaudeCode();
+    }
+    // Reload queue after batch
+    const projectPath = await invoke<string>('get_project_path');
+    await get().loadQueue(projectPath);
+  },
+
+  checkAllStale: async (projectPath) => {
+    const mappings = get().mappings;
+    const results: Record<string, StaleResult> = {};
+
+    for (const [flowId, mapping] of Object.entries(mappings)) {
+      const currentHash = await invoke<string>('hash_file', { path: `${projectPath}/${mapping.spec}` });
+      const isStale = currentHash !== mapping.spec_hash;
+
+      let changes: string[] = [];
+      if (isStale) {
+        changes = await invoke<string[]>('diff_specs', {
+          cachedPath: `${projectPath}/.ddd/cache/specs-at-implementation/${flowId.replace('/', '--')}.yaml`,
+          currentPath: `${projectPath}/${mapping.spec}`,
+        });
+      }
+
+      results[flowId] = {
+        flowId,
+        currentHash,
+        storedHash: mapping.spec_hash,
+        isStale,
+        changes,
+      };
+    }
+
+    set({ staleResults: results });
+  },
+
+  checkFlowStale: async (flowId, projectPath) => {
+    const mapping = get().mappings[flowId];
+    if (!mapping) return { flowId, currentHash: '', storedHash: '', isStale: false, changes: [] };
+
+    const currentHash = await invoke<string>('hash_file', { path: `${projectPath}/${mapping.spec}` });
+    const isStale = currentHash !== mapping.spec_hash;
+
+    let changes: string[] = [];
+    if (isStale) {
+      changes = await invoke<string[]>('diff_specs', {
+        cachedPath: `${projectPath}/.ddd/cache/specs-at-implementation/${flowId.replace('/', '--')}.yaml`,
+        currentPath: `${projectPath}/${mapping.spec}`,
+      });
+    }
+
+    const result = { flowId, currentHash, storedHash: mapping.spec_hash, isStale, changes };
+    set(s => ({ staleResults: { ...s.staleResults, [flowId]: result } }));
+    return result;
+  },
+
+  loadMappings: async (projectPath) => {
+    try {
+      const raw = await invoke<string>('read_file', { path: `${projectPath}/.ddd/mapping.yaml` });
+      const parsed = (await import('yaml')).parse(raw);
+      set({ mappings: parsed.flows ?? {} });
+    } catch {
+      set({ mappings: {} });
+    }
+  },
+
+  updateMapping: async (flowId, mapping, projectPath) => {
+    const mappings = { ...get().mappings, [flowId]: mapping };
+    set({ mappings });
+    const yaml = (await import('yaml')).stringify({ flows: mappings });
+    await invoke('write_file', { path: `${projectPath}/.ddd/mapping.yaml`, content: yaml });
+  },
+
+  loadConfig: async (projectPath) => {
+    try {
+      const raw = await invoke<string>('read_file', { path: `${projectPath}/.ddd/config.yaml` });
+      const parsed = (await import('yaml')).parse(raw);
+      set({ config: parsed });
+    } catch {
+      // Use defaults
+      set({
+        config: {
+          claude_code: {
+            enabled: true,
+            command: 'claude',
+            post_implement: { run_tests: true, run_lint: false, auto_commit: false, regenerate_claude_md: true },
+            prompt: { include_architecture: true, include_errors: true, include_schemas: 'auto' },
+          },
+          testing: {
+            command: 'pytest',
+            args: ['--tb=short', '-q'],
+            scoped: true,
+            scope_pattern: 'tests/**/test_{flow_id}*',
+            auto_run: true,
+          },
+        },
+      });
+    }
+  },
+
+  regenerateClaudeMd: async (projectPath) => {
+    const content = await generateClaudeMd(projectPath);
+    await invoke('write_file', { path: `${projectPath}/CLAUDE.md`, content });
+  },
+}));
+```
+
+**File: `src/utils/prompt-builder.ts`**
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+import type { BuiltPrompt } from '../types/implementation';
+import { useImplementationStore } from '../stores/implementation-store';
+
+/**
+ * Build an optimal Claude Code prompt for implementing a flow.
+ * Resolves referenced schemas, detects agent flows, handles update mode.
+ */
+export async function buildPrompt(flowId: string, domain: string): Promise<BuiltPrompt> {
+  const projectPath = await invoke<string>('get_project_path');
+  const flowFileName = flowId.split('/').pop() ?? flowId;
+
+  // Read the flow spec
+  const flowSpecPath = `specs/domains/${domain}/flows/${flowFileName}.yaml`;
+  const flowYaml = await invoke<string>('read_file', { path: `${projectPath}/${flowSpecPath}` });
+  const flowSpec = (await import('yaml')).parse(flowYaml);
+
+  // Detect flow type
+  const isAgent = flowSpec.flow?.type === 'agent';
+
+  // Find referenced schemas
+  const schemas = extractReferencedSchemas(flowSpec);
+
+  // Check if this is an update (existing mapping)
+  const { mappings, staleResults } = useImplementationStore.getState();
+  const existingMapping = mappings[flowId];
+  const stale = staleResults[flowId];
+  const isUpdate = !!existingMapping;
+
+  // Build spec file list
+  const specFiles: string[] = [
+    'specs/architecture.yaml',
+    'specs/shared/errors.yaml',
+    ...schemas.map(s => `specs/schemas/${s}.yaml`),
+    `specs/domains/${domain}/flows/${flowFileName}.yaml`,
+  ];
+
+  // Build prompt content
+  let content = `# ${isUpdate ? 'Update' : 'Implement'}: ${flowId}\n\n`;
+  content += `Read these spec files in order:\n\n`;
+  content += `1. specs/architecture.yaml — Project structure, conventions, dependencies\n`;
+  content += `2. specs/shared/errors.yaml — Error codes and messages\n`;
+  schemas.forEach((s, i) => {
+    content += `${i + 3}. specs/schemas/${s}.yaml — Data model\n`;
+  });
+  content += `${schemas.length + 3}. specs/domains/${domain}/flows/${flowFileName}.yaml — The flow to implement\n\n`;
+
+  content += `## Instructions\n\n`;
+
+  if (isUpdate && stale) {
+    content += `This flow was previously implemented. The spec has changed:\n`;
+    stale.changes.forEach(c => { content += `- ${c}\n`; });
+    content += `\nUpdate the existing code to match the new spec.\n`;
+    content += `Do NOT rewrite files from scratch — modify the existing implementation.\n`;
+    content += `Update affected tests.\n\n`;
+  } else {
+    content += `Implement the ${flowId} flow following architecture.yaml exactly:\n\n`;
+    content += `- Create the endpoint matching the trigger spec`;
+    if (flowSpec.trigger?.method && flowSpec.trigger?.path) {
+      content += ` (method: ${flowSpec.trigger.method}, path: ${flowSpec.trigger.path})`;
+    }
+    content += `\n`;
+    content += `- Create request/response schemas matching the input node validations\n`;
+    content += `- Implement each node as described in the spec\n`;
+    content += `- Use EXACT error codes from errors.yaml (do not invent new ones)\n`;
+    content += `- Use EXACT validation messages from the flow spec\n`;
+    content += `- Create unit tests covering: happy path, each validation failure, each error path\n\n`;
+  }
+
+  content += `## File locations\n\n`;
+  content += `- Implementation: src/domains/${domain}/\n`;
+  content += `- Tests: tests/unit/domains/${domain}/\n\n`;
+
+  content += `## After implementation\n\n`;
+  content += `Update .ddd/mapping.yaml with the flow mapping.\n`;
+
+  if (isAgent) {
+    content += `\n## Agent-specific\n\n`;
+    content += `This is an agent flow. Implement:\n`;
+    content += `- Agent runner with the agent loop configuration\n`;
+    content += `- Tool implementations for each tool defined in the spec\n`;
+    content += `- Guardrail middleware for input/output filtering\n`;
+    content += `- Memory management per the memory spec\n`;
+    content += `- Use mocked LLM responses in tests\n`;
+  }
+
+  return {
+    flowId,
+    domain,
+    content,
+    specFiles,
+    mode: isUpdate ? 'update' : 'new',
+    agentFlow: isAgent,
+    editedByUser: false,
+  };
+}
+
+/** Extract schema names referenced by a flow spec via $ref and data_store model fields. */
+function extractReferencedSchemas(flowSpec: any): string[] {
+  const refs: string[] = [];
+  const yamlStr = JSON.stringify(flowSpec);
+
+  // $ref patterns
+  const refMatches = yamlStr.matchAll(/\$ref[":]*\/?schemas\/(\w+)/g);
+  for (const match of refMatches) refs.push(match[1]);
+
+  // data_store model references
+  for (const node of flowSpec.nodes ?? []) {
+    if (node.spec?.model && typeof node.spec.model === 'string') {
+      refs.push(node.spec.model);
+    }
+  }
+
+  return [...new Set(refs)];
+}
+```
+
+**File: `src/utils/claude-md-generator.ts`**
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+import { useImplementationStore } from '../stores/implementation-store';
+import { useProjectStore } from '../stores/project-store';
+
+/**
+ * Generate CLAUDE.md content from project state.
+ * Preserves any custom section the user has added.
+ */
+export async function generateClaudeMd(projectPath: string): Promise<string> {
+  const project = useProjectStore.getState();
+  const { mappings, staleResults } = useImplementationStore.getState();
+
+  const systemConfig = project.systemConfig;
+  const domains = project.domains ?? [];
+
+  // Read existing CLAUDE.md to preserve custom section
+  let customSection = '';
+  try {
+    const existing = await invoke<string>('read_file', { path: `${projectPath}/CLAUDE.md` });
+    const customMarker = '<!-- CUSTOM: Add your own instructions below this line. They won\'t be overwritten. -->';
+    const customIndex = existing.indexOf(customMarker);
+    if (customIndex !== -1) {
+      customSection = existing.slice(customIndex);
+    }
+  } catch {
+    // No existing CLAUDE.md
+  }
+
+  // Read architecture.yaml for tech stack and folder structure
+  let techStack: any = systemConfig?.tech_stack ?? {};
+  let architectureYaml: any = {};
+  try {
+    const archRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/architecture.yaml` });
+    architectureYaml = (await import('yaml')).parse(archRaw);
+  } catch { /* ignore */ }
+
+  // Count error codes
+  let errorCodeCount = 0;
+  try {
+    const errRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/shared/errors.yaml` });
+    const errYaml = (await import('yaml')).parse(errRaw);
+    errorCodeCount = Object.values(errYaml).reduce((sum: number, cat: any) =>
+      sum + (typeof cat === 'object' ? Object.keys(cat).length : 0), 0);
+  } catch { /* ignore */ }
+
+  // Count schemas
+  let schemaNames: string[] = [];
+  try {
+    const schemaFiles = await invoke<string[]>('list_files', { dir: `${projectPath}/specs/schemas`, pattern: '*.yaml' });
+    schemaNames = schemaFiles.map(f => f.replace('.yaml', '').replace('_base', 'Base'));
+  } catch { /* ignore */ }
+
+  // Build domain table
+  const domainRows = domains.map(d => {
+    const domainFlows = (d as any).flows ?? [];
+    const implemented = domainFlows.filter((f: any) => {
+      const fullId = `${d.name}/${f.id}`;
+      return mappings[fullId] && !staleResults[fullId]?.isStale;
+    }).length;
+    const pending = domainFlows.length - implemented;
+    const flowNames = domainFlows.map((f: any) => {
+      const type = f.type === 'agent' ? ' (agent)' : '';
+      return `${f.id}${type}`;
+    }).join(', ');
+    return `| ${d.name} | ${flowNames} | ${implemented} implemented, ${pending} pending |`;
+  });
+
+  // Build commands from architecture
+  const commands = architectureYaml.testing?.commands ?? {};
+
+  let md = `<!-- Auto-generated by DDD Tool. Manual edits below the CUSTOM section are preserved. -->\n\n`;
+  md += `# Project: ${systemConfig?.name ?? 'Unknown'}\n\n`;
+  md += `## Spec-Driven Development\n\n`;
+  md += `This project uses Diagram-Driven Development (DDD). All business logic\n`;
+  md += `is specified in YAML files under \`specs/\`. Code MUST match specs exactly.\n\n`;
+
+  md += `## Spec Files\n\n`;
+  md += `- \`specs/system.yaml\` — Project identity, tech stack, ${domains.length} domains\n`;
+  md += `- \`specs/architecture.yaml\` — Folder structure, conventions, dependencies\n`;
+  md += `- \`specs/config.yaml\` — Environment variables schema\n`;
+  md += `- \`specs/shared/errors.yaml\` — ${errorCodeCount} error codes\n`;
+  if (schemaNames.length) {
+    md += `- \`specs/schemas/*.yaml\` — ${schemaNames.length} data models (${schemaNames.join(', ')})\n`;
+  }
+  md += `\n`;
+
+  md += `## Domains\n\n`;
+  md += `| Domain | Flows | Status |\n`;
+  md += `|--------|-------|--------|\n`;
+  domainRows.forEach(row => { md += `${row}\n`; });
+  md += `\n`;
+
+  md += `## Implementation Rules\n\n`;
+  md += `1. **Read architecture.yaml first** — it defines folder structure and conventions\n`;
+  md += `2. **Follow the folder layout** — put files where architecture.yaml specifies\n`;
+  md += `3. **Use EXACT error codes** — from specs/shared/errors.yaml, do not invent new ones\n`;
+  md += `4. **Use EXACT validation messages** — from the flow spec, do not rephrase\n`;
+  md += `5. **Match field types exactly** — spec field types map to language types\n`;
+  md += `6. **Update .ddd/mapping.yaml** — after implementing a flow, record the mapping\n\n`;
+
+  md += `## Tech Stack\n\n`;
+  md += `- Language: ${techStack.language ?? 'unknown'} ${techStack.language_version ?? ''}\n`;
+  md += `- Framework: ${techStack.framework ?? 'unknown'}\n`;
+  if (techStack.orm) md += `- ORM: ${techStack.orm}\n`;
+  if (techStack.database) md += `- Database: ${techStack.database}\n`;
+  if (techStack.cache) md += `- Cache: ${techStack.cache}\n`;
+  if (techStack.queue) md += `- Queue: ${techStack.queue}\n`;
+  md += `\n`;
+
+  md += `## Commands\n\n\`\`\`bash\n`;
+  md += `${commands.test ?? 'pytest'}                    # Run tests\n`;
+  md += `${commands.typecheck ?? 'mypy src/'}             # Type check\n`;
+  md += `${commands.lint ?? 'ruff check .'}               # Lint\n`;
+  md += `\`\`\`\n\n`;
+
+  if (!customSection) {
+    customSection = `<!-- CUSTOM: Add your own instructions below this line. They won't be overwritten. -->\n`;
+  }
+  md += customSection;
+
+  return md;
+}
+```
+
+**File: `src-tauri/src/commands/pty.rs`**
+```rust
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tauri::State;
+use portable_pty::{native_pty_system, PtySize, CommandBuilder};
+use std::io::{Read, Write};
+use std::sync::Arc;
+
+struct PtyEntry {
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    reader: Arc<Mutex<Box<dyn Read + Send>>>,
+    child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
+}
+
+pub struct PtyManager {
+    sessions: Mutex<HashMap<String, PtyEntry>>,
+}
+
+impl PtyManager {
+    pub fn new() -> Self {
+        Self { sessions: Mutex::new(HashMap::new()) }
+    }
+}
+
+#[tauri::command]
+pub async fn pty_spawn(
+    command: String,
+    args: Vec<String>,
+    cwd: String,
+    manager: State<'_, PtyManager>,
+) -> Result<String, String> {
+    let pty_system = native_pty_system();
+    let pair = pty_system.openpty(PtySize {
+        rows: 24,
+        cols: 80,
+        pixel_width: 0,
+        pixel_height: 0,
+    }).map_err(|e| e.to_string())?;
+
+    let mut cmd = CommandBuilder::new(&command);
+    for arg in &args {
+        cmd.arg(arg);
+    }
+    cmd.cwd(&cwd);
+
+    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+
+    let session_id = nanoid::nanoid!(10);
+
+    let entry = PtyEntry {
+        writer: Arc::new(Mutex::new(writer)),
+        reader: Arc::new(Mutex::new(reader)),
+        child: Arc::new(Mutex::new(child)),
+    };
+
+    manager.sessions.lock().unwrap().insert(session_id.clone(), entry);
+    Ok(session_id)
+}
+
+#[tauri::command]
+pub async fn pty_read(
+    session_id: String,
+    manager: State<'_, PtyManager>,
+) -> Result<String, String> {
+    let sessions = manager.sessions.lock().unwrap();
+    let entry = sessions.get(&session_id).ok_or("Session not found")?;
+    let mut buf = [0u8; 4096];
+    let reader = entry.reader.clone();
+    drop(sessions);
+
+    let n = reader.lock().unwrap().read(&mut buf).map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&buf[..n]).to_string())
+}
+
+#[tauri::command]
+pub async fn pty_write(
+    session_id: String,
+    data: String,
+    manager: State<'_, PtyManager>,
+) -> Result<(), String> {
+    let sessions = manager.sessions.lock().unwrap();
+    let entry = sessions.get(&session_id).ok_or("Session not found")?;
+    let writer = entry.writer.clone();
+    drop(sessions);
+
+    writer.lock().unwrap().write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pty_wait(
+    session_id: String,
+    manager: State<'_, PtyManager>,
+) -> Result<i32, String> {
+    let sessions = manager.sessions.lock().unwrap();
+    let entry = sessions.get(&session_id).ok_or("Session not found")?;
+    let child = entry.child.clone();
+    drop(sessions);
+
+    let status = child.lock().unwrap().wait().map_err(|e| e.to_string())?;
+    // Clean up
+    manager.sessions.lock().unwrap().remove(&session_id);
+    Ok(status.exit_code() as i32)
+}
+
+#[tauri::command]
+pub async fn pty_kill(
+    session_id: String,
+    manager: State<'_, PtyManager>,
+) -> Result<(), String> {
+    let sessions = manager.sessions.lock().unwrap();
+    let entry = sessions.get(&session_id).ok_or("Session not found")?;
+    let child = entry.child.clone();
+    drop(sessions);
+
+    child.lock().unwrap().kill().map_err(|e| e.to_string())?;
+    manager.sessions.lock().unwrap().remove(&session_id);
+    Ok(())
+}
+```
+
+**File: `src-tauri/src/commands/test_runner.rs`**
+```rust
+use std::process::Command;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TestCase {
+    pub name: String,
+    pub status: String,       // "passed" | "failed" | "error" | "skipped"
+    pub duration_ms: f64,
+    pub error_message: Option<String>,
+    pub error_detail: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TestSummary {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub errors: usize,
+    pub duration_ms: f64,
+    pub tests: Vec<TestCase>,
+}
+
+#[tauri::command]
+pub async fn run_tests(
+    command: String,
+    args: Vec<String>,
+    scoped: bool,
+    scope_pattern: Option<String>,
+    cwd: String,
+) -> Result<TestSummary, String> {
+    let mut cmd_args = args.clone();
+
+    // Add scope filter if configured
+    if scoped {
+        if let Some(pattern) = &scope_pattern {
+            cmd_args.push(pattern.clone());
+        }
+    }
+
+    // Add JSON output for parseable results (pytest-specific)
+    if command.contains("pytest") {
+        cmd_args.push("--json-report".to_string());
+        cmd_args.push("--json-report-file=-".to_string());
+    }
+
+    let output = Command::new(&command)
+        .args(&cmd_args)
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("Failed to run tests: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    // Parse test output (simplified — extend for different test frameworks)
+    parse_test_output(&command, &stdout, &stderr)
+}
+
+fn parse_test_output(command: &str, stdout: &str, stderr: &str) -> Result<TestSummary, String> {
+    // Basic parsing — counts passed/failed from output
+    // In production, use JSON reporter output for accurate parsing
+    let mut tests = Vec::new();
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut errors = 0;
+
+    for line in stdout.lines().chain(stderr.lines()) {
+        if line.contains("PASSED") || line.contains("passed") {
+            passed += 1;
+            let name = line.split_whitespace().next().unwrap_or("unknown").to_string();
+            tests.push(TestCase {
+                name,
+                status: "passed".to_string(),
+                duration_ms: 0.0,
+                error_message: None,
+                error_detail: None,
+            });
+        } else if line.contains("FAILED") || line.contains("failed") {
+            failed += 1;
+            let name = line.split_whitespace().next().unwrap_or("unknown").to_string();
+            tests.push(TestCase {
+                name,
+                status: "failed".to_string(),
+                duration_ms: 0.0,
+                error_message: Some(line.to_string()),
+                error_detail: None,
+            });
+        } else if line.contains("ERROR") {
+            errors += 1;
+        }
+    }
+
+    Ok(TestSummary {
+        total: passed + failed + errors,
+        passed,
+        failed,
+        errors,
+        duration_ms: 0.0,
+        tests,
+    })
+}
+
+#[tauri::command]
+pub async fn hash_file(path: String) -> Result<String, String> {
+    use sha2::{Sha256, Digest};
+    let content = std::fs::read(&path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    let hash = Sha256::digest(&content);
+    Ok(format!("{:x}", hash))
+}
+
+#[tauri::command]
+pub async fn cache_spec(flow_id: String, spec_path: String) -> Result<(), String> {
+    let project_path = std::env::current_dir().map_err(|e| e.to_string())?;
+    let cache_dir = project_path.join(".ddd/cache/specs-at-implementation");
+    std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+
+    let cache_name = flow_id.replace('/', "--") + ".yaml";
+    std::fs::copy(&spec_path, cache_dir.join(&cache_name))
+        .map_err(|e| format!("Failed to cache spec: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn diff_specs(cached_path: String, current_path: String) -> Result<Vec<String>, String> {
+    let cached = std::fs::read_to_string(&cached_path).unwrap_or_default();
+    let current = std::fs::read_to_string(&current_path)
+        .map_err(|e| format!("Failed to read current spec: {}", e))?;
+
+    // Simple line-by-line diff — returns human-readable change descriptions
+    let mut changes = Vec::new();
+    let cached_lines: Vec<&str> = cached.lines().collect();
+    let current_lines: Vec<&str> = current.lines().collect();
+
+    for line in &current_lines {
+        if !cached_lines.contains(line) && !line.trim().is_empty() {
+            changes.push(format!("Added: {}", line.trim()));
+        }
+    }
+    for line in &cached_lines {
+        if !current_lines.contains(line) && !line.trim().is_empty() {
+            changes.push(format!("Removed: {}", line.trim()));
+        }
+    }
+
+    Ok(changes)
+}
+```
+
+**File: `src/components/ImplementationPanel/ImplementationPanel.tsx`**
+```tsx
+import { useImplementationStore } from '../../stores/implementation-store';
+import { PromptPreview } from './PromptPreview';
+import { TerminalEmbed } from './TerminalEmbed';
+import { TestResults } from './TestResults';
+import { ImplementationQueue } from './ImplementationQueue';
+import { StaleBanner } from './StaleBanner';
+import { X, Terminal, Play, Square } from 'lucide-react';
+
+export function ImplementationPanel() {
+  const {
+    panelOpen, panelState, currentPrompt, ptySession,
+    testResults, isRunningTests, staleResults,
+    togglePanel, runClaudeCode, stopClaudeCode, runTests,
+  } = useImplementationStore();
+
+  if (!panelOpen) return null;
+
+  return (
+    <div className="w-[480px] border-l border-gray-200 bg-white flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+        <div className="flex items-center gap-2">
+          <Terminal className="w-4 h-4 text-blue-500" />
+          <span className="font-medium text-sm">Implementation</span>
+          {panelState === 'running' && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Running</span>
+          )}
+          {panelState === 'done' && (
+            <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Done</span>
+          )}
+          {panelState === 'failed' && (
+            <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Failed</span>
+          )}
+        </div>
+        <button onClick={togglePanel} className="p-1 text-gray-400 hover:text-gray-600">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto flex flex-col">
+        {/* Stale banner */}
+        {currentPrompt && staleResults[currentPrompt.flowId]?.isStale && (
+          <StaleBanner staleResult={staleResults[currentPrompt.flowId]} />
+        )}
+
+        {/* Idle state — show queue */}
+        {panelState === 'idle' && <ImplementationQueue />}
+
+        {/* Prompt preview */}
+        {panelState === 'prompt_ready' && currentPrompt && (
+          <PromptPreview prompt={currentPrompt} onRun={runClaudeCode} />
+        )}
+
+        {/* Running terminal */}
+        {panelState === 'running' && ptySession && (
+          <div className="flex-1 flex flex-col">
+            <TerminalEmbed sessionId={ptySession.id} />
+            <div className="p-2 border-t border-gray-200">
+              <button
+                onClick={stopClaudeCode}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100"
+              >
+                <Square className="w-3 h-3" /> Stop
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Done / Failed — show summary + test results */}
+        {(panelState === 'done' || panelState === 'failed') && (
+          <div className="flex-1 flex flex-col">
+            {panelState === 'done' && (
+              <div className="p-4 bg-green-50 border-b border-green-100 text-sm text-green-700">
+                Implementation complete. {testResults ? '' : 'Running tests...'}
+              </div>
+            )}
+            {panelState === 'failed' && (
+              <div className="p-4 bg-red-50 border-b border-red-100 text-sm text-red-700">
+                Implementation failed. Check terminal output above.
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={runClaudeCode}
+                    className="text-xs px-2 py-1 bg-red-100 rounded hover:bg-red-200"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            )}
+            {(testResults || isRunningTests) && currentPrompt && (
+              <TestResults
+                results={testResults}
+                isRunning={isRunningTests}
+                flowId={currentPrompt.flowId}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/ImplementationPanel/PromptPreview.tsx`**
+```tsx
+import { useState } from 'react';
+import { useImplementationStore } from '../../stores/implementation-store';
+import type { BuiltPrompt } from '../../types/implementation';
+import { Play, Pencil, FileText } from 'lucide-react';
+
+interface Props {
+  prompt: BuiltPrompt;
+  onRun: () => void;
+}
+
+export function PromptPreview({ prompt, onRun }: Props) {
+  const { updatePromptContent } = useImplementationStore();
+  const [isEditing, setIsEditing] = useState(false);
+
+  return (
+    <div className="flex-1 flex flex-col">
+      {/* Header */}
+      <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-gray-500">
+          <FileText className="w-3 h-3" />
+          <span>{prompt.mode === 'update' ? 'Update' : 'New'}: {prompt.flowId}</span>
+          {prompt.agentFlow && (
+            <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px]">agent</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsEditing(!isEditing)}
+            className="flex items-center gap-1 text-xs px-2 py-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
+          >
+            <Pencil className="w-3 h-3" /> {isEditing ? 'Preview' : 'Edit'}
+          </button>
+          <button
+            onClick={onRun}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            <Play className="w-3 h-3" /> Run
+          </button>
+        </div>
+      </div>
+
+      {/* Prompt content */}
+      <div className="flex-1 overflow-y-auto p-4">
+        {isEditing ? (
+          <textarea
+            value={prompt.content}
+            onChange={(e) => updatePromptContent(e.target.value)}
+            className="w-full h-full font-mono text-xs bg-gray-50 border border-gray-200 rounded p-3 resize-none focus:outline-none focus:border-blue-300"
+          />
+        ) : (
+          <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap">
+            {prompt.content}
+          </pre>
+        )}
+      </div>
+
+      {/* Spec files referenced */}
+      <div className="px-4 py-2 border-t border-gray-100">
+        <div className="text-[10px] text-gray-400 mb-1">Referenced specs:</div>
+        <div className="flex flex-wrap gap-1">
+          {prompt.specFiles.map(f => (
+            <span key={f} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
+              {f.split('/').pop()}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/ImplementationPanel/TerminalEmbed.tsx`**
+```tsx
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { useImplementationStore } from '../../stores/implementation-store';
+
+interface Props {
+  sessionId: string;
+}
+
+export function TerminalEmbed({ sessionId }: Props) {
+  const termRef = useRef<HTMLDivElement>(null);
+  const [output, setOutput] = useState('');
+  const { sendToPty } = useImplementationStore();
+
+  // Poll PTY for output
+  useEffect(() => {
+    let active = true;
+
+    const poll = async () => {
+      while (active) {
+        try {
+          const data = await invoke<string>('pty_read', { sessionId });
+          if (data) {
+            setOutput(prev => prev + data);
+          }
+        } catch {
+          break; // Session ended
+        }
+        await new Promise(r => setTimeout(r, 100));
+      }
+    };
+
+    poll();
+    return () => { active = false; };
+  }, [sessionId]);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.scrollTop = termRef.current.scrollHeight;
+    }
+  }, [output]);
+
+  // Handle keyboard input
+  const handleKeyDown = useCallback(async (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      await sendToPty('\n');
+    } else if (e.key === 'Backspace') {
+      await sendToPty('\x7f');
+    } else if (e.key.length === 1) {
+      await sendToPty(e.key);
+    }
+  }, [sendToPty]);
+
+  return (
+    <div
+      ref={termRef}
+      className="flex-1 bg-gray-900 text-green-400 font-mono text-xs p-3 overflow-y-auto whitespace-pre-wrap focus:outline-none"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+    >
+      {output || 'Starting Claude Code...'}
+    </div>
+  );
+}
+```
+
+**File: `src/components/ImplementationPanel/TestResults.tsx`**
+```tsx
+import { useImplementationStore } from '../../stores/implementation-store';
+import type { TestSummary } from '../../types/implementation';
+import { CheckCircle, XCircle, Loader2, RotateCw, Wrench } from 'lucide-react';
+
+interface Props {
+  results: TestSummary | null;
+  isRunning: boolean;
+  flowId: string;
+}
+
+export function TestResults({ results, isRunning, flowId }: Props) {
+  const { runTests, fixFailingTest } = useImplementationStore();
+
+  if (isRunning) {
+    return (
+      <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Running tests...
+      </div>
+    );
+  }
+
+  if (!results) return null;
+
+  const failedTests = results.tests.filter(t => t.status === 'failed');
+
+  return (
+    <div className="border-t border-gray-200">
+      {/* Summary bar */}
+      <div className="px-4 py-2 flex items-center justify-between bg-gray-50 border-b border-gray-100">
+        <div className="text-xs font-medium">
+          {results.passed}/{results.total} passing
+          {results.failed > 0 && <span className="text-red-500 ml-2">{results.failed} failing</span>}
+        </div>
+        <div className="flex gap-1">
+          <button
+            onClick={() => runTests(flowId)}
+            className="flex items-center gap-1 text-xs px-2 py-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
+          >
+            <RotateCw className="w-3 h-3" /> Re-run
+          </button>
+          {failedTests.length > 0 && (
+            <button
+              onClick={() => {
+                const errorOutput = failedTests
+                  .map(t => `${t.name}: ${t.error_message ?? 'failed'}`)
+                  .join('\n');
+                fixFailingTest(flowId, errorOutput);
+              }}
+              className="flex items-center gap-1 text-xs px-2 py-1 text-blue-500 hover:text-blue-700 rounded hover:bg-blue-50"
+            >
+              <Wrench className="w-3 h-3" /> Fix failing
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Test list */}
+      <div className="max-h-60 overflow-y-auto">
+        {results.tests.map(test => (
+          <div key={test.name} className="px-4 py-1.5 flex items-start gap-2 text-xs border-b border-gray-50">
+            {test.status === 'passed' ? (
+              <CheckCircle className="w-3.5 h-3.5 text-green-500 mt-0.5 flex-shrink-0" />
+            ) : (
+              <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="text-gray-700 truncate">{test.name}</div>
+              {test.error_message && (
+                <div className="text-red-400 mt-0.5 text-[10px] font-mono truncate">
+                  {test.error_message}
+                </div>
+              )}
+            </div>
+            <span className="text-gray-400 text-[10px]">{test.duration_ms.toFixed(0)}ms</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/ImplementationPanel/ImplementationQueue.tsx`**
+```tsx
+import { useImplementationStore } from '../../stores/implementation-store';
+import { CheckCircle, Circle, AlertTriangle, Play } from 'lucide-react';
+
+export function ImplementationQueue() {
+  const {
+    queue, toggleQueueItem, selectAllPending, implementSelected, buildPromptForFlow,
+  } = useImplementationStore();
+
+  const pending = queue.filter(q => q.status === 'pending');
+  const stale = queue.filter(q => q.status === 'stale');
+  const implemented = queue.filter(q => q.status === 'implemented');
+  const hasSelected = queue.some(q => q.selected);
+
+  const renderItem = (item: typeof queue[0]) => (
+    <div key={item.flowId} className="flex items-center gap-2 px-4 py-1.5 hover:bg-gray-50">
+      <input
+        type="checkbox"
+        checked={item.selected}
+        onChange={() => toggleQueueItem(item.flowId)}
+        className="w-3.5 h-3.5 rounded border-gray-300"
+        disabled={item.status === 'implemented'}
+      />
+      {item.status === 'implemented' && <CheckCircle className="w-3.5 h-3.5 text-green-500" />}
+      {item.status === 'pending' && <Circle className="w-3.5 h-3.5 text-gray-300" />}
+      {item.status === 'stale' && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+      <button
+        onClick={() => buildPromptForFlow(item.flowId, item.domain)}
+        className="text-xs text-gray-700 hover:text-blue-600 truncate flex-1 text-left"
+      >
+        {item.flowId}
+      </button>
+      {item.staleChanges && (
+        <span className="text-[10px] text-amber-500">{item.staleChanges.length} changes</span>
+      )}
+      {item.testResult && (
+        <span className={`text-[10px] ${item.testResult.failed > 0 ? 'text-red-500' : 'text-green-500'}`}>
+          {item.testResult.passed}/{item.testResult.total}
+        </span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <div className="px-4 py-3 text-xs font-medium text-gray-500 border-b border-gray-100">
+        Implementation Queue
+      </div>
+
+      {pending.length > 0 && (
+        <div className="border-b border-gray-100">
+          <div className="px-4 py-1.5 text-[10px] font-medium text-gray-400 uppercase">Pending</div>
+          {pending.map(renderItem)}
+        </div>
+      )}
+
+      {stale.length > 0 && (
+        <div className="border-b border-gray-100">
+          <div className="px-4 py-1.5 text-[10px] font-medium text-amber-400 uppercase">Stale</div>
+          {stale.map(renderItem)}
+        </div>
+      )}
+
+      {implemented.length > 0 && (
+        <div className="border-b border-gray-100">
+          <div className="px-4 py-1.5 text-[10px] font-medium text-green-400 uppercase">Implemented</div>
+          {implemented.map(renderItem)}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="px-4 py-3 flex gap-2 border-t border-gray-200">
+        <button
+          onClick={selectAllPending}
+          className="text-xs px-2 py-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
+        >
+          Select all pending
+        </button>
+        {hasSelected && (
+          <button
+            onClick={implementSelected}
+            className="flex items-center gap-1 text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            <Play className="w-3 h-3" /> Implement selected
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/ImplementationPanel/StaleBanner.tsx`**
+```tsx
+import type { StaleResult } from '../../types/implementation';
+import { useImplementationStore } from '../../stores/implementation-store';
+import { AlertTriangle } from 'lucide-react';
+
+interface Props {
+  staleResult: StaleResult;
+}
+
+export function StaleBanner({ staleResult }: Props) {
+  const { buildPromptForFlow } = useImplementationStore();
+
+  return (
+    <div className="px-4 py-3 bg-amber-50 border-b border-amber-100">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+        <div className="flex-1">
+          <div className="text-sm font-medium text-amber-800">
+            Spec changed since code was generated
+          </div>
+          <ul className="mt-1 text-xs text-amber-700 space-y-0.5">
+            {staleResult.changes.slice(0, 5).map((change, i) => (
+              <li key={i}>{change}</li>
+            ))}
+            {staleResult.changes.length > 5 && (
+              <li className="text-amber-500">...and {staleResult.changes.length - 5} more</li>
+            )}
+          </ul>
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => buildPromptForFlow(
+                staleResult.flowId,
+                staleResult.flowId.split('/')[0]
+              )}
+              className="text-xs px-2 py-1 bg-amber-100 text-amber-700 rounded hover:bg-amber-200"
+            >
+              Update code
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+**Update `src/App.tsx` — add Implementation Panel:**
+```tsx
+// Add to imports
+import { ImplementationPanel } from './components/ImplementationPanel/ImplementationPanel';
+
+// Add keyboard shortcut in useEffect:
+// Cmd+I / Ctrl+I → toggle implementation panel
+if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
+  e.preventDefault();
+  useImplementationStore.getState().togglePanel();
+}
+
+// Add to layout — Implementation Panel goes rightmost:
+<div className="flex h-screen">
+  {/* ... existing Sidebar, Canvas, SpecPanel, ChatPanel, MemoryPanel ... */}
+  <ImplementationPanel />
+  <UsageBar /> {/* Bottom bar */}
+</div>
+```
+
+**Update `src-tauri/Cargo.toml` — add dependencies:**
+```toml
+[dependencies]
+# ... existing deps ...
+portable-pty = "0.8"
+sha2 = "0.10"
+nanoid = "0.4"
+```
+
+---
+
 ## Phase 4: Testing the MVP
 
 ### Manual Test Checklist
@@ -6256,6 +7747,57 @@ sendMessage: async (content: string) => {
     - [ ] Shows flow dependencies card when on Level 3
     - [ ] Refresh button triggers memory rebuild
 
+26. **Implementation Panel**
+    - [ ] Cmd+I / Ctrl+I toggles implementation panel
+    - [ ] Panel shows queue in idle state (pending, stale, implemented flows)
+    - [ ] Click flow in queue → builds prompt and shows prompt preview
+    - [ ] Prompt preview shows auto-generated prompt with spec file references
+    - [ ] Edit button toggles prompt into editable textarea
+    - [ ] Run button spawns Claude Code in embedded PTY terminal
+    - [ ] Terminal shows live Claude Code output with scrolling
+    - [ ] Can type in terminal to respond to Claude Code prompts (y/n, etc.)
+    - [ ] Stop button kills running Claude Code process
+    - [ ] After completion, panel shows Done/Failed state
+    - [ ] "Implement" button on L3 toolbar opens panel with prompt for current flow
+    - [ ] Right-click flow block on L2 → "Implement" opens panel for that flow
+
+27. **Prompt Builder**
+    - [ ] Prompt includes architecture.yaml, errors.yaml, referenced schemas, flow spec
+    - [ ] Schema resolution: only schemas referenced by $ref or data_store model are included
+    - [ ] Agent flows include agent-specific instructions (tools, guardrails, memory)
+    - [ ] Update mode: prompt includes list of spec changes and targets existing code
+    - [ ] User edits to prompt are preserved until a new prompt is built
+
+28. **Stale Detection**
+    - [ ] On project load, all flow hashes compared against mapping.yaml
+    - [ ] Stale flows show warning badge on L2 (Domain Map)
+    - [ ] Stale flow sheet shows banner with list of changes
+    - [ ] "Update code" button builds update prompt automatically
+    - [ ] Spec cached at implementation time in .ddd/cache/specs-at-implementation/
+    - [ ] Human-readable diff computed between cached and current spec
+
+29. **Test Runner**
+    - [ ] Tests auto-run after successful Claude Code completion (if configured)
+    - [ ] Test results displayed with pass/fail per test case
+    - [ ] "Re-run tests" button re-executes test command
+    - [ ] "Fix failing test" sends error output to Claude Code with fix prompt
+    - [ ] Test badges shown on L2 flow blocks (green ✓ or red ✗ with counts)
+    - [ ] Scoped test execution: only runs tests matching the implemented flow
+
+30. **CLAUDE.md Auto-Generation**
+    - [ ] CLAUDE.md generated on first implementation
+    - [ ] Regenerated when implementation status changes
+    - [ ] Includes project name, spec files, domain table, rules, tech stack, commands
+    - [ ] Custom section (below `<!-- CUSTOM -->` marker) preserved on regeneration
+    - [ ] Domain table shows implementation status (N implemented, M pending)
+
+31. **Implementation Queue**
+    - [ ] Queue shows all flows grouped by status (pending, stale, implemented)
+    - [ ] Can select multiple flows with checkboxes
+    - [ ] "Select all pending" selects all pending + stale flows
+    - [ ] "Implement selected" processes flows sequentially (prompt → run → test → next)
+    - [ ] Implemented flows show test result counts
+
 ---
 
 ## Phase 5: Key Implementation Notes
@@ -6264,18 +7806,21 @@ sendMessage: async (content: string) => {
 
 1. **State Management**
    - Use Zustand for all state
-   - Keep stores focused (sheet, flow, project, ui, git, llm)
+   - Keep stores focused (sheet, flow, project, ui, git, llm, implementation)
    - `sheet-store` owns navigation state (current level, breadcrumbs, history)
    - `project-store` owns domain configs parsed from domain.yaml files
    - `flow-store` owns current flow being edited (Level 3 only)
    - `llm-store` owns chat state, ghost previews, LLM config
    - `memory-store` owns project memory layers, refresh triggers, decisions
+   - `implementation-store` owns panel state, PTY session, queue, test results, mappings
    - Never mutate state directly
 
 2. **Tauri Commands**
-   - All file/git/LLM/memory operations go through Tauri
+   - All file/git/LLM/memory/PTY/test operations go through Tauri
    - Use async/await pattern
    - Handle errors gracefully
+   - PTY commands manage Claude Code terminal sessions (spawn, read, write, wait, kill)
+   - Test runner commands execute test commands and parse output
 
 3. **YAML Format**
    - Follow spec exactly (see ddd-specification-complete.md)
@@ -6330,6 +7875,12 @@ sendMessage: async (content: string) => {
 23. **Do** keep context budget under ~5,500 tokens — summarize, don't dump raw YAML
 24. **Don't** gitignore `decisions.md` — design decisions are team knowledge
 25. **Do** include connected flows from Flow Map in LLM context so it knows about upstream/downstream impact
+26. **Don't** auto-commit after Claude Code finishes — always let the user review generated code first
+27. **Don't** run Claude Code in headless/non-interactive mode — the user must be able to approve file operations
+28. **Do** cache spec files at implementation time in `.ddd/cache/` for accurate stale diffs later
+29. **Do** include only referenced schemas in prompts (resolve from `$ref` and `data_store` model), not all schemas
+30. **Do** preserve the `<!-- CUSTOM -->` section when regenerating CLAUDE.md — users add project-specific instructions there
+31. **Don't** parse test output from raw text in production — use JSON reporters (`--json-report` for pytest, `--json` for jest) for accurate test results
 
 ---
 
@@ -6345,12 +7896,15 @@ npm install zustand yaml nanoid lucide-react
 npm install -D tailwindcss postcss autoprefixer @types/node
 npx tailwindcss init -p
 
-# 3. Add git2 and reqwest to Cargo.toml
+# 3. Add Rust dependencies to Cargo.toml
 # In src-tauri/Cargo.toml, add:
 # [dependencies]
 # git2 = "0.18"
 # reqwest = { version = "0.12", features = ["json"] }
 # serde_json = "1.0"
+# portable-pty = "0.8"
+# sha2 = "0.10"
+# nanoid = "0.4"
 
 # 4. Start development
 npm run tauri dev
@@ -6455,6 +8009,28 @@ npm run tauri dev
 - [ ] Memory Panel toggles with Cmd+M and shows all layers
 - [ ] LLM auto-detects design rationale in chat and offers to save as decision
 - [ ] Context budget stays within ~4,000-5,500 tokens total
+
+### Claude Code Integration
+- [ ] Implementation Panel opens/closes with Cmd+I and shows current state (idle/prompt/running/done/failed)
+- [ ] Prompt Builder auto-generates prompt from flow spec with correct file references
+- [ ] Prompt Builder resolves only referenced schemas (via $ref and data_store model)
+- [ ] Prompt Builder detects agent flows and includes agent-specific instructions
+- [ ] Prompt Builder detects update mode (existing mapping) and includes change list
+- [ ] Prompt is editable before running — user can add custom instructions
+- [ ] Embedded PTY terminal runs Claude Code interactively (user can approve/deny)
+- [ ] Terminal output scrolls automatically and accepts keyboard input
+- [ ] After Claude Code finishes, spec hash saved to .ddd/mapping.yaml
+- [ ] Spec file cached in .ddd/cache/specs-at-implementation/ for future diff
+- [ ] Tests auto-run after successful implementation (configurable)
+- [ ] Test results displayed with per-test pass/fail and error messages
+- [ ] "Fix failing test" button sends error to Claude Code for automatic fix
+- [ ] Stale detection compares SHA-256 hashes on project load, flow save, and git pull
+- [ ] Stale flows show warning badge on L2 and banner on L3 with change list
+- [ ] CLAUDE.md auto-generated with project info, domain table, rules, tech stack
+- [ ] CLAUDE.md custom section preserved on regeneration
+- [ ] Implementation Queue shows all flows grouped by status
+- [ ] Batch implementation processes selected flows sequentially
+- [ ] Configuration loaded from .ddd/config.yaml with sensible defaults
 
 ---
 

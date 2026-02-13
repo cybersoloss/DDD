@@ -3984,8 +3984,404 @@ Ghost nodes become real nodes on Apply. The user can also click **Edit in chat**
 | `Cmd+M` / `Ctrl+M` | Toggle Memory Panel |
 | `Cmd+Shift+G` / `Ctrl+Shift+G` | Generate flow from description (canvas-level) |
 | `Cmd+.` / `Ctrl+.` | Inline assist on selected node (suggest spec) |
+| `Cmd+I` / `Ctrl+I` | Toggle Implementation Panel |
 | `Escape` | Discard ghost preview |
 | `Enter` (in ghost preview) | Apply ghost preview to canvas |
+
+### Claude Code Integration
+
+The DDD Tool integrates with Claude Code CLI to turn specs into running code without leaving the application. Five components work together: an **Implementation Panel** with interactive terminal, a **Prompt Builder** that constructs optimal prompts from specs, **Stale Detection** that tracks spec-vs-code drift, a **Test Runner** that shows results linked to flows, and **CLAUDE.md Auto-Generation** that keeps Claude Code instructions in sync with the project.
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ DDD TOOL                                                         │
+│                                                                   │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌────────────────────────┐│
+│  │ Canvas  │ │ Spec    │ │ Chat    │ │ Implementation Panel   ││
+│  │         │ │ Panel   │ │ Panel   │ │                        ││
+│  │         │ │         │ │         │ │ ┌────────────────────┐ ││
+│  │         │ │         │ │         │ │ │ Prompt Preview     │ ││
+│  │         │ │         │ │         │ │ │ "Implement user-   │ ││
+│  │         │ │         │ │         │ │ │  register flow..." │ ││
+│  │         │ │         │ │         │ │ │ [▶ Run] [Edit]     │ ││
+│  │         │ │         │ │         │ │ └────────────────────┘ ││
+│  │         │ │         │ │         │ │ ┌────────────────────┐ ││
+│  │         │ │         │ │         │ │ │ Terminal (PTY)     │ ││
+│  │         │ │         │ │         │ │ │                    │ ││
+│  │         │ │         │ │         │ │ │ claude> Creating   │ ││
+│  │         │ │         │ │         │ │ │ router.py...       │ ││
+│  │         │ │         │ │         │ │ │ Allow? (y/n) █     │ ││
+│  │         │ │         │ │         │ │ └────────────────────┘ ││
+│  │         │ │         │ │         │ │ ┌────────────────────┐ ││
+│  │         │ │         │ │         │ │ │ Test Results       │ ││
+│  │         │ │         │ │         │ │ │ ✓ register_success │ ││
+│  │         │ │         │ │         │ │ │ ✓ duplicate_email  │ ││
+│  │         │ │         │ │         │ │ │ ✗ short_password   │ ││
+│  │         │ │         │ │         │ │ │ 2/3 passing        │ ││
+│  │         │ │         │ │         │ │ └────────────────────┘ ││
+│  └─────────┘ └─────────┘ └─────────┘ └────────────────────────┘│
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 1. Implementation Panel
+
+A toggleable right-side panel (`Cmd+I` / `Ctrl+I`) with three sections: prompt preview, interactive terminal, and test results.
+
+**Prompt Preview:** Before running Claude Code, the panel shows the auto-generated prompt so the user can review and edit it. The prompt is built by the Prompt Builder (see below).
+
+**Interactive Terminal:** A full pseudo-terminal (PTY) embedded in the DDD Tool. Claude Code runs here interactively — the user can approve file operations, answer questions, and see progress in real-time. This is not a "fire and forget" — the user stays in control.
+
+**Test Results:** After Claude Code finishes, the DDD Tool runs the project's test command and displays results linked to the implemented flow.
+
+**Panel states:**
+
+| State | What the panel shows |
+|-------|---------------------|
+| **Idle** | "Select a flow and click Implement" + implementation queue |
+| **Prompt ready** | Prompt preview + [Run] button |
+| **Running** | Terminal with live Claude Code output |
+| **Done** | Summary (files created/modified) + test results |
+| **Failed** | Error output + [Retry] [Edit prompt] buttons |
+
+**Entry points — how to start implementation:**
+
+| Action | Where | What happens |
+|--------|-------|-------------|
+| Click "▶ Implement" button | Flow Sheet (L3) toolbar | Opens Implementation Panel, builds prompt for current flow |
+| Right-click flow block → "Implement" | Domain Map (L2) | Opens Implementation Panel for that flow |
+| Click "Update code" on stale warning | Stale notification | Opens Implementation Panel with targeted update prompt |
+| Click "▶ Implement selected" | Implementation Queue | Processes selected flows sequentially |
+
+#### 2. Prompt Builder
+
+The DDD Tool auto-constructs an optimal prompt for Claude Code based on the flow being implemented. The user never has to remember which files to reference or in what order.
+
+**Prompt template:**
+
+```markdown
+# Auto-generated prompt for Claude Code
+# Flow: {flow_id} | Domain: {domain_id}
+
+Read these spec files in order:
+
+1. specs/architecture.yaml — Project structure, conventions, dependencies
+2. specs/shared/errors.yaml — Error codes and messages
+{for each schema referenced by the flow}
+3. specs/schemas/{schema}.yaml — Data model
+{end for}
+4. specs/domains/{domain}/flows/{flow}.yaml — The flow to implement
+
+## Instructions
+
+Implement the {flow_id} flow following architecture.yaml exactly:
+
+- Create the endpoint matching the trigger spec (method: {method}, path: {path})
+- Create request/response schemas matching the input node validations
+- Implement each node as described in the spec
+- Use EXACT error codes from errors.yaml (do not invent new ones)
+- Use EXACT validation messages from the flow spec
+- Create unit tests covering: happy path, each validation failure, each error path
+
+## File locations
+
+- Implementation: src/domains/{domain}/
+- Tests: tests/unit/domains/{domain}/
+
+## After implementation
+
+Update .ddd/mapping.yaml with:
+```yaml
+flows:
+  {flow_id}:
+    spec: specs/domains/{domain}/flows/{flow}.yaml
+    spec_hash: {sha256 of spec file}
+    files: [list of files you created]
+    implemented_at: {ISO timestamp}
+```
+
+{if flow type is agent}
+## Agent-specific
+
+This is an agent flow. Implement:
+- Agent runner with the agent loop configuration
+- Tool implementations for each tool defined in the spec
+- Guardrail middleware for input/output filtering
+- Memory management per the memory spec
+- Use mocked LLM responses in tests
+{end if}
+
+{if this is an update to existing code}
+## Update mode
+
+This flow was previously implemented. The spec has changed:
+{list of changes}
+
+Update the existing code to match the new spec.
+Do NOT rewrite files from scratch — modify the existing implementation.
+Update affected tests.
+{end if}
+```
+
+**What makes the prompt smart:**
+- Automatically resolves which schemas the flow references (via `$ref` and data_store model fields)
+- Includes only relevant error codes (not the full errors.yaml if the flow only uses 3 codes)
+- Detects if this is a new implementation or an update
+- For updates, includes a diff summary of what changed in the spec
+- For agent flows, adds agent-specific instructions
+- Includes architecture.yaml conventions so Claude Code knows naming patterns, folder structure, etc.
+
+**The user can edit the prompt** before running. The prompt preview has an "Edit" button that opens it as editable text. Useful for adding specific instructions like "use bcrypt for password hashing" or "skip the email sending for now."
+
+#### 3. Stale Detection
+
+When a flow has existing code (recorded in `.ddd/mapping.yaml`) but the spec has changed since code generation, the flow is **stale**. DDD Tool detects this by comparing the spec file's SHA-256 hash against the `spec_hash` stored at implementation time.
+
+**Stale detection triggers:**
+- On project load (compare all hashes)
+- On flow save (compare saved flow's hash)
+- On git pull (any spec files changed)
+
+**What the user sees:**
+
+On Level 2 (Domain Map), stale flow blocks show a warning badge:
+```
+┌──────────────────┐
+│ webhook-ingestion │
+│ ⚠ spec changed    │
+│   2 updates       │
+└──────────────────┘
+```
+
+On Level 3 (Flow Sheet), a banner appears at the top:
+```
+┌──────────────────────────────────────────────────────────────┐
+│ ⚠ This flow's spec changed since code was generated           │
+│                                                                │
+│ Changes:                                                      │
+│ • Added send_verification_email node                          │
+│ • Changed return message to "Check your email..."             │
+│                                                                │
+│ [▶ Update code]  [View diff]  [Dismiss]                      │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Change detection:** The DDD Tool computes a human-readable diff between the old spec (at implementation time, cached in `.ddd/cache/`) and the current spec. This diff is included in the update prompt so Claude Code knows exactly what to change.
+
+**Spec cache:** When a flow is implemented, the DDD Tool saves a copy of the spec at that point:
+```
+.ddd/
+├── cache/
+│   └── specs-at-implementation/
+│       ├── api--user-register.yaml      # Spec as it was when code was generated
+│       ├── ingestion--webhook-ingestion.yaml
+│       └── ...
+```
+
+#### 4. Test Runner
+
+After Claude Code finishes implementing a flow, the DDD Tool runs the project's test suite and displays results in the Implementation Panel.
+
+**Configuration:**
+
+```yaml
+# .ddd/config.yaml
+testing:
+  # Test commands per language/framework (auto-detected from architecture.yaml)
+  command: pytest                    # Or: jest, go test, cargo test
+  args: ["--tb=short", "-q"]        # Additional arguments
+
+  # Run only tests related to the implemented flow
+  scoped: true                      # If true, runs only relevant tests
+  scope_pattern: "tests/**/test_{flow_id}*"  # Glob for finding flow tests
+
+  # Auto-run after implementation
+  auto_run: true                    # Run tests automatically after Claude Code finishes
+```
+
+**Test result display:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ TEST RESULTS — api/user-register                              │
+│                                                                │
+│ ✓ test_register_success                              0.12s   │
+│ ✓ test_register_duplicate_email                      0.08s   │
+│ ✓ test_register_invalid_email_format                 0.03s   │
+│ ✗ test_register_short_password                       0.04s   │
+│   AssertionError: Expected status 422, got 400               │
+│   > assert response.status_code == 422                       │
+│                                                                │
+│ 3/4 passing · 1 failing · 0.27s                              │
+│                                                                │
+│ [Re-run tests]  [Fix failing test]                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**"Fix failing test" button:** Sends the failing test output back to Claude Code with a prompt: "This test is failing after implementing {flow_id}. Fix the implementation to match the spec." This creates a fix-and-retest loop without the user having to copy-paste error messages.
+
+**Test results on canvas:** After tests run, flow blocks on Level 2 show a test badge:
+```
+┌──────────────────┐
+│ user-register     │
+│ ✓ 4/4 tests      │    ← green badge
+└──────────────────┘
+
+┌──────────────────┐
+│ webhook-ingestion │
+│ ✗ 3/4 tests      │    ← red badge
+└──────────────────┘
+```
+
+#### 5. CLAUDE.md Auto-Generation
+
+The DDD Tool generates and maintains a `CLAUDE.md` file in the project root. This file tells Claude Code how the project is structured and how to work with DDD specs. It's regenerated whenever specs change.
+
+**Generated CLAUDE.md:**
+
+```markdown
+<!-- Auto-generated by DDD Tool. Manual edits below the CUSTOM section are preserved. -->
+
+# Project: Obligo
+
+## Spec-Driven Development
+
+This project uses Diagram-Driven Development (DDD). All business logic
+is specified in YAML files under `specs/`. Code MUST match specs exactly.
+
+## Spec Files
+
+- `specs/system.yaml` — Project identity, tech stack, 4 domains
+- `specs/architecture.yaml` — Folder structure, conventions, dependencies
+- `specs/config.yaml` — Environment variables schema
+- `specs/shared/errors.yaml` — 12 error codes (VALIDATION_ERROR, NOT_FOUND, ...)
+- `specs/schemas/*.yaml` — 6 data models (User, Document, Contract, ...)
+
+## Domains
+
+| Domain | Flows | Status |
+|--------|-------|--------|
+| ingestion | webhook-ingestion, scheduled-sync, manual-upload, email-intake | 3 implemented, 1 pending |
+| analysis | extract-obligations (agent), classify-risk, generate-summary | 1 implemented, 2 pending |
+| api | user-register, user-login, user-reset-password, get-contracts, get-obligations | 2 implemented, 3 pending |
+| notification | deadline-alert (agent), compliance-report | 0 implemented, 2 pending |
+
+## Implementation Rules
+
+1. **Read architecture.yaml first** — it defines folder structure and conventions
+2. **Follow the folder layout** — put files where architecture.yaml specifies
+3. **Use EXACT error codes** — from specs/shared/errors.yaml, do not invent new ones
+4. **Use EXACT validation messages** — from the flow spec, do not rephrase
+5. **Match field types exactly** — spec field types map to language types
+6. **Update .ddd/mapping.yaml** — after implementing a flow, record the mapping
+
+## Tech Stack
+
+- Language: Python 3.11
+- Framework: FastAPI
+- ORM: SQLAlchemy
+- Database: PostgreSQL
+- Cache: Redis
+- Queue: Celery
+
+## Commands
+
+```bash
+pytest                    # Run tests
+mypy src/                 # Type check
+ruff check .              # Lint
+alembic upgrade head      # Run migrations
+uvicorn src.main:app      # Start server
+```
+
+## Folder Structure
+
+```
+src/
+├── main.py
+├── config/
+├── shared/
+│   ├── database.py
+│   ├── exceptions.py
+│   └── middleware.py
+├── models/
+└── domains/
+    └── {domain}/
+        ├── router.py
+        ├── schemas.py
+        └── services.py
+```
+
+<!-- CUSTOM: Add your own instructions below this line. They won't be overwritten. -->
+
+```
+
+**What triggers regeneration:**
+- New flow created or deleted
+- Domain added or removed
+- Architecture.yaml changed
+- Implementation status changed (flow implemented or became stale)
+- User clicks "Regenerate CLAUDE.md" in settings
+
+**Custom section preserved:** Everything below `<!-- CUSTOM -->` is never overwritten. Users can add their own conventions, workarounds, or preferences there.
+
+#### Implementation Queue
+
+The Implementation Panel includes a queue view showing all flows and their status.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ IMPLEMENTATION QUEUE                                          │
+│                                                                │
+│ Pending (not yet implemented):                                │
+│ ☐ api/user-reset-password                                    │
+│ ☐ api/get-contracts                                          │
+│ ☐ api/get-obligations                                        │
+│ ☐ notification/deadline-alert (agent)                        │
+│ ☐ notification/compliance-report                             │
+│                                                                │
+│ Stale (spec changed since code gen):                          │
+│ ☐ ingestion/scheduled-sync (2 changes)                       │
+│                                                                │
+│ Implemented (up to date):                                     │
+│ ✓ api/user-register              4/4 tests ✓                │
+│ ✓ api/user-login                 3/3 tests ✓                │
+│ ✓ ingestion/webhook-ingestion    5/5 tests ✓                │
+│                                                                │
+│ [Select all pending]  [▶ Implement selected]                 │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Batch implementation:** User selects multiple flows, clicks "Implement selected." The tool processes them sequentially — builds prompt, runs Claude Code, runs tests, updates status, moves to next. The user can monitor progress and intervene at any step.
+
+#### Configuration
+
+```yaml
+# .ddd/config.yaml — Claude Code integration
+claude_code:
+  enabled: true
+  command: claude                  # CLI command (must be in PATH)
+
+  post_implement:
+    run_tests: true                # Auto-run tests after code gen
+    run_lint: false                # Auto-run linter after code gen
+    auto_commit: false             # Never auto-commit (user reviews first)
+    regenerate_claude_md: true     # Update CLAUDE.md after implementation
+
+  prompt:
+    include_architecture: true     # Always include architecture.yaml
+    include_errors: true           # Always include errors.yaml
+    include_schemas: auto          # Include only referenced schemas
+
+testing:
+  command: pytest
+  args: ["--tb=short", "-q"]
+  scoped: true
+  scope_pattern: "tests/**/test_{flow_id}*"
+  auto_run: true
+```
 
 ---
 
@@ -4153,15 +4549,18 @@ Public marketplace:
 - **LLM Context Builder:** Automatically assembles project context (system, domain, flow, schemas, error codes) for every LLM request
 - **Project Memory:** 5-layer persistent memory (project summary, spec index, decision log, cross-flow map, implementation status) with context budgeting
 - **Memory Panel:** UI for viewing project summary, implementation status, design decisions, and flow dependencies
+- **Claude Code Integration:** Implementation Panel with embedded PTY terminal for interactive Claude Code sessions
+- **Prompt Builder:** Auto-constructs optimal prompts from specs (schema resolution, agent detection, update mode)
+- **Stale Detection:** SHA-256 hash comparison to detect spec-vs-code drift with human-readable change summaries
+- **Test Runner:** Auto-runs tests after implementation, displays results linked to flows, fix-and-retest loop
+- **CLAUDE.md Auto-Generation:** Maintains CLAUDE.md with project structure, spec files, domains, rules (preserves custom section)
+- **Implementation Queue:** Batch processing of pending/stale flows with sequential Claude Code invocation
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage
 
 **Excluded (v0.2+):**
 - Real-time collaboration
-- Direct code generation
-- Test generation
-- Git integration in UI
 - Reverse engineering
 - Community library
 - Live agent testing/debugging (run agent from within DDD Tool)
