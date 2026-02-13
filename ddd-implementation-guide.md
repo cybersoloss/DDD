@@ -65,11 +65,13 @@ ddd-tool/
 │       │   ├── mod.rs
 │       │   ├── file.rs        # File operations
 │       │   ├── git.rs         # Git operations
-│       │   └── project.rs     # Project management
+│       │   ├── project.rs     # Project management
+│       │   └── llm.rs         # LLM API proxy (Anthropic/OpenAI/Ollama)
 │       └── services/
 │           ├── mod.rs
 │           ├── git_service.rs
-│           └── file_service.rs
+│           ├── file_service.rs
+│           └── llm_service.rs  # HTTP client, streaming, provider abstraction
 │
 ├── src/
 │   ├── main.tsx
@@ -130,6 +132,13 @@ ddd-tool/
 │   │   │   ├── FlowList.tsx
 │   │   │   ├── NodePalette.tsx
 │   │   │   └── GitPanel.tsx
+│   │   ├── LLMAssistant/
+│   │   │   ├── ChatPanel.tsx          # Toggleable chat sidebar
+│   │   │   ├── ChatMessage.tsx        # Single message (user/assistant/system)
+│   │   │   ├── ChatInput.tsx          # Input box with submit + context indicator
+│   │   │   ├── GhostPreview.tsx       # Ghost nodes overlay + Apply/Discard bar
+│   │   │   ├── InlineAssist.tsx       # Context menu with ✨ actions
+│   │   │   └── FlowPreview.tsx        # Mini flow diagram in chat for generated flows
 │   │   └── shared/
 │   │       ├── Button.tsx
 │   │       ├── Input.tsx
@@ -140,17 +149,20 @@ ddd-tool/
 │   │   ├── flow-store.ts      # Current flow state (Level 3)
 │   │   ├── project-store.ts   # Project/file state, domain configs
 │   │   ├── ui-store.ts        # UI state (selection, panels)
-│   │   └── git-store.ts       # Git state
+│   │   ├── git-store.ts       # Git state
+│   │   └── llm-store.ts       # Chat state, ghost nodes, LLM config
 │   ├── types/
 │   │   ├── sheet.ts           # Sheet levels, navigation, breadcrumb types
 │   │   ├── domain.ts          # Domain config, event wiring, portal types
 │   │   ├── flow.ts
 │   │   ├── node.ts
 │   │   ├── spec.ts
-│   │   └── project.ts
+│   │   ├── project.ts
+│   │   └── llm.ts             # Chat messages, LLM config, ghost node types
 │   ├── utils/
 │   │   ├── yaml.ts
 │   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
+│   │   ├── llm-context.ts     # Build context object for LLM requests
 │   │   ├── mermaid.ts
 │   │   └── validation.ts
 │   └── styles/
@@ -3182,6 +3194,1260 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 }
 ```
 
+#### Day 15-17: LLM Design Assistant
+
+**File: `src/types/llm.ts`**
+```typescript
+// --- LLM Provider Configuration ---
+
+export type LLMProvider = 'anthropic' | 'openai' | 'ollama' | 'custom';
+
+export interface LLMConfig {
+  provider: LLMProvider;
+  model: string;
+  apiKeyEnv: string;           // Environment variable name (never store key directly)
+  maxTokens: number;
+  temperature: number;
+  fallback?: {
+    provider: LLMProvider;
+    model: string;
+    baseUrl?: string;          // For Ollama / custom endpoints
+  };
+}
+
+// --- Chat Messages ---
+
+export type ChatRole = 'user' | 'assistant' | 'system';
+
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  timestamp: number;
+  // For assistant messages that generate nodes/flows
+  generatedYaml?: string;
+  previewState?: 'pending' | 'applied' | 'discarded';
+}
+
+export interface ChatThread {
+  id: string;
+  flowId?: string;             // Scoped to a flow (null = project-level)
+  domainId?: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+// --- Ghost Nodes (Preview before Apply) ---
+
+export interface GhostPreview {
+  id: string;
+  sourceMessageId: string;     // Which chat message generated this
+  yaml: string;                // The generated YAML
+  nodes: GhostNode[];
+  connections: GhostConnection[];
+  state: 'previewing' | 'applied' | 'discarded';
+}
+
+export interface GhostNode {
+  id: string;
+  type: string;
+  label: string;
+  position: { x: number; y: number };
+  spec: Record<string, any>;
+}
+
+export interface GhostConnection {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+// --- Inline Assist ---
+
+export type InlineAssistAction =
+  // Node-level
+  | 'suggest_spec'
+  | 'complete_spec'
+  | 'explain_node'
+  | 'add_error_handling'
+  | 'generate_test_cases'
+  // Connection-level
+  | 'add_node_between'
+  | 'label_connection'
+  // Canvas-level
+  | 'generate_flow'
+  | 'review_flow'
+  | 'suggest_wiring'
+  | 'import_from_description'
+  // Domain-level (Level 2)
+  | 'suggest_flows'
+  | 'suggest_events'
+  | 'generate_domain'
+  // System-level (Level 1)
+  | 'suggest_domains'
+  | 'review_architecture'
+  | 'generate_from_description';
+
+export interface InlineAssistRequest {
+  action: InlineAssistAction;
+  target: InlineAssistTarget;
+}
+
+export type InlineAssistTarget =
+  | { type: 'node'; nodeId: string }
+  | { type: 'connection'; fromId: string; toId: string }
+  | { type: 'canvas'; flowId: string }
+  | { type: 'domain'; domainId: string }
+  | { type: 'system' };
+
+// --- LLM Context (sent with every request) ---
+
+export interface LLMContext {
+  system: {
+    name: string;
+    techStack: Record<string, string>;
+    domains: string[];
+  };
+  currentDomain?: {
+    name: string;
+    flows: string[];
+    publishesEvents: string[];
+    consumesEvents: string[];
+  };
+  currentFlow?: {
+    id: string;
+    type: 'traditional' | 'agent';
+    yaml: string;
+  };
+  selectedNodes?: Array<{
+    id: string;
+    type: string;
+    spec: Record<string, any>;
+  }>;
+  errorCodes?: string[];
+  schemas?: Record<string, any>;
+}
+```
+
+**File: `src/stores/llm-store.ts`**
+```typescript
+import { create } from 'zustand';
+import type { ChatThread, ChatMessage, GhostPreview, LLMConfig, InlineAssistRequest } from '../types/llm';
+import { buildLLMContext } from '../utils/llm-context';
+import { invoke } from '@tauri-apps/api/core';
+import { nanoid } from 'nanoid';
+
+interface LLMState {
+  // Config
+  config: LLMConfig;
+
+  // Chat panel
+  chatOpen: boolean;
+  activeThread: ChatThread | null;
+  threads: ChatThread[];
+  isStreaming: boolean;
+
+  // Ghost preview
+  ghostPreview: GhostPreview | null;
+
+  // Actions — Chat
+  toggleChat: () => void;
+  openChat: () => void;
+  closeChat: () => void;
+  sendMessage: (content: string) => Promise<void>;
+  switchThread: (threadId: string) => void;
+  startThreadForFlow: (flowId: string, domainId: string) => void;
+
+  // Actions — Ghost Preview
+  applyGhostPreview: () => void;
+  discardGhostPreview: () => void;
+  editGhostInChat: () => void;
+
+  // Actions — Inline Assist
+  executeInlineAssist: (request: InlineAssistRequest) => Promise<string>;
+
+  // Actions — Config
+  updateConfig: (config: Partial<LLMConfig>) => void;
+}
+
+export const useLLMStore = create<LLMState>((set, get) => ({
+  config: {
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-5-20250929',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+    maxTokens: 4096,
+    temperature: 0.3,
+  },
+
+  chatOpen: false,
+  activeThread: null,
+  threads: [],
+  isStreaming: false,
+  ghostPreview: null,
+
+  toggleChat: () => set(s => ({ chatOpen: !s.chatOpen })),
+  openChat: () => set({ chatOpen: true }),
+  closeChat: () => set({ chatOpen: false }),
+
+  sendMessage: async (content: string) => {
+    const state = get();
+    const thread = state.activeThread;
+    if (!thread) return;
+
+    // Add user message
+    const userMsg: ChatMessage = {
+      id: nanoid(),
+      role: 'user',
+      content,
+      timestamp: Date.now(),
+    };
+
+    const updatedThread = {
+      ...thread,
+      messages: [...thread.messages, userMsg],
+      updatedAt: Date.now(),
+    };
+
+    set({
+      activeThread: updatedThread,
+      isStreaming: true,
+    });
+
+    // Build context from current project state
+    const context = buildLLMContext();
+
+    // Call Tauri backend
+    try {
+      const response: string = await invoke('llm_chat', {
+        messages: updatedThread.messages.map(m => ({
+          role: m.role,
+          content: m.content,
+        })),
+        context,
+        config: state.config,
+      });
+
+      const assistantMsg: ChatMessage = {
+        id: nanoid(),
+        role: 'assistant',
+        content: response,
+        timestamp: Date.now(),
+      };
+
+      // Check if response contains YAML (flow/node generation)
+      const yamlMatch = response.match(/```yaml\n([\s\S]*?)```/);
+      if (yamlMatch) {
+        assistantMsg.generatedYaml = yamlMatch[1];
+        assistantMsg.previewState = 'pending';
+      }
+
+      const finalThread = {
+        ...updatedThread,
+        messages: [...updatedThread.messages, assistantMsg],
+        updatedAt: Date.now(),
+      };
+
+      set({
+        activeThread: finalThread,
+        isStreaming: false,
+        threads: state.threads.map(t =>
+          t.id === finalThread.id ? finalThread : t
+        ),
+      });
+
+      // If YAML was generated, parse and create ghost preview
+      if (assistantMsg.generatedYaml) {
+        const preview = parseYamlToGhostPreview(
+          assistantMsg.id,
+          assistantMsg.generatedYaml
+        );
+        set({ ghostPreview: preview });
+      }
+    } catch (error) {
+      set({ isStreaming: false });
+    }
+  },
+
+  switchThread: (threadId: string) => {
+    const thread = get().threads.find(t => t.id === threadId);
+    if (thread) set({ activeThread: thread });
+  },
+
+  startThreadForFlow: (flowId: string, domainId: string) => {
+    const existing = get().threads.find(t => t.flowId === flowId);
+    if (existing) {
+      set({ activeThread: existing, chatOpen: true });
+      return;
+    }
+
+    const thread: ChatThread = {
+      id: nanoid(),
+      flowId,
+      domainId,
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    set(s => ({
+      threads: [...s.threads, thread],
+      activeThread: thread,
+      chatOpen: true,
+    }));
+  },
+
+  applyGhostPreview: () => {
+    const preview = get().ghostPreview;
+    if (!preview) return;
+
+    // Convert ghost nodes to real nodes via flow-store
+    // (implementation delegates to flow-store.addNodes)
+    set({ ghostPreview: { ...preview, state: 'applied' } });
+
+    // Update the message's previewState
+    const thread = get().activeThread;
+    if (thread) {
+      const updatedMessages = thread.messages.map(m =>
+        m.id === preview.sourceMessageId
+          ? { ...m, previewState: 'applied' as const }
+          : m
+      );
+      set({
+        activeThread: { ...thread, messages: updatedMessages },
+        ghostPreview: null,
+      });
+    }
+  },
+
+  discardGhostPreview: () => {
+    const preview = get().ghostPreview;
+    if (!preview) return;
+
+    const thread = get().activeThread;
+    if (thread) {
+      const updatedMessages = thread.messages.map(m =>
+        m.id === preview.sourceMessageId
+          ? { ...m, previewState: 'discarded' as const }
+          : m
+      );
+      set({
+        activeThread: { ...thread, messages: updatedMessages },
+        ghostPreview: null,
+      });
+    }
+  },
+
+  editGhostInChat: () => {
+    const preview = get().ghostPreview;
+    if (!preview) return;
+    set({ ghostPreview: null, chatOpen: true });
+    // Focus the chat input — the user can type refinements
+  },
+
+  executeInlineAssist: async (request: InlineAssistRequest): Promise<string> => {
+    const context = buildLLMContext();
+    const config = get().config;
+
+    const response: string = await invoke('llm_inline_assist', {
+      action: request.action,
+      target: request.target,
+      context,
+      config,
+    });
+
+    return response;
+  },
+
+  updateConfig: (partial: Partial<LLMConfig>) => {
+    set(s => ({ config: { ...s.config, ...partial } }));
+  },
+}));
+
+// Helper: parse generated YAML into ghost nodes for canvas preview
+function parseYamlToGhostPreview(
+  messageId: string,
+  yaml: string
+): GhostPreview {
+  // Parse YAML, extract nodes[] and connections
+  // Position nodes in a vertical layout starting from (400, 100)
+  // Returns GhostPreview for canvas rendering
+  return {
+    id: nanoid(),
+    sourceMessageId: messageId,
+    yaml,
+    nodes: [],       // Populated by YAML parser
+    connections: [],  // Populated by YAML parser
+    state: 'previewing',
+  };
+}
+```
+
+**File: `src/utils/llm-context.ts`**
+```typescript
+import { useProjectStore } from '../stores/project-store';
+import { useSheetStore } from '../stores/sheet-store';
+import { useFlowStore } from '../stores/flow-store';
+import type { LLMContext } from '../types/llm';
+
+/**
+ * Build the context object sent with every LLM request.
+ * Automatically scoped to the user's current location and selection.
+ */
+export function buildLLMContext(): LLMContext {
+  const project = useProjectStore.getState();
+  const sheet = useSheetStore.getState();
+  const flow = useFlowStore.getState();
+
+  const context: LLMContext = {
+    system: {
+      name: project.systemConfig?.name ?? '',
+      techStack: project.systemConfig?.tech_stack ?? {},
+      domains: project.domains?.map(d => d.name) ?? [],
+    },
+  };
+
+  // Add domain context on Level 2 or 3
+  if (sheet.current.level !== 'system' && sheet.current.domainId) {
+    const domain = project.domainConfigs?.[sheet.current.domainId];
+    if (domain) {
+      context.currentDomain = {
+        name: domain.name,
+        flows: domain.flows.map(f => f.id),
+        publishesEvents: domain.publishes_events.map(e => e.event),
+        consumesEvents: domain.consumes_events.map(e => e.event),
+      };
+    }
+  }
+
+  // Add flow context on Level 3
+  if (sheet.current.level === 'flow' && sheet.current.flowId) {
+    context.currentFlow = {
+      id: sheet.current.flowId,
+      type: flow.flowType ?? 'traditional',
+      yaml: flow.toYaml(),      // Serialize current flow state
+    };
+  }
+
+  // Add selected nodes
+  const selectedNodes = flow.getSelectedNodes?.();
+  if (selectedNodes?.length) {
+    context.selectedNodes = selectedNodes.map(n => ({
+      id: n.id,
+      type: n.type,
+      spec: n.spec,
+    }));
+  }
+
+  // Add error codes and schemas from project
+  context.errorCodes = project.errorCodes ?? [];
+  context.schemas = project.schemas ?? {};
+
+  return context;
+}
+```
+
+**File: `src-tauri/src/commands/llm.rs`**
+```rust
+use serde::{Deserialize, Serialize};
+use tauri::command;
+
+#[derive(Deserialize)]
+pub struct LLMConfig {
+    provider: String,     // "anthropic" | "openai" | "ollama" | "custom"
+    model: String,
+    api_key_env: String,
+    max_tokens: u32,
+    temperature: f32,
+    fallback: Option<FallbackConfig>,
+}
+
+#[derive(Deserialize)]
+pub struct FallbackConfig {
+    provider: String,
+    model: String,
+    base_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ChatMsg {
+    role: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+pub struct LLMResponse {
+    content: String,
+}
+
+/// Main chat endpoint — sends messages + context to LLM provider
+#[command]
+pub async fn llm_chat(
+    messages: Vec<ChatMsg>,
+    context: serde_json::Value,
+    config: LLMConfig,
+) -> Result<String, String> {
+    let api_key = std::env::var(&config.api_key_env)
+        .map_err(|_| format!("Environment variable {} not set", config.api_key_env))?;
+
+    let system_prompt = build_system_prompt(&context);
+
+    let response = match config.provider.as_str() {
+        "anthropic" => call_anthropic(&api_key, &config.model, &system_prompt, &messages, config.max_tokens, config.temperature).await,
+        "openai" => call_openai(&api_key, &config.model, &system_prompt, &messages, config.max_tokens, config.temperature).await,
+        "ollama" => call_ollama(&config.model, &system_prompt, &messages, config.fallback.as_ref().and_then(|f| f.base_url.as_deref())).await,
+        _ => Err("Unsupported provider".to_string()),
+    };
+
+    match response {
+        Ok(content) => Ok(content),
+        Err(e) => {
+            // Try fallback if configured
+            if let Some(fallback) = &config.fallback {
+                let fb_result = match fallback.provider.as_str() {
+                    "ollama" => call_ollama(&fallback.model, &system_prompt, &messages, fallback.base_url.as_deref()).await,
+                    _ => Err("Unsupported fallback provider".to_string()),
+                };
+                fb_result
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
+/// Inline assist endpoint — targeted action on a specific element
+#[command]
+pub async fn llm_inline_assist(
+    action: String,
+    target: serde_json::Value,
+    context: serde_json::Value,
+    config: LLMConfig,
+) -> Result<String, String> {
+    let api_key = std::env::var(&config.api_key_env)
+        .map_err(|_| format!("Environment variable {} not set", config.api_key_env))?;
+
+    let system_prompt = build_inline_assist_prompt(&action, &target, &context);
+
+    let messages = vec![ChatMsg {
+        role: "user".to_string(),
+        content: format_inline_assist_user_message(&action, &target),
+    }];
+
+    match config.provider.as_str() {
+        "anthropic" => call_anthropic(&api_key, &config.model, &system_prompt, &messages, config.max_tokens, config.temperature).await,
+        "openai" => call_openai(&api_key, &config.model, &system_prompt, &messages, config.max_tokens, config.temperature).await,
+        _ => Err("Unsupported provider".to_string()),
+    }
+}
+
+fn build_system_prompt(context: &serde_json::Value) -> String {
+    format!(
+        r#"You are the DDD Design Assistant, embedded in the DDD (Diagram-Driven Development) desktop tool.
+You help users design software flows visually.
+
+When generating flows or nodes, output valid DDD YAML inside a ```yaml``` code block.
+Always follow the DDD spec format with proper node types, connections, and specs.
+
+Project context:
+{}
+
+When suggesting specs, use exact error codes from the project's errors.yaml.
+When suggesting schemas, reference existing schemas with $ref.
+Keep suggestions concise and actionable."#,
+        serde_json::to_string_pretty(context).unwrap_or_default()
+    )
+}
+
+fn build_inline_assist_prompt(
+    action: &str,
+    target: &serde_json::Value,
+    context: &serde_json::Value,
+) -> String {
+    let action_instruction = match action {
+        "suggest_spec" => "Suggest a complete spec for this node based on its name, type, and the flow context. Output the spec as YAML.",
+        "complete_spec" => "The node has a partial spec. Fill in any missing fields with sensible defaults based on context.",
+        "explain_node" => "Explain what this node does in plain language, based on its spec.",
+        "add_error_handling" => "Add failure connections and error handling to this node. Use error codes from the project's errors.yaml.",
+        "generate_test_cases" => "List test scenarios for this node: happy path, edge cases, and failure cases.",
+        "add_node_between" => "Suggest a node to insert on this connection based on the source and target node semantics.",
+        "label_connection" => "Suggest a label for this connection based on the source and target nodes.",
+        "generate_flow" => "Generate a complete DDD flow with nodes and connections based on the user's description. Output as YAML.",
+        "review_flow" => "Review this flow for completeness: missing error paths, unhandled edges, security gaps, missing validations.",
+        "suggest_wiring" => "Look at unconnected nodes in this flow and suggest how to wire them together.",
+        "import_from_description" => "Convert this feature description into a DDD flow with nodes and connections. Output as YAML.",
+        "suggest_flows" => "Based on this domain's existing flows, suggest additional flows that are typically needed.",
+        "suggest_events" => "Based on this domain's flows, suggest events to publish and consume.",
+        "generate_domain" => "Generate a domain.yaml with flows, events, and wiring based on the description. Output as YAML.",
+        "suggest_domains" => "Based on the system description and existing domains, suggest additional domains.",
+        "review_architecture" => "Check domain boundaries, event wiring completeness, and circular dependencies.",
+        "generate_from_description" => "Generate a system.yaml with domains based on the application description. Output as YAML.",
+        _ => "Help the user with their DDD design.",
+    };
+
+    format!(
+        r#"You are the DDD Inline Assistant. Perform exactly ONE action.
+
+Action: {}
+Instruction: {}
+
+Target: {}
+
+Project context:
+{}
+
+Be concise. If outputting YAML, use a ```yaml``` code block."#,
+        action,
+        action_instruction,
+        serde_json::to_string_pretty(target).unwrap_or_default(),
+        serde_json::to_string_pretty(context).unwrap_or_default()
+    )
+}
+
+fn format_inline_assist_user_message(action: &str, target: &serde_json::Value) -> String {
+    format!("Execute inline assist action '{}' on target: {}", action, target)
+}
+
+// Provider implementations (simplified — real implementation uses reqwest)
+
+async fn call_anthropic(
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    messages: &[ChatMsg],
+    max_tokens: u32,
+    temperature: f32,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+
+    let api_messages: Vec<serde_json::Value> = messages.iter().map(|m| {
+        serde_json::json!({
+            "role": m.role,
+            "content": m.content
+        })
+    }).collect();
+
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "system": system_prompt,
+        "messages": api_messages
+    });
+
+    let response = client.post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+
+    json["content"][0]["text"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Failed to parse LLM response".to_string())
+}
+
+async fn call_openai(
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    messages: &[ChatMsg],
+    max_tokens: u32,
+    temperature: f32,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+
+    let mut api_messages = vec![serde_json::json!({
+        "role": "system",
+        "content": system_prompt
+    })];
+
+    for m in messages {
+        api_messages.push(serde_json::json!({
+            "role": m.role,
+            "content": m.content
+        }));
+    }
+
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": api_messages
+    });
+
+    let response = client.post("https://api.openai.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+
+    json["choices"][0]["message"]["content"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Failed to parse LLM response".to_string())
+}
+
+async fn call_ollama(
+    model: &str,
+    system_prompt: &str,
+    messages: &[ChatMsg],
+    base_url: Option<&str>,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/chat", base_url.unwrap_or("http://localhost:11434"));
+
+    let mut api_messages = vec![serde_json::json!({
+        "role": "system",
+        "content": system_prompt
+    })];
+
+    for m in messages {
+        api_messages.push(serde_json::json!({
+            "role": m.role,
+            "content": m.content
+        }));
+    }
+
+    let body = serde_json::json!({
+        "model": model,
+        "messages": api_messages,
+        "stream": false
+    });
+
+    let response = client.post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+
+    json["message"]["content"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Failed to parse Ollama response".to_string())
+}
+```
+
+**File: `src/components/LLMAssistant/ChatPanel.tsx`**
+```tsx
+import { useEffect, useRef, useState } from 'react';
+import { useLLMStore } from '../../stores/llm-store';
+import { ChatMessage } from './ChatMessage';
+import { ChatInput } from './ChatInput';
+import { GhostPreview } from './GhostPreview';
+import { X, MessageSquare, Sparkles } from 'lucide-react';
+
+export function ChatPanel() {
+  const {
+    chatOpen, activeThread, isStreaming,
+    closeChat, sendMessage,
+  } = useLLMStore();
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [activeThread?.messages.length]);
+
+  if (!chatOpen) return null;
+
+  return (
+    <div className="w-96 border-l border-gray-200 bg-white flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-purple-500" />
+          <span className="font-medium text-sm">Design Assistant</span>
+        </div>
+        <button onClick={closeChat} className="text-gray-400 hover:text-gray-600">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Context indicator */}
+      <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 border-b">
+        {activeThread?.flowId
+          ? `Context: ${activeThread.domainId} / ${activeThread.flowId}`
+          : 'Context: Project-level'}
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {!activeThread?.messages.length && (
+          <div className="text-center text-gray-400 text-sm mt-8">
+            <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>Ask me to generate flows, fill specs,</p>
+            <p>review your design, or suggest improvements.</p>
+            <div className="mt-4 space-y-2">
+              <SuggestionChip text="Generate a user registration flow" />
+              <SuggestionChip text="Review this flow for missing error paths" />
+              <SuggestionChip text="Suggest flows for this domain" />
+            </div>
+          </div>
+        )}
+
+        {activeThread?.messages.map(msg => (
+          <ChatMessage key={msg.id} message={msg} />
+        ))}
+
+        {isStreaming && (
+          <div className="flex gap-1 text-purple-400">
+            <span className="animate-bounce">●</span>
+            <span className="animate-bounce" style={{ animationDelay: '0.1s' }}>●</span>
+            <span className="animate-bounce" style={{ animationDelay: '0.2s' }}>●</span>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      <ChatInput onSend={sendMessage} disabled={isStreaming} />
+    </div>
+  );
+}
+
+function SuggestionChip({ text }: { text: string }) {
+  const { sendMessage } = useLLMStore();
+  return (
+    <button
+      onClick={() => sendMessage(text)}
+      className="block w-full text-left px-3 py-2 text-xs bg-white border border-gray-200 rounded-lg hover:border-purple-300 hover:bg-purple-50 transition-colors"
+    >
+      ✨ {text}
+    </button>
+  );
+}
+```
+
+**File: `src/components/LLMAssistant/ChatMessage.tsx`**
+```tsx
+import type { ChatMessage as ChatMessageType } from '../../types/llm';
+import { useLLMStore } from '../../stores/llm-store';
+import { User, Sparkles, Check, X } from 'lucide-react';
+
+interface Props {
+  message: ChatMessageType;
+}
+
+export function ChatMessage({ message }: Props) {
+  const { applyGhostPreview, discardGhostPreview, editGhostInChat } = useLLMStore();
+  const isUser = message.role === 'user';
+
+  return (
+    <div className={`flex gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      {!isUser && (
+        <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+          <Sparkles className="w-3 h-3 text-purple-600" />
+        </div>
+      )}
+
+      <div
+        className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+          isUser
+            ? 'bg-blue-500 text-white'
+            : 'bg-gray-100 text-gray-800'
+        }`}
+      >
+        {/* Render markdown content */}
+        <div className="whitespace-pre-wrap">{message.content}</div>
+
+        {/* Generated YAML actions */}
+        {message.generatedYaml && message.previewState === 'pending' && (
+          <div className="mt-2 pt-2 border-t border-gray-200 flex gap-2">
+            <button
+              onClick={applyGhostPreview}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600"
+            >
+              <Check className="w-3 h-3" /> Apply
+            </button>
+            <button
+              onClick={editGhostInChat}
+              className="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+            >
+              Edit
+            </button>
+            <button
+              onClick={discardGhostPreview}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-red-100 text-red-600 rounded hover:bg-red-200"
+            >
+              <X className="w-3 h-3" /> Discard
+            </button>
+          </div>
+        )}
+
+        {message.previewState === 'applied' && (
+          <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-green-600">
+            ✓ Applied to canvas
+          </div>
+        )}
+
+        {message.previewState === 'discarded' && (
+          <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-400">
+            Discarded
+          </div>
+        )}
+      </div>
+
+      {isUser && (
+        <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+          <User className="w-3 h-3 text-blue-600" />
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**File: `src/components/LLMAssistant/ChatInput.tsx`**
+```tsx
+import { useState, useRef, useEffect } from 'react';
+import { Send } from 'lucide-react';
+
+interface Props {
+  onSend: (message: string) => void;
+  disabled: boolean;
+}
+
+export function ChatInput({ onSend, disabled }: Props) {
+  const [value, setValue] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    }
+  }, [value]);
+
+  const handleSubmit = () => {
+    const trimmed = value.trim();
+    if (!trimmed || disabled) return;
+    onSend(trimmed);
+    setValue('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  return (
+    <div className="border-t border-gray-200 px-4 py-3">
+      <div className="flex items-end gap-2">
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Describe what you need…"
+          disabled={disabled}
+          rows={1}
+          className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300 disabled:opacity-50"
+        />
+        <button
+          onClick={handleSubmit}
+          disabled={disabled || !value.trim()}
+          className="p-2 rounded-lg bg-purple-500 text-white hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Send className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/LLMAssistant/GhostPreview.tsx`**
+```tsx
+import { useLLMStore } from '../../stores/llm-store';
+import { Check, Pencil, X, Sparkles } from 'lucide-react';
+
+/**
+ * Floating bar rendered at the bottom of the canvas when ghost nodes are visible.
+ * Ghost nodes themselves are rendered by the Canvas component with dashed borders
+ * and reduced opacity — this component just provides the Apply/Edit/Discard controls.
+ */
+export function GhostPreview() {
+  const { ghostPreview, applyGhostPreview, editGhostInChat, discardGhostPreview } = useLLMStore();
+
+  if (!ghostPreview || ghostPreview.state !== 'previewing') return null;
+
+  const nodeCount = ghostPreview.nodes.length;
+  const connectionCount = ghostPreview.connections.length;
+
+  return (
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50">
+      <div className="bg-white border border-purple-200 rounded-xl shadow-lg px-5 py-3 flex items-center gap-4">
+        <div className="flex items-center gap-2 text-sm text-purple-700">
+          <Sparkles className="w-4 h-4" />
+          <span>
+            Generated {nodeCount} node{nodeCount !== 1 ? 's' : ''}
+            {connectionCount > 0 && `, ${connectionCount} connection${connectionCount !== 1 ? 's' : ''}`}
+          </span>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={applyGhostPreview}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
+          >
+            <Check className="w-3.5 h-3.5" /> Apply
+          </button>
+          <button
+            onClick={editGhostInChat}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" /> Edit in chat
+          </button>
+          <button
+            onClick={discardGhostPreview}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
+          >
+            <X className="w-3.5 h-3.5" /> Discard
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/LLMAssistant/InlineAssist.tsx`**
+```tsx
+import { useState } from 'react';
+import { useLLMStore } from '../../stores/llm-store';
+import { useSheetStore } from '../../stores/sheet-store';
+import { Sparkles, Loader2 } from 'lucide-react';
+import type { InlineAssistAction, InlineAssistTarget } from '../../types/llm';
+
+interface Props {
+  x: number;
+  y: number;
+  target: InlineAssistTarget;
+  onClose: () => void;
+}
+
+interface MenuAction {
+  action: InlineAssistAction;
+  label: string;
+}
+
+const NODE_ACTIONS: MenuAction[] = [
+  { action: 'suggest_spec', label: '✨ Suggest spec' },
+  { action: 'complete_spec', label: '✨ Complete spec' },
+  { action: 'explain_node', label: '✨ Explain this node' },
+  { action: 'add_error_handling', label: '✨ Add error handling' },
+  { action: 'generate_test_cases', label: '✨ Generate test cases' },
+];
+
+const CONNECTION_ACTIONS: MenuAction[] = [
+  { action: 'add_node_between', label: '✨ Add node between' },
+  { action: 'label_connection', label: '✨ Suggest label' },
+];
+
+const CANVAS_ACTIONS: MenuAction[] = [
+  { action: 'generate_flow', label: '✨ Generate flow…' },
+  { action: 'review_flow', label: '✨ Review this flow' },
+  { action: 'suggest_wiring', label: '✨ Suggest wiring' },
+  { action: 'import_from_description', label: '✨ Import from description…' },
+];
+
+const DOMAIN_ACTIONS: MenuAction[] = [
+  { action: 'suggest_flows', label: '✨ Suggest flows' },
+  { action: 'suggest_events', label: '✨ Suggest events' },
+  { action: 'generate_domain', label: '✨ Generate domain…' },
+];
+
+const SYSTEM_ACTIONS: MenuAction[] = [
+  { action: 'suggest_domains', label: '✨ Suggest domains' },
+  { action: 'review_architecture', label: '✨ Review architecture' },
+  { action: 'generate_from_description', label: '✨ Generate from description…' },
+];
+
+function getActionsForTarget(target: InlineAssistTarget): MenuAction[] {
+  switch (target.type) {
+    case 'node': return NODE_ACTIONS;
+    case 'connection': return CONNECTION_ACTIONS;
+    case 'canvas': return CANVAS_ACTIONS;
+    case 'domain': return DOMAIN_ACTIONS;
+    case 'system': return SYSTEM_ACTIONS;
+  }
+}
+
+export function InlineAssist({ x, y, target, onClose }: Props) {
+  const { executeInlineAssist, openChat } = useLLMStore();
+  const [loading, setLoading] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const actions = getActionsForTarget(target);
+
+  const handleAction = async (menuAction: MenuAction) => {
+    // Actions ending with '…' open the chat panel instead
+    if (menuAction.label.endsWith('…')) {
+      openChat();
+      onClose();
+      return;
+    }
+
+    setLoading(menuAction.action);
+    try {
+      const response = await executeInlineAssist({
+        action: menuAction.action,
+        target,
+      });
+      setResult(response);
+    } catch (err) {
+      setResult('Error: ' + String(err));
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div
+      className="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 min-w-[220px] py-1"
+      style={{ left: x, top: y }}
+    >
+      {!result ? (
+        // Action menu
+        actions.map(a => (
+          <button
+            key={a.action}
+            onClick={() => handleAction(a)}
+            disabled={!!loading}
+            className="w-full text-left px-4 py-2 text-sm hover:bg-purple-50 disabled:opacity-50 flex items-center gap-2"
+          >
+            {loading === a.action ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500" />
+            ) : null}
+            {a.label}
+          </button>
+        ))
+      ) : (
+        // Result popover
+        <div className="px-4 py-3 max-w-sm">
+          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-purple-500" />
+            Suggestion
+          </div>
+          <div className="text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
+            {result}
+          </div>
+          <div className="mt-3 flex gap-2 justify-end">
+            <button
+              onClick={onClose}
+              className="px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**Keyboard shortcuts — add to `src/App.tsx`:**
+```typescript
+// Inside App component useEffect for keyboard shortcuts
+useEffect(() => {
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const mod = e.metaKey || e.ctrlKey;
+
+    // Cmd+L / Ctrl+L — Toggle Chat Panel
+    if (mod && e.key === 'l') {
+      e.preventDefault();
+      useLLMStore.getState().toggleChat();
+    }
+
+    // Cmd+Shift+G — Generate flow from description
+    if (mod && e.shiftKey && e.key === 'G') {
+      e.preventDefault();
+      useLLMStore.getState().openChat();
+      // Pre-fill with generate prompt (handled by ChatPanel)
+    }
+
+    // Cmd+. — Inline assist on selected node
+    if (mod && e.key === '.') {
+      e.preventDefault();
+      // Trigger inline assist for currently selected node
+      // (handled by Canvas component)
+    }
+
+    // Escape — Discard ghost preview (if active)
+    if (e.key === 'Escape') {
+      const ghost = useLLMStore.getState().ghostPreview;
+      if (ghost?.state === 'previewing') {
+        e.preventDefault();
+        useLLMStore.getState().discardGhostPreview();
+      }
+    }
+
+    // Enter — Apply ghost preview (if active and no input focused)
+    if (e.key === 'Enter' && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) {
+      const ghost = useLLMStore.getState().ghostPreview;
+      if (ghost?.state === 'previewing') {
+        e.preventDefault();
+        useLLMStore.getState().applyGhostPreview();
+      }
+    }
+  };
+
+  window.addEventListener('keydown', handleKeyDown);
+  return () => window.removeEventListener('keydown', handleKeyDown);
+}, []);
+```
+
+**App layout update — ChatPanel sits alongside SpecPanel:**
+```tsx
+// In App.tsx render
+function App() {
+  const { current } = useSheetStore();
+  const { chatOpen } = useLLMStore();
+
+  return (
+    <div className="flex h-screen">
+      {/* Left sidebar */}
+      <Sidebar />
+
+      {/* Main canvas area */}
+      <div className="flex-1 flex flex-col">
+        <Breadcrumb />
+        <div className="flex-1 relative">
+          {current.level === 'system' && <SystemMap />}
+          {current.level === 'domain' && <DomainMap />}
+          {current.level === 'flow' && <Canvas />}
+
+          {/* Ghost preview bar (floats above canvas) */}
+          <GhostPreview />
+        </div>
+      </div>
+
+      {/* Right panels — Spec Panel and/or Chat Panel */}
+      <SpecPanel />
+      {chatOpen && <ChatPanel />}
+    </div>
+  );
+}
+```
+
 ---
 
 ## Phase 4: Testing the MVP
@@ -3285,6 +4551,50 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
     - [ ] Changed files listed
     - [ ] Stage/commit works
 
+15. **LLM Chat Panel**
+    - [ ] Cmd+L / Ctrl+L toggles chat panel open/closed
+    - [ ] Chat panel shows context indicator (project-level / domain / flow)
+    - [ ] Suggestion chips appear in empty chat
+    - [ ] Can send a message and receive LLM response
+    - [ ] Streaming indicator shows while LLM is responding
+    - [ ] Generated YAML in response shows Apply / Edit / Discard buttons
+    - [ ] Apply adds ghost nodes to canvas
+    - [ ] Discard removes ghost preview
+    - [ ] "Edit in chat" closes preview and focuses chat input
+    - [ ] Chat history persists per-flow thread
+    - [ ] Switching flows switches chat thread
+
+16. **Ghost Preview**
+    - [ ] Ghost nodes appear with dashed borders and reduced opacity
+    - [ ] Ghost preview bar appears at bottom of canvas with node count
+    - [ ] Apply converts ghost nodes to real nodes
+    - [ ] Escape discards ghost preview
+    - [ ] Enter (when no input focused) applies ghost preview
+
+17. **Inline Assist**
+    - [ ] Right-click node shows ✨ actions (Suggest spec, Explain, Add error handling, etc.)
+    - [ ] Right-click connection shows ✨ actions (Add node between, Suggest label)
+    - [ ] Right-click empty canvas shows ✨ actions (Generate flow, Review, Suggest wiring)
+    - [ ] Right-click on Level 2 shows ✨ actions (Suggest flows, Suggest events, Generate domain)
+    - [ ] Right-click on Level 1 shows ✨ actions (Suggest domains, Review architecture, Generate from description)
+    - [ ] Inline assist shows loading spinner while LLM processes
+    - [ ] Result appears as popover with suggestion text
+    - [ ] Cmd+. / Ctrl+. triggers inline assist on selected node
+
+18. **LLM Context**
+    - [ ] System context always included in LLM requests
+    - [ ] Domain context included on Level 2 and 3
+    - [ ] Flow context (full YAML) included on Level 3
+    - [ ] Selected node specs included when nodes are selected
+    - [ ] Error codes from project included
+    - [ ] Schemas from project included
+
+19. **LLM Provider Config**
+    - [ ] Can configure provider (Anthropic / OpenAI / Ollama)
+    - [ ] API key read from environment variable (not stored in config)
+    - [ ] Fallback provider works when primary fails
+    - [ ] Ollama works for offline use
+
 ---
 
 ## Phase 5: Key Implementation Notes
@@ -3293,14 +4603,15 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 
 1. **State Management**
    - Use Zustand for all state
-   - Keep stores focused (sheet, flow, project, ui, git)
+   - Keep stores focused (sheet, flow, project, ui, git, llm)
    - `sheet-store` owns navigation state (current level, breadcrumbs, history)
    - `project-store` owns domain configs parsed from domain.yaml files
    - `flow-store` owns current flow being edited (Level 3 only)
+   - `llm-store` owns chat state, ghost previews, LLM config
    - Never mutate state directly
 
 2. **Tauri Commands**
-   - All file/git operations go through Tauri
+   - All file/git/LLM operations go through Tauri
    - Use async/await pattern
    - Handle errors gracefully
 
@@ -3345,6 +4656,11 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 11. **Do** derive Level 2 orchestration visuals from flow YAML automatically
 12. **Do** make sure Git integration works
 13. **Do** validate YAML output format (traditional, agent, and orchestration)
+14. **Don't** store API keys in `.ddd/config.yaml` — only store the env var name
+15. **Don't** auto-apply LLM suggestions — always show ghost preview first
+16. **Do** scope chat threads per flow — switching flows should switch threads
+17. **Do** include full project context in every LLM request (system, domain, flow, schemas, error codes)
+18. **Do** support provider fallback (e.g., Anthropic → Ollama for offline use)
 
 ---
 
@@ -3360,10 +4676,12 @@ npm install zustand yaml nanoid lucide-react
 npm install -D tailwindcss postcss autoprefixer @types/node
 npx tailwindcss init -p
 
-# 3. Add git2 to Cargo.toml
+# 3. Add git2 and reqwest to Cargo.toml
 # In src-tauri/Cargo.toml, add:
 # [dependencies]
 # git2 = "0.18"
+# reqwest = { version = "0.12", features = ["json"] }
+# serde_json = "1.0"
 
 # 4. Start development
 npm run tauri dev
@@ -3435,6 +4753,22 @@ npm run tauri dev
 - [ ] Can stage and commit changes
 - [ ] YAML format matches specification
 - [ ] Domain configs (domain.yaml) are parsed to populate L1/L2
+
+### LLM Design Assistant
+- [ ] Chat Panel opens/closes with Cmd+L and shows conversation
+- [ ] Chat sends messages to configured LLM provider and displays responses
+- [ ] LLM context includes system, domain, flow, and selected nodes automatically
+- [ ] Generated YAML appears as ghost nodes on canvas with Apply/Discard
+- [ ] Ghost nodes visually distinct (dashed borders, reduced opacity)
+- [ ] Apply converts ghost nodes to real nodes in flow store
+- [ ] Inline assist context menu appears on right-click with level-appropriate actions
+- [ ] Node-level: Suggest spec, Complete spec, Explain, Add error handling, Generate tests
+- [ ] Canvas-level: Generate flow, Review flow, Suggest wiring, Import from description
+- [ ] Domain-level (L2): Suggest flows, Suggest events, Generate domain
+- [ ] System-level (L1): Suggest domains, Review architecture, Generate from description
+- [ ] Provider fallback works (Anthropic → Ollama for offline)
+- [ ] Chat threads scoped per flow, switchable
+- [ ] API key read from env var, never stored in config files
 
 ---
 

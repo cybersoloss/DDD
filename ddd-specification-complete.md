@@ -2966,6 +2966,240 @@ The validator checks:
 - DevOps Engineer
 - Performance Engineer
 
+### LLM Design Assistant
+
+The DDD Tool embeds an LLM to help users design flows, fill specs, and get contextual suggestions — without leaving the editor. Two surfaces expose this capability: a **Chat Panel** and **Inline Assist** (context menu).
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ DDD TOOL                                                         │
+│                                                                   │
+│  ┌──────────────────────────────┐  ┌──────────────────────────┐ │
+│  │ CANVAS / SPEC PANEL          │  │ CHAT PANEL (toggleable)  │ │
+│  │                              │  │                          │ │
+│  │  Right-click node            │  │  "Generate a user        │ │
+│  │  ┌──────────────────────┐    │  │   registration flow"     │ │
+│  │  │ ✨ Suggest spec      │    │  │                          │ │
+│  │  │ ✨ Explain this node │    │  │  ┌──────────────────┐   │ │
+│  │  │ ✨ Add error paths   │    │  │  │ Preview:          │   │ │
+│  │  │ ✨ Generate tests    │    │  │  │ ⬡ → ▱ → ◇ → ⌗   │   │ │
+│  │  └──────────────────────┘    │  │  │ → ⬭              │   │ │
+│  │                              │  │  │                    │   │ │
+│  │  Right-click canvas          │  │  │ [Apply] [Edit]    │   │ │
+│  │  ┌──────────────────────┐    │  │  └──────────────────┘   │ │
+│  │  │ ✨ Generate flow…    │    │  │                          │ │
+│  │  │ ✨ Review this flow  │    │  │  Conversation history    │ │
+│  │  │ ✨ Suggest wiring    │    │  │  with context awareness  │ │
+│  │  └──────────────────────┘    │  │                          │ │
+│  └──────────────────────────────┘  └──────────────────────────┘ │
+│                        │                      │                   │
+│                        ▼                      ▼                   │
+│              ┌──────────────────────────────────────┐            │
+│              │ LLM Context Builder                    │            │
+│              │                                        │            │
+│              │ Assembles context from:                │            │
+│              │ • Current sheet level + location       │            │
+│              │ • Selected node(s) + their specs       │            │
+│              │ • Current flow YAML                    │            │
+│              │ • Domain config + event wiring         │            │
+│              │ • system.yaml + architecture.yaml      │            │
+│              │ • Error codes from errors.yaml         │            │
+│              │ • Schema definitions                   │            │
+│              └──────────────┬───────────────────────┘            │
+│                              │                                    │
+│                              ▼                                    │
+│              ┌──────────────────────────────────────┐            │
+│              │ Tauri Backend (Rust)                    │            │
+│              │ LLM API call (Anthropic / OpenAI /     │            │
+│              │ local model via Ollama)                 │            │
+│              └──────────────────────────────────────┘            │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Chat Panel
+
+A toggleable right-side panel (alongside or replacing the Spec Panel) for open-ended conversations with the LLM about the current project.
+
+**Capabilities:**
+
+| Action | User says | LLM does |
+|--------|-----------|----------|
+| **Generate flow** | "Create a user registration flow with email verification" | Generates complete flow YAML, previews it, user clicks Apply to add to canvas |
+| **Design agent** | "I need a support chatbot that searches KB and escalates" | Generates agent flow with tools, guardrails, memory, and human gate |
+| **Design orchestration** | "Route tickets to billing or technical agents with a supervisor" | Generates orchestrator + smart router + agent flows |
+| **Explain** | "What does this flow do?" | Reads current flow YAML and explains in plain language |
+| **Review** | "Is this flow production-ready?" | Checks for missing error paths, unhandled edges, missing validations, security gaps |
+| **Suggest improvements** | "How can I make this more robust?" | Suggests error handling, retry logic, rate limiting, caching |
+| **Ask architecture** | "Should users and auth be separate domains?" | Advises based on domain boundaries, event patterns, team structure |
+| **Debug** | "This flow fails when email is blank" | Traces through flow nodes, identifies missing validation |
+
+**Context awareness:** The chat panel always knows:
+- Which sheet level you're on (System / Domain / Flow)
+- Which domain and flow are active
+- The full spec of selected nodes
+- The project's tech stack, error codes, schemas
+
+**Output format:** When the LLM generates nodes or flows, it outputs DDD YAML that the tool can parse directly. Users see a preview on canvas (ghost nodes with dashed borders) and click **Apply** to commit or **Discard** to cancel.
+
+**Conversation persistence:** Chat history is saved per-project in `.ddd/chat-history.json`. Context is scoped — starting a chat on a different flow begins a new thread (previous threads are accessible).
+
+#### Inline Assist (Context Menu)
+
+Right-click actions that provide targeted LLM help without opening the chat panel. Results appear as inline popovers or are applied directly.
+
+**Node-level actions (right-click a node):**
+
+| Action | What it does |
+|--------|-------------|
+| **✨ Suggest spec** | Auto-fills the node's spec based on its name and context. E.g., a node named `validate_input` in a registration flow → suggests email, password, name fields with standard validations and error messages |
+| **✨ Complete spec** | Fills in empty/missing fields in an already-partially-filled spec |
+| **✨ Explain node** | Shows a popover explaining what this node does based on its spec |
+| **✨ Add error handling** | Adds failure connections with appropriate error codes from `errors.yaml` |
+| **✨ Generate test cases** | Lists test scenarios for this node (happy path, edge cases, failures) |
+
+**Connection-level actions (right-click a connection):**
+
+| Action | What it does |
+|--------|-------------|
+| **✨ Add node between** | Suggests a node to insert on this connection (e.g., add guardrail before terminal) |
+| **✨ Label connection** | Suggests a label based on source/target node semantics |
+
+**Canvas-level actions (right-click empty canvas):**
+
+| Action | What it does |
+|--------|-------------|
+| **✨ Generate flow…** | Opens a mini-prompt: "Describe what this flow should do" → generates nodes + connections |
+| **✨ Review this flow** | Analyzes the current flow for completeness, missing paths, and best practices |
+| **✨ Suggest wiring** | Looks at unconnected nodes and suggests how to wire them |
+| **✨ Import from description** | Paste a feature description (Jira ticket, user story) → generates flow |
+
+**Domain-level actions (right-click on Level 2):**
+
+| Action | What it does |
+|--------|-------------|
+| **✨ Suggest flows** | Based on domain name and existing flows, suggests missing flows (e.g., "users" domain has register but no login, reset-password, delete-account) |
+| **✨ Suggest events** | Based on domain flows, suggests events to publish/consume |
+| **✨ Generate domain** | "Describe this domain" → generates domain.yaml with flows, events, wiring |
+
+**System-level actions (right-click on Level 1):**
+
+| Action | What it does |
+|--------|-------------|
+| **✨ Suggest domains** | Based on system description and existing domains, suggests missing domains |
+| **✨ Review architecture** | Checks domain boundaries, event wiring completeness, circular dependencies |
+| **✨ Generate from description** | "Describe your application" → generates system.yaml with domains |
+
+#### LLM Context Builder
+
+Every LLM request includes structured context so the model understands the project. The context is assembled automatically based on the user's current location and selection.
+
+```yaml
+# Context sent with every LLM request
+context:
+  # Always included
+  system:
+    name: obligo
+    tech_stack: { language: python, framework: fastapi }
+    domains: [ingestion, analysis, api, notification]
+
+  # Included when on Level 2 or 3
+  current_domain:
+    name: ingestion
+    flows: [webhook-ingestion, scheduled-sync, manual-upload]
+    publishes_events: [contract.ingested, webhook.received]
+    consumes_events: []
+
+  # Included when on Level 3
+  current_flow:
+    id: webhook-ingestion
+    type: traditional
+    yaml: |
+      # Full flow YAML here
+
+  # Included when nodes are selected
+  selected_nodes:
+    - id: validate_input
+      type: input
+      spec: { ... }
+
+  # Included from project specs
+  error_codes:
+    - VALIDATION_ERROR
+    - DUPLICATE_ENTRY
+    - NOT_FOUND
+    # ... from errors.yaml
+
+  schemas:
+    - User: { fields: [id, email, name, ...] }
+    # ... from schemas/*.yaml
+```
+
+#### LLM Provider Configuration
+
+Users configure their LLM provider in the DDD Tool settings. Multiple providers supported.
+
+```yaml
+# .ddd/config.yaml
+llm:
+  provider: anthropic          # anthropic | openai | ollama | custom
+  model: claude-sonnet-4-5-20250929
+  api_key_env: ANTHROPIC_API_KEY  # Read from environment variable (never stored in config)
+
+  # Optional overrides
+  max_tokens: 4096
+  temperature: 0.3             # Lower for spec generation (precision)
+
+  # Fallback for offline use
+  fallback:
+    provider: ollama
+    model: llama3.1
+    base_url: http://localhost:11434
+```
+
+#### Ghost Preview (Apply/Discard Pattern)
+
+When the LLM generates nodes or flows, they appear as **ghost nodes** — visually distinct (dashed borders, reduced opacity) — so the user can review before committing.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Canvas                                                       │
+│                                                               │
+│   ⬡ trigger    →    ▱ validate ─ ─ ─ ▱ validate_input ─ ┐  │
+│   (existing)        (existing)        (ghost - dashed)    │  │
+│                                                            │  │
+│                                       ◇ check_duplicate ─ ┘  │
+│                                       (ghost - dashed)        │
+│                                            │                  │
+│                                       ⌗ create_user          │
+│                                       (ghost - dashed)        │
+│                                            │                  │
+│                                       ⬭ return_success       │
+│                                       (ghost - dashed)        │
+│                                                               │
+│   ┌──────────────────────────────────────────┐               │
+│   │ ✨ LLM generated 4 nodes                 │               │
+│   │                                           │               │
+│   │ [Apply to canvas]  [Edit in chat]  [✕]   │               │
+│   └──────────────────────────────────────────┘               │
+│                                                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Ghost nodes become real nodes on Apply. The user can also click **Edit in chat** to refine the generation before applying.
+
+#### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+L` / `Ctrl+L` | Toggle Chat Panel |
+| `Cmd+Shift+G` / `Ctrl+Shift+G` | Generate flow from description (canvas-level) |
+| `Cmd+.` / `Ctrl+.` | Inline assist on selected node (suggest spec) |
+| `Escape` | Discard ghost preview |
+| `Enter` (in ghost preview) | Apply ghost preview to canvas |
+
 ---
 
 # Part 8: Workflows
@@ -3126,6 +3360,9 @@ Public marketplace:
 - Portal nodes for cross-domain navigation
 - Spec panel (basic fields + agent-specific + orchestration panels)
 - YAML export (traditional, agent, and orchestration flow formats)
+- **LLM Design Assistant:** Chat Panel + Inline Assist (context menu) for flow generation, spec auto-fill, review, and suggestions
+- **Ghost Preview:** LLM-generated nodes appear as ghost nodes (dashed borders) with Apply/Discard before committing
+- **LLM Context Builder:** Automatically assembles project context (system, domain, flow, schemas, error codes) for every LLM request
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage
