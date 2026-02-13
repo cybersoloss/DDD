@@ -192,6 +192,10 @@ ddd-tool/
 │   │   ├── memory-builder.ts  # Scan specs → generate memory layers
 │   │   ├── prompt-builder.ts  # Build Claude Code prompts from specs
 │   │   ├── claude-md-generator.ts  # Generate/update CLAUDE.md from project state
+│   │   ├── openapi-generator.ts    # Generate OpenAPI 3.0 from flow specs
+│   │   ├── cicd-generator.ts       # Generate CI/CD pipeline from architecture.yaml
+│   │   ├── dockerfile-generator.ts # Generate Dockerfile + compose from deployment config
+│   │   ├── migration-tracker.ts    # Track schema hashes, detect changes, build migration prompts
 │   │   ├── mermaid.ts
 │   │   └── validation.ts
 │   └── styles/
@@ -8005,6 +8009,696 @@ nanoid = "0.4"
 
 ---
 
+### Production Infrastructure Generators
+
+**File: `src/types/production.ts`**
+```typescript
+/** OpenAPI generation */
+export interface OpenAPISpec {
+  openapi: string;
+  info: { title: string; version: string; description: string };
+  paths: Record<string, Record<string, OpenAPIOperation>>;
+  components: { schemas: Record<string, any> };
+}
+
+export interface OpenAPIOperation {
+  operationId: string;
+  summary: string;
+  tags: string[];
+  requestBody?: any;
+  responses: Record<string, { description: string; content?: any }>;
+}
+
+/** Schema migration tracking */
+export interface SchemaMapping {
+  spec: string;
+  spec_hash: string;
+  migration_history: MigrationEntry[];
+  last_synced_at: string;
+}
+
+export interface MigrationEntry {
+  version: string;
+  description: string;
+  generated_at: string;
+}
+
+export interface SchemaChange {
+  schemaName: string;
+  changes: string[];        // Human-readable changes
+  currentHash: string;
+  storedHash: string;
+}
+
+/** Generated artifact tracking */
+export interface GeneratedArtifact {
+  type: 'openapi' | 'ci_pipeline' | 'dockerfile' | 'compose' | 'k8s' | 'migration';
+  path: string;
+  generated_at: string;
+  source_hash: string;      // Hash of source config that generated this
+  stale: boolean;
+}
+```
+
+**File: `src/utils/openapi-generator.ts`**
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+import type { OpenAPISpec } from '../types/production';
+
+/**
+ * Generate OpenAPI 3.0 spec from all HTTP flow specs.
+ * Reads flow YAMLs, errors.yaml, and schemas to produce a complete API spec.
+ */
+export async function generateOpenAPI(projectPath: string): Promise<string> {
+  const systemRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/system.yaml` });
+  const system = (await import('yaml')).parse(systemRaw);
+
+  const spec: OpenAPISpec = {
+    openapi: '3.0.3',
+    info: {
+      title: system.system?.name ?? 'API',
+      version: system.system?.version ?? '1.0.0',
+      description: system.system?.description ?? '',
+    },
+    paths: {},
+    components: { schemas: {} },
+  };
+
+  // Read error codes for response mapping
+  let errorCodes: Record<string, any> = {};
+  try {
+    const errRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/shared/errors.yaml` });
+    errorCodes = (await import('yaml')).parse(errRaw);
+  } catch { /* ignore */ }
+
+  // Read schemas
+  try {
+    const schemaFiles = await invoke<string[]>('list_files', { dir: `${projectPath}/specs/schemas`, pattern: '*.yaml' });
+    for (const file of schemaFiles) {
+      const raw = await invoke<string>('read_file', { path: `${projectPath}/specs/schemas/${file}` });
+      const schema = (await import('yaml')).parse(raw);
+      const name = file.replace('.yaml', '');
+      spec.components.schemas[name] = schemaToOpenAPI(schema);
+    }
+  } catch { /* no schemas dir */ }
+
+  // Read all flows and extract HTTP endpoints
+  const domains = system.system?.domains ?? [];
+  for (const domain of domains) {
+    try {
+      const flowFiles = await invoke<string[]>('list_files', {
+        dir: `${projectPath}/specs/domains/${domain.name}/flows`,
+        pattern: '*.yaml',
+      });
+
+      for (const file of flowFiles) {
+        const raw = await invoke<string>('read_file', {
+          path: `${projectPath}/specs/domains/${domain.name}/flows/${file}`,
+        });
+        const flow = (await import('yaml')).parse(raw);
+
+        // Only include HTTP-triggered flows
+        if (flow.trigger?.type !== 'http') continue;
+
+        const path = flow.trigger.path;
+        const method = flow.trigger.method.toLowerCase();
+
+        if (!spec.paths[path]) spec.paths[path] = {};
+
+        spec.paths[path][method] = {
+          operationId: flow.flow?.id ?? file.replace('.yaml', ''),
+          summary: flow.flow?.name ?? '',
+          tags: [domain.name],
+          ...buildRequestBody(flow),
+          responses: buildResponses(flow, errorCodes),
+        };
+
+        // Add request/response schemas
+        const reqSchema = buildInputSchema(flow);
+        if (reqSchema) {
+          const schemaName = `${capitalize(flow.flow.id.replace(/-/g, ''))}Request`;
+          spec.components.schemas[schemaName] = reqSchema;
+        }
+      }
+    } catch { /* domain has no flows */ }
+  }
+
+  return (await import('yaml')).stringify(spec);
+}
+
+function buildInputSchema(flow: any): any | null {
+  const inputNode = (flow.nodes ?? []).find((n: any) => n.type === 'input');
+  if (!inputNode?.spec?.fields) return null;
+
+  const properties: Record<string, any> = {};
+  const required: string[] = [];
+
+  for (const [name, field] of Object.entries(inputNode.spec.fields)) {
+    const f = field as any;
+    properties[name] = { type: mapType(f.type) };
+    if (f.format) properties[name].format = f.format;
+    if (f.min_length) properties[name].minLength = f.min_length;
+    if (f.max_length) properties[name].maxLength = f.max_length;
+    if (f.required) required.push(name);
+  }
+
+  return { type: 'object', required, properties };
+}
+
+function buildRequestBody(flow: any): any {
+  const inputNode = (flow.nodes ?? []).find((n: any) => n.type === 'input');
+  if (!inputNode) return {};
+  return {
+    requestBody: {
+      required: true,
+      content: { 'application/json': { schema: buildInputSchema(flow) } },
+    },
+  };
+}
+
+function buildResponses(flow: any, errorCodes: any): Record<string, any> {
+  const responses: Record<string, any> = {};
+
+  // Success responses from terminal nodes
+  for (const node of flow.nodes ?? []) {
+    if (node.type === 'terminal' && node.spec?.status) {
+      const status = String(node.spec.status);
+      responses[status] = {
+        description: node.spec.body?.message ?? 'Success',
+      };
+    }
+  }
+
+  // Error responses from error codes used in the flow
+  const usedCodes = extractFlowErrorCodes(flow);
+  for (const code of usedCodes) {
+    const errorDef = findErrorDef(code, errorCodes);
+    if (errorDef) {
+      const status = String(errorDef.http_status);
+      if (!responses[status]) {
+        responses[status] = { description: errorDef.message ?? code };
+      }
+    }
+  }
+
+  return responses;
+}
+
+function extractFlowErrorCodes(flow: any): string[] {
+  const codes: string[] = [];
+  const str = JSON.stringify(flow);
+  const matches = str.matchAll(/"error_code"\s*:\s*"(\w+)"/g);
+  for (const m of matches) codes.push(m[1]);
+  return [...new Set(codes)];
+}
+
+function findErrorDef(code: string, errorCodes: any): any {
+  for (const category of Object.values(errorCodes)) {
+    if (typeof category === 'object' && (category as any)[code]) {
+      return (category as any)[code];
+    }
+  }
+  return null;
+}
+
+function schemaToOpenAPI(schema: any): any {
+  const properties: Record<string, any> = {};
+  for (const [name, field] of Object.entries(schema.fields ?? schema.properties ?? {})) {
+    properties[name] = { type: mapType((field as any).type) };
+  }
+  return { type: 'object', properties };
+}
+
+function mapType(t: string): string {
+  const map: Record<string, string> = { string: 'string', int: 'integer', integer: 'integer', float: 'number', boolean: 'boolean', date: 'string', datetime: 'string', uuid: 'string' };
+  return map[t] ?? 'string';
+}
+
+function capitalize(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1); }
+```
+
+**File: `src/utils/cicd-generator.ts`**
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+
+/**
+ * Generate GitHub Actions CI/CD pipeline from architecture.yaml and system.yaml.
+ */
+export async function generateCICD(projectPath: string): Promise<string> {
+  const yaml = await import('yaml');
+  const systemRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/system.yaml` });
+  const system = yaml.parse(systemRaw);
+
+  let arch: any = {};
+  try {
+    const archRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/architecture.yaml` });
+    arch = yaml.parse(archRaw);
+  } catch { /* use defaults */ }
+
+  const techStack = system.system?.tech_stack ?? {};
+  const lang = techStack.language ?? 'python';
+  const langVersion = techStack.language_version ?? '3.11';
+  const db = techStack.database;
+  const cache = techStack.cache;
+
+  const testing = arch.testing ?? {};
+  const security = arch.cross_cutting?.security ?? {};
+
+  let pipeline: any = {
+    name: 'CI',
+    on: {
+      push: { branches: ['main', 'develop'] },
+      pull_request: { branches: ['main'] },
+    },
+    jobs: {
+      test: {
+        'runs-on': 'ubuntu-latest',
+        services: {},
+        steps: [
+          { uses: 'actions/checkout@v4' },
+        ],
+      },
+    },
+  };
+
+  const steps = pipeline.jobs.test.steps;
+
+  // Add database service
+  if (db === 'postgresql') {
+    pipeline.jobs.test.services.postgres = {
+      image: 'postgres:15',
+      env: { POSTGRES_USER: 'test', POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'test' },
+      ports: ['5432:5432'],
+      options: '--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5',
+    };
+  }
+
+  // Add cache service
+  if (cache === 'redis') {
+    pipeline.jobs.test.services.redis = {
+      image: 'redis:7',
+      ports: ['6379:6379'],
+    };
+  }
+
+  // Language setup
+  if (lang === 'python') {
+    steps.push({
+      name: `Set up Python ${langVersion}`,
+      uses: 'actions/setup-python@v5',
+      with: { 'python-version': langVersion },
+    });
+    steps.push({ name: 'Install dependencies', run: 'pip install -e ".[dev]"' });
+  } else if (lang === 'typescript' || lang === 'javascript') {
+    steps.push({
+      name: `Set up Node ${langVersion}`,
+      uses: 'actions/setup-node@v4',
+      with: { 'node-version': langVersion },
+    });
+    steps.push({ name: 'Install dependencies', run: 'npm ci' });
+  }
+
+  // Migration step
+  if (arch.database?.migrations) {
+    steps.push({ name: 'Run migrations', run: arch.database.migrations.command ?? 'alembic upgrade head' });
+  }
+
+  // Lint
+  const lintCmd = testing.commands?.lint ?? (lang === 'python' ? 'ruff check .' : 'npm run lint');
+  steps.push({ name: 'Lint', run: lintCmd });
+
+  // Type check
+  const typeCmd = testing.commands?.typecheck ?? (lang === 'python' ? 'mypy src/' : 'npx tsc --noEmit');
+  steps.push({ name: 'Type check', run: typeCmd });
+
+  // Test
+  const testCmd = testing.commands?.test ?? (lang === 'python' ? 'pytest --tb=short -q' : 'npm test');
+  steps.push({ name: 'Test', run: testCmd });
+
+  // Dependency scanning
+  if (security.dependency_scanning?.ci_step) {
+    const scanTool = security.dependency_scanning.tool ?? 'safety';
+    steps.push({ name: 'Dependency scan', run: scanTool === 'safety' ? 'pip install safety && safety check' : 'npm audit' });
+  }
+
+  // Spec-code sync check
+  steps.push({
+    name: 'Spec-code sync check',
+    run: lang === 'python'
+      ? `python -c "\nimport yaml, hashlib, sys\nmapping = yaml.safe_load(open('.ddd/mapping.yaml'))\nstale = [fid for fid, m in mapping.get('flows', {}).items() if hashlib.sha256(open(m['spec'], 'rb').read()).hexdigest() != m['spec_hash']]\nif stale: print(f'Stale: {stale}'); sys.exit(1)\nprint('All in sync')\n"`
+      : 'node -e "/* spec sync check */"',
+  });
+
+  return yaml.stringify(pipeline);
+}
+```
+
+**File: `src/utils/dockerfile-generator.ts`**
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+
+/**
+ * Generate Dockerfile and docker-compose.yaml from architecture.yaml deployment config.
+ */
+export async function generateDockerfile(projectPath: string): Promise<string> {
+  const yaml = await import('yaml');
+  const systemRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/system.yaml` });
+  const system = yaml.parse(systemRaw);
+
+  let arch: any = {};
+  try {
+    const archRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/architecture.yaml` });
+    arch = yaml.parse(archRaw);
+  } catch { /* defaults */ }
+
+  const techStack = system.system?.tech_stack ?? {};
+  const deployment = arch.deployment?.docker ?? {};
+  const health = arch.cross_cutting?.observability?.health ?? {};
+  const lang = techStack.language ?? 'python';
+  const langVersion = techStack.language_version ?? '3.11';
+  const port = deployment.port ?? 8000;
+  const multiStage = deployment.multi_stage ?? true;
+  const baseImage = deployment.base_image ?? `${lang}:${langVersion}-slim`;
+  const healthPath = health.liveness?.path ?? '/health/live';
+
+  if (lang === 'python') {
+    const framework = techStack.framework ?? 'fastapi';
+    const startCmd = framework === 'fastapi'
+      ? `uvicorn src.main:app --host 0.0.0.0 --port ${port}`
+      : `python -m src.main`;
+
+    if (multiStage) {
+      return `# Generated by DDD Tool
+FROM ${baseImage} AS builder
+WORKDIR /app
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
+
+FROM ${baseImage}
+WORKDIR /app
+COPY --from=builder /usr/local/lib/python${langVersion}/site-packages /usr/local/lib/python${langVersion}/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY src/ src/
+COPY alembic/ alembic/
+COPY alembic.ini .
+EXPOSE ${port}
+HEALTHCHECK --interval=30s --timeout=5s CMD curl -f http://localhost:${port}${healthPath} || exit 1
+CMD ["${startCmd.split(' ')[0]}", ${startCmd.split(' ').slice(1).map(a => `"${a}"`).join(', ')}]
+`;
+    }
+  }
+
+  // Fallback generic Dockerfile
+  return `# Generated by DDD Tool
+FROM ${baseImage}
+WORKDIR /app
+COPY . .
+EXPOSE ${port}
+CMD ["start"]
+`;
+}
+
+export async function generateDockerCompose(projectPath: string): Promise<string> {
+  const yaml = await import('yaml');
+  const systemRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/system.yaml` });
+  const system = yaml.parse(systemRaw);
+
+  let arch: any = {};
+  try {
+    const archRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/architecture.yaml` });
+    arch = yaml.parse(archRaw);
+  } catch { /* defaults */ }
+
+  const techStack = system.system?.tech_stack ?? {};
+  const port = arch.deployment?.docker?.port ?? 8000;
+
+  const services: any = {
+    app: {
+      build: '.',
+      ports: [`${port}:${port}`],
+      env_file: '.env',
+      depends_on: [],
+    },
+  };
+
+  if (techStack.database === 'postgresql') {
+    services.postgres = {
+      image: 'postgres:15',
+      volumes: ['pgdata:/var/lib/postgresql/data'],
+      environment: { POSTGRES_DB: system.system?.name ?? 'app', POSTGRES_USER: 'app', POSTGRES_PASSWORD: '${DB_PASSWORD}' },
+      ports: ['5432:5432'],
+    };
+    services.app.depends_on.push('postgres');
+  }
+
+  if (techStack.cache === 'redis') {
+    services.redis = { image: 'redis:7-alpine', ports: ['6379:6379'] };
+    services.app.depends_on.push('redis');
+  }
+
+  const compose: any = { version: '3.8', services };
+  if (techStack.database === 'postgresql') {
+    compose.volumes = { pgdata: {} };
+  }
+
+  return yaml.stringify(compose);
+}
+```
+
+**File: `src/utils/migration-tracker.ts`**
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+import type { SchemaMapping, SchemaChange } from '../types/production';
+
+/**
+ * Track schema hashes and detect changes for migration generation.
+ */
+export async function checkSchemaChanges(projectPath: string): Promise<SchemaChange[]> {
+  const yaml = await import('yaml');
+  const changes: SchemaChange[] = [];
+
+  // Load existing schema mappings
+  let mappings: Record<string, SchemaMapping> = {};
+  try {
+    const raw = await invoke<string>('read_file', { path: `${projectPath}/.ddd/mapping.yaml` });
+    const parsed = yaml.parse(raw);
+    mappings = parsed.schemas ?? {};
+  } catch { /* no mapping file */ }
+
+  // Scan all schemas
+  let schemaFiles: string[] = [];
+  try {
+    schemaFiles = await invoke<string[]>('list_files', { dir: `${projectPath}/specs/schemas`, pattern: '*.yaml' });
+  } catch { return []; }
+
+  for (const file of schemaFiles) {
+    const schemaName = file.replace('.yaml', '').replace('_base', 'Base');
+    const specPath = `${projectPath}/specs/schemas/${file}`;
+    const currentHash = await invoke<string>('hash_file', { path: specPath });
+    const stored = mappings[schemaName];
+
+    if (stored && stored.spec_hash !== currentHash) {
+      // Schema changed — compute diff
+      const cachedPath = `${projectPath}/.ddd/cache/schemas-at-migration/${file}`;
+      let diffChanges: string[] = [];
+      try {
+        diffChanges = await invoke<string[]>('diff_specs', { cachedPath, currentPath: specPath });
+      } catch {
+        diffChanges = ['Schema file changed (no cached version for diff)'];
+      }
+
+      changes.push({
+        schemaName,
+        changes: diffChanges,
+        currentHash,
+        storedHash: stored.spec_hash,
+      });
+    } else if (!stored) {
+      // New schema — not yet tracked
+      changes.push({
+        schemaName,
+        changes: ['New schema (not yet in database)'],
+        currentHash,
+        storedHash: '',
+      });
+    }
+  }
+
+  return changes;
+}
+
+/**
+ * Build a migration prompt for Claude Code based on detected schema changes.
+ */
+export function buildMigrationPrompt(changes: SchemaChange[], ormTool: string): string {
+  let prompt = `## Database Migration Required\n\n`;
+  prompt += `The following schema changes need database migrations:\n\n`;
+
+  for (const change of changes) {
+    prompt += `### ${change.schemaName}\n`;
+    for (const c of change.changes) {
+      prompt += `- ${c}\n`;
+    }
+    prompt += `\n`;
+  }
+
+  prompt += `Generate a database migration using ${ormTool}:\n`;
+  prompt += `- Migration should be reversible (include downgrade)\n`;
+  prompt += `- Do NOT modify existing data destructively\n`;
+  prompt += `- Add new columns as nullable or with defaults\n`;
+  prompt += `- For renamed columns, create new + copy + drop old\n`;
+
+  return prompt;
+}
+
+/**
+ * Cache a schema at migration time for future diffing.
+ */
+export async function cacheSchemaAtMigration(projectPath: string, schemaFile: string): Promise<void> {
+  const cacheDir = `${projectPath}/.ddd/cache/schemas-at-migration`;
+  await invoke('ensure_dir', { path: cacheDir });
+  await invoke('copy_file', {
+    src: `${projectPath}/specs/schemas/${schemaFile}`,
+    dst: `${cacheDir}/${schemaFile}`,
+  });
+}
+```
+
+**Update `src/stores/implementation-store.ts` — add artifact generation methods:**
+
+Add to the ImplementationState interface:
+```typescript
+  // Production infrastructure generation
+  generateOpenAPI: (projectPath: string) => Promise<void>;
+  generateCICD: (projectPath: string) => Promise<void>;
+  generateDockerfiles: (projectPath: string) => Promise<void>;
+  checkSchemaChanges: (projectPath: string) => Promise<SchemaChange[]>;
+  schemaChanges: SchemaChange[];
+```
+
+Add to the store implementation:
+```typescript
+  schemaChanges: [],
+
+  generateOpenAPI: async (projectPath) => {
+    const { generateOpenAPI } = await import('../utils/openapi-generator');
+    const content = await generateOpenAPI(projectPath);
+    await invoke('write_file', { path: `${projectPath}/openapi.yaml`, content });
+  },
+
+  generateCICD: async (projectPath) => {
+    const { generateCICD } = await import('../utils/cicd-generator');
+    const content = await generateCICD(projectPath);
+    await invoke('ensure_dir', { path: `${projectPath}/.github/workflows` });
+    await invoke('write_file', { path: `${projectPath}/.github/workflows/ci.yaml`, content });
+  },
+
+  generateDockerfiles: async (projectPath) => {
+    const { generateDockerfile, generateDockerCompose } = await import('../utils/dockerfile-generator');
+    const dockerfile = await generateDockerfile(projectPath);
+    const compose = await generateDockerCompose(projectPath);
+    await invoke('write_file', { path: `${projectPath}/Dockerfile`, content: dockerfile });
+    await invoke('write_file', { path: `${projectPath}/docker-compose.yaml`, content: compose });
+  },
+
+  checkSchemaChanges: async (projectPath) => {
+    const { checkSchemaChanges } = await import('../utils/migration-tracker');
+    const changes = await checkSchemaChanges(projectPath);
+    set({ schemaChanges: changes });
+    return changes;
+  },
+```
+
+**Update prompt builder — add migration prompt when schemas changed:**
+
+In `runClaudeCode` post-implementation, after test runner:
+```typescript
+  // Check for schema changes needing migrations
+  const schemaChanges = await get().checkSchemaChanges(projectPath);
+  if (schemaChanges.length > 0) {
+    const { buildMigrationPrompt } = await import('../utils/migration-tracker');
+    const ormTool = config?.claude_code?.orm_migration_tool ?? 'alembic';
+    const migrationPrompt = buildMigrationPrompt(schemaChanges, ormTool);
+    // Show migration prompt in panel for user to review and run
+    set({
+      currentPrompt: {
+        flowId: `schema-migration`,
+        domain: '_schemas',
+        content: migrationPrompt,
+        specFiles: schemaChanges.map(c => `specs/schemas/${c.schemaName}.yaml`),
+        mode: 'update',
+        agentFlow: false,
+        editedByUser: false,
+      },
+      panelState: 'prompt_ready',
+    });
+  }
+```
+
+**Sidebar addition — Production tab:**
+
+Add to `src/components/Sidebar/`:
+```tsx
+// ProductionTab.tsx — shows generated artifacts status
+import { useImplementationStore } from '../../stores/implementation-store';
+import { useProjectStore } from '../../stores/project-store';
+import { FileCode, GitBranch, Container, Database, Shield, Activity, RefreshCw } from 'lucide-react';
+
+export function ProductionTab() {
+  const { generateOpenAPI, generateCICD, generateDockerfiles, checkSchemaChanges, schemaChanges } = useImplementationStore();
+  const { projectPath } = useProjectStore();
+
+  const artifacts = [
+    { icon: FileCode, label: 'OpenAPI Spec', file: 'openapi.yaml', generate: () => generateOpenAPI(projectPath) },
+    { icon: GitBranch, label: 'CI/CD Pipeline', file: '.github/workflows/ci.yaml', generate: () => generateCICD(projectPath) },
+    { icon: Container, label: 'Dockerfile', file: 'Dockerfile', generate: () => generateDockerfiles(projectPath) },
+  ];
+
+  return (
+    <div className="p-3 space-y-3">
+      <div className="text-xs font-medium text-gray-500 uppercase">Generated Artifacts</div>
+
+      {artifacts.map(({ icon: Icon, label, generate }) => (
+        <div key={label} className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2 text-gray-700">
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+          </div>
+          <button
+            onClick={generate}
+            className="flex items-center gap-1 text-blue-500 hover:text-blue-700"
+          >
+            <RefreshCw className="w-3 h-3" /> Generate
+          </button>
+        </div>
+      ))}
+
+      {schemaChanges.length > 0 && (
+        <div className="border border-amber-200 rounded p-2 bg-amber-50">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-700 mb-1">
+            <Database className="w-3.5 h-3.5" />
+            Schema changes detected
+          </div>
+          {schemaChanges.map(c => (
+            <div key={c.schemaName} className="text-[10px] text-amber-600">
+              {c.schemaName}: {c.changes.length} change(s)
+            </div>
+          ))}
+          <button
+            onClick={() => checkSchemaChanges(projectPath)}
+            className="text-[10px] text-amber-700 underline mt-1"
+          >
+            Generate migration prompt
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+---
+
 ## Phase 4: Testing the MVP
 
 ### Manual Test Checklist
@@ -8282,6 +8976,57 @@ nanoid = "0.4"
     - [ ] Sync score stored in .ddd/mapping.yaml per flow
     - [ ] Sync score recalculates when items are resolved
 
+35. **OpenAPI Generation**
+    - [ ] "Generate" button produces openapi.yaml from all HTTP flow specs
+    - [ ] Paths derived from trigger method + path
+    - [ ] Request schemas derived from input node fields (type, format, min/max)
+    - [ ] Response schemas derived from terminal node body shapes
+    - [ ] Error responses mapped from error codes used in each flow
+    - [ ] Schema $ref links to specs/schemas definitions
+    - [ ] Non-HTTP flows (event, scheduled) excluded
+    - [ ] Regenerates when flows with HTTP triggers change
+
+36. **CI/CD Pipeline Generation**
+    - [ ] "Generate" button produces .github/workflows/ci.yaml
+    - [ ] Language setup step matches system.yaml tech stack
+    - [ ] Service containers generated for database/cache (postgres, redis)
+    - [ ] Lint, type-check, test commands from architecture.yaml
+    - [ ] Dependency scanning step if security.dependency_scanning.ci_step enabled
+    - [ ] Spec-code sync validation step always included
+    - [ ] Regenerates when tech stack or commands change
+
+37. **Database Migration Tracking**
+    - [ ] Schema hashes tracked in .ddd/mapping.yaml under schemas key
+    - [ ] Schema changes detected on project load and schema save
+    - [ ] Changed schemas show warning in Production tab
+    - [ ] "Generate migration prompt" builds Claude Code prompt with change details
+    - [ ] Migration prompt specifies ORM tool from architecture.yaml
+    - [ ] Schemas cached at migration time in .ddd/cache/schemas-at-migration/
+
+38. **Observability Config**
+    - [ ] Logging config in architecture.yaml generates structured logging setup
+    - [ ] Tracing config generates OpenTelemetry initialization
+    - [ ] Metrics config generates Prometheus endpoint and custom metric definitions
+    - [ ] Health check config generates readiness and liveness endpoints
+    - [ ] Sensitive fields redacted in log output
+    - [ ] Per-flow node logging auto-generated (node.start, node.complete with duration)
+
+39. **Security Layer**
+    - [ ] Rate limiting config generates middleware with per-endpoint overrides
+    - [ ] CORS config generates middleware
+    - [ ] Security headers config generates middleware
+    - [ ] Input sanitization config generates middleware (trim, strip HTML, max length)
+    - [ ] Audit logging config generates audit model and middleware
+    - [ ] Dependency scanning added to CI pipeline when configured
+
+40. **Deployment Generation**
+    - [ ] "Generate" button produces Dockerfile from deployment config
+    - [ ] Multi-stage build when configured
+    - [ ] Health check from observability config
+    - [ ] docker-compose.yaml generated with all services (app, database, cache)
+    - [ ] Kubernetes manifests generated when k8s enabled (deployment, service, ingress, hpa)
+    - [ ] Regenerates when deployment or tech stack config changes
+
 ---
 
 ## Phase 5: Key Implementation Notes
@@ -8369,6 +9114,13 @@ nanoid = "0.4"
 33. **Don't** auto-accept reconciliation items without user review — always show the report and let the user decide accept/remove/ignore
 34. **Do** store accepted deviations in mapping.yaml so they don't re-trigger drift warnings on every reconciliation
 35. **Don't** run reconciliation with the full codebase — only send the files listed in the flow's mapping, not the entire project
+36. **Do** regenerate OpenAPI when any HTTP flow trigger changes — stale API docs are worse than no docs
+37. **Don't** include non-HTTP flows (event, scheduled) in OpenAPI — they don't have REST endpoints
+38. **Do** always include the spec-code sync check step in CI — it catches drift before deployment
+39. **Do** cache schemas at migration time (like flow specs) so future diffs are accurate
+40. **Don't** generate destructive migrations (DROP COLUMN) without user confirmation — add nullable columns, copy data, then drop
+41. **Do** include sensitive_fields in logging config — accidentally logging passwords or tokens is a security incident
+42. **Do** generate observability infrastructure before business logic — logging and health checks should exist from the first flow implementation
 
 ---
 
@@ -8535,6 +9287,26 @@ npm run tauri dev
 - [ ] Sync score persisted in .ddd/mapping.yaml per flow
 - [ ] Accepted deviations tracked and excluded from future reconciliation warnings
 - [ ] Reconciliation available manually via "Reconcile" button in Implementation Panel
+
+### Production Infrastructure
+- [ ] OpenAPI generator produces valid OpenAPI 3.0 YAML from HTTP flow specs
+- [ ] OpenAPI includes all paths, request/response schemas, error responses
+- [ ] CI/CD generator produces GitHub Actions workflow with correct language setup and services
+- [ ] CI pipeline includes spec-code sync validation step
+- [ ] CI pipeline includes dependency scanning when security config enables it
+- [ ] Schema migration tracker detects schema hash changes
+- [ ] Schema migration prompt includes change details and ORM-specific instructions
+- [ ] Schemas cached at migration time for future diffing
+- [ ] Observability section in architecture.yaml generates logging/tracing/metrics/health infrastructure
+- [ ] Logging includes sensitive field redaction
+- [ ] Per-flow node logging added automatically (node.start, node.complete)
+- [ ] Security section in architecture.yaml generates rate limiting, CORS, headers, sanitization, audit middleware
+- [ ] Audit logging tracks configured events with actor, resource, and changes
+- [ ] Dockerfile generated with multi-stage build and health check
+- [ ] docker-compose generated with all service dependencies
+- [ ] Kubernetes manifests generated when enabled (deployment, service, ingress, HPA)
+- [ ] Production tab in Sidebar shows all generated artifacts with Generate buttons
+- [ ] Schema changes notification shown in Production tab
 
 ---
 

@@ -4640,7 +4640,576 @@ Public marketplace:
 
 ---
 
-# Part 10: Technical Decisions
+# Part 10: Production Infrastructure
+
+The DDD Tool auto-generates production infrastructure artifacts from the specs that already exist. Flow specs contain endpoint definitions, schemas, error codes, and validation rules — enough to derive OpenAPI docs, CI pipelines, migration scripts, observability config, security middleware, and deployment manifests. These artifacts regenerate when specs change, keeping infrastructure in sync with design.
+
+## 10.1 OpenAPI Generation
+
+Flow specs already define: HTTP method, path, request fields with types and validation, response shapes, and error codes with HTTP status mappings. The DDD Tool maps these directly to an OpenAPI 3.0 specification.
+
+**What gets generated:**
+
+```yaml
+# Generated: openapi.yaml (project root)
+openapi: 3.0.3
+info:
+  title: Obligo API
+  version: 1.0.0
+  description: Cyber Liability Operating System
+
+paths:
+  /auth/register:                    # ← from trigger.path
+    post:                            # ← from trigger.method
+      operationId: user-register     # ← from flow.id
+      summary: User Registration     # ← from flow.name
+      tags: [api]                    # ← from flow.domain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegisterRequest'
+      responses:
+        '201':                       # ← from terminal node status
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRegisterResponse'
+        '409':                       # ← from errors.yaml DUPLICATE_ENTRY
+          description: A user with this email already exists
+        '422':                       # ← from errors.yaml VALIDATION_ERROR
+          description: Validation error
+
+components:
+  schemas:
+    UserRegisterRequest:             # ← from input node fields
+      type: object
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+    UserRegisterResponse:            # ← from terminal node body
+      type: object
+      properties:
+        message:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+```
+
+**Generation rules:**
+- One path entry per flow with an HTTP trigger
+- Request schemas derived from `input` node fields (type, required, min/max/format)
+- Response schemas derived from `terminal` node body shapes
+- Error responses derived from error codes used in the flow, mapped via `errors.yaml`
+- Schema `$ref` links to `specs/schemas/*.yaml` definitions
+- Non-HTTP flows (event, scheduled) are excluded from OpenAPI
+- Agent flows with HTTP triggers are included (the trigger is still HTTP)
+
+**When it regenerates:**
+- Any flow with HTTP trigger is created, modified, or deleted
+- Error codes change in `errors.yaml`
+- Schemas change in `specs/schemas/`
+
+**Preview in DDD Tool:** A read-only "API Docs" tab in the Sidebar shows the generated OpenAPI rendered as endpoint documentation. Clicking an endpoint navigates to that flow on the canvas.
+
+---
+
+## 10.2 CI/CD Pipeline Generation
+
+Architecture.yaml defines the tech stack, test commands, lint commands, and deployment config. The DDD Tool generates a GitHub Actions workflow (with templates for GitLab CI and others).
+
+**What gets generated:**
+
+```yaml
+# Generated: .github/workflows/ci.yaml
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:                                  # ← from specs/config.yaml (non-secret defaults)
+  DATABASE_URL: postgresql://test:test@localhost:5432/test
+  REDIS_URL: redis://localhost:6379
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:                         # ← from architecture.yaml database/cache config
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports: [6379:6379]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11     # ← from system.yaml language + version
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run migrations
+        run: alembic upgrade head     # ← from architecture.yaml migration command
+
+      - name: Lint
+        run: ruff check .             # ← from architecture.yaml lint command
+
+      - name: Type check
+        run: mypy src/                # ← from architecture.yaml typecheck command
+
+      - name: Test
+        run: pytest --tb=short -q     # ← from architecture.yaml test command
+
+      - name: Spec-code sync check    # ← DDD-specific validation
+        run: |
+          python -c "
+          import yaml, hashlib, sys
+          mapping = yaml.safe_load(open('.ddd/mapping.yaml'))
+          stale = []
+          for flow_id, m in mapping.get('flows', {}).items():
+              current = hashlib.sha256(open(m['spec'], 'rb').read()).hexdigest()
+              if current != m['spec_hash']:
+                  stale.append(flow_id)
+          if stale:
+              print(f'Stale flows: {stale}')
+              sys.exit(1)
+          print('All flows in sync')
+          "
+```
+
+**Generation rules:**
+- Language setup step derived from `system.yaml` tech stack
+- Service containers derived from `architecture.yaml` database/cache/queue config
+- Commands derived from `architecture.yaml` testing/linting sections
+- Spec-code sync validation step always included (checks mapping hashes)
+- Deployment steps added if `architecture.yaml` has deployment config
+
+**When it regenerates:**
+- Tech stack changes in `system.yaml`
+- Test/lint commands change in `architecture.yaml`
+- Database/cache config changes in `architecture.yaml`
+
+---
+
+## 10.3 Database Migration Tracking
+
+Schema specs (`specs/schemas/*.yaml`) define data models. When a schema changes, the DDD Tool detects it (like flow stale detection) and includes migration instructions in the Claude Code prompt.
+
+**How it works:**
+
+Schema hashes tracked in `.ddd/mapping.yaml`:
+
+```yaml
+schemas:
+  User:
+    spec: specs/schemas/user.yaml
+    spec_hash: def456...
+    migration_history:
+      - version: "001"
+        description: "Initial User table"
+        generated_at: "2025-01-10T10:00:00Z"
+      - version: "002"
+        description: "Add email_verified column"
+        generated_at: "2025-01-20T14:00:00Z"
+    last_synced_at: "2025-01-20T14:00:00Z"
+```
+
+**Schema change detection:**
+
+On Level 2 (Domain Map), when a schema used by flows in this domain has changed:
+
+```
+┌──────────────────────────────────┐
+│ ⚠ Schema changed: User           │
+│ • Added: email_verified (boolean) │
+│ • Changed: name max_length 100→200│
+│                                    │
+│ [Generate migration]  [Dismiss]   │
+└──────────────────────────────────┘
+```
+
+**Migration prompt addition:** When "Generate migration" is clicked, the Prompt Builder adds:
+
+```markdown
+## Migration Required
+
+The User schema has changed since last migration:
+- Added field: email_verified (boolean, default: false)
+- Changed field: name max_length from 100 to 200
+
+Generate a database migration:
+- Use alembic (from architecture.yaml ORM config)
+- Migration should be reversible (include downgrade)
+- Do NOT modify existing data — add columns as nullable or with defaults
+```
+
+**Schema diff:** Like flow stale detection, schema specs are cached at implementation time. The DDD Tool computes a human-readable diff showing added/removed/changed fields.
+
+---
+
+## 10.4 Observability
+
+A new `cross_cutting.observability` section in `architecture.yaml` defines the logging, tracing, metrics, and health check strategy. Claude Code reads this and generates the observability infrastructure alongside business logic.
+
+**Architecture.yaml section:**
+
+```yaml
+cross_cutting:
+  observability:
+    logging:
+      format: json                    # json | text
+      level: info                     # debug | info | warn | error
+      fields:                         # Fields included in every log line
+        - timestamp
+        - level
+        - message
+        - request_id
+        - user_id
+        - domain
+        - flow_id
+        - duration_ms
+      sensitive_fields:               # Fields to redact in logs
+        - password
+        - token
+        - api_key
+        - credit_card
+      library: structlog              # structlog | loguru | stdlib (Python)
+
+    tracing:
+      enabled: true
+      provider: opentelemetry
+      exporter: otlp                  # otlp | jaeger | zipkin
+      endpoint: ${OTEL_EXPORTER_ENDPOINT}
+      sample_rate: 1.0                # 1.0 = trace everything, 0.1 = 10%
+      propagation: w3c                # w3c | b3
+      auto_instrument:                # Auto-instrument these libraries
+        - fastapi
+        - sqlalchemy
+        - httpx
+        - redis
+
+    metrics:
+      enabled: true
+      provider: prometheus
+      endpoint: /metrics              # Prometheus scrape endpoint
+      custom_metrics:                 # Business metrics defined per flow
+        - name: user_registrations_total
+          type: counter
+          description: Total user registrations
+          labels: [status, domain]
+        - name: document_processing_duration_seconds
+          type: histogram
+          description: Time to process a document
+          labels: [document_type]
+          buckets: [0.1, 0.5, 1, 5, 10, 30, 60]
+
+    health:
+      readiness:
+        path: /health/ready
+        checks:                       # What to check for readiness
+          - database
+          - redis
+          - migrations
+      liveness:
+        path: /health/live
+        checks:
+          - process
+```
+
+**What Claude Code generates from this:**
+- A `src/shared/logging.py` module with structured logging configured per the spec
+- Middleware that adds `request_id`, `user_id`, `domain`, `flow_id` to every log line
+- Sensitive field redaction in log output
+- OpenTelemetry setup with auto-instrumentation for configured libraries
+- Trace context propagation through async calls
+- Prometheus metrics endpoint and custom metric definitions
+- Health check endpoints (readiness checks database/cache, liveness checks process)
+- Per-flow logging: every flow node logs entry/exit with duration
+
+**Flow-level observability:** Each flow node gets automatic logging:
+
+```python
+# Auto-generated for every node in a flow
+logger.info("node.start", node_id="validate_input", flow_id="user-register")
+# ... node logic ...
+logger.info("node.complete", node_id="validate_input", flow_id="user-register", duration_ms=12)
+```
+
+This means flow execution is traceable through logs without the developer adding any logging code.
+
+**Custom metrics per flow:** Flow specs can optionally define metrics:
+
+```yaml
+# In a flow spec
+flow:
+  id: user-register
+  metrics:
+    - name: user_registrations_total
+      on: terminal          # Increment when terminal node reached
+      labels:
+        status: "$.response.status"
+```
+
+**DDD Tool preview:** The Memory Panel shows an "Observability" section listing configured metrics and their current definitions, so the LLM Design Assistant knows about them when suggesting flow changes.
+
+---
+
+## 10.5 Security Layer
+
+A new `cross_cutting.security` section in `architecture.yaml` defines security policies that Claude Code applies to every generated endpoint.
+
+**Architecture.yaml section:**
+
+```yaml
+cross_cutting:
+  security:
+    rate_limiting:
+      enabled: true
+      default: 100/minute             # Default for all endpoints
+      per_endpoint:                    # Override per flow
+        user-register: 5/minute       # Tight limit on registration
+        user-login: 10/minute         # Tight limit on login
+      storage: redis                   # Where to store counters
+      response:
+        status: 429
+        body:
+          error_code: RATE_LIMITED
+          message: "Too many requests. Try again later."
+
+    cors:
+      allowed_origins:
+        - ${CORS_ORIGIN}              # From environment
+      allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
+      allowed_headers: [Authorization, Content-Type]
+      max_age: 3600
+
+    headers:
+      strict_transport_security: "max-age=31536000; includeSubDomains"
+      content_security_policy: "default-src 'self'"
+      x_content_type_options: nosniff
+      x_frame_options: DENY
+      x_xss_protection: "1; mode=block"
+
+    input_sanitization:
+      trim_strings: true              # Trim whitespace from all string inputs
+      strip_html: true                # Remove HTML tags from string inputs
+      max_string_length: 10000        # Reject strings longer than this
+
+    audit_logging:
+      enabled: true
+      events:                         # What actions to audit
+        - user.login
+        - user.login_failed
+        - user.register
+        - user.password_reset
+        - data.create
+        - data.update
+        - data.delete
+        - admin.*
+      storage: database               # database | file | external
+      retention_days: 90
+      fields:
+        - timestamp
+        - actor_id
+        - actor_ip
+        - action
+        - resource_type
+        - resource_id
+        - changes                     # What changed (for updates)
+        - result                      # success | failure
+
+    dependency_scanning:
+      enabled: true
+      tool: safety                    # safety (Python) | npm audit (Node) | cargo audit (Rust)
+      ci_step: true                   # Add to CI pipeline
+      fail_on: high                   # Fail CI on: critical | high | medium | low
+```
+
+**What Claude Code generates from this:**
+- Rate limiting middleware using configured storage and limits
+- Per-endpoint rate limit overrides matching flow IDs
+- CORS middleware with configured origins/methods/headers
+- Security headers middleware
+- Input sanitization middleware (trim, strip HTML, max length)
+- Audit log model (database table or file logger)
+- Audit log middleware that records configured events
+- Dependency scanning step in CI pipeline
+
+**Flow-level security:** Flow specs can reference security policies:
+
+```yaml
+# In a flow spec
+trigger:
+  type: http
+  method: POST
+  path: /auth/register
+  security:
+    rate_limit: 5/minute             # Override default
+    auth: false                       # Public endpoint (no JWT required)
+    audit: user.register              # Audit event name
+```
+
+**DDD Tool integration:** When designing a flow, the Inline Assist knows about the security config. Right-click a trigger node → **✨ Add security** suggests appropriate rate limiting, auth requirements, and audit events based on the flow type and the architecture.yaml security section.
+
+---
+
+## 10.6 Deployment / Infrastructure as Code
+
+A new `deployment` section in `architecture.yaml` defines how the application is deployed. The DDD Tool generates Dockerfile, docker-compose, and optionally Kubernetes manifests.
+
+**Architecture.yaml section:**
+
+```yaml
+deployment:
+  docker:
+    base_image: python:3.11-slim     # From system.yaml language + version
+    port: 8000
+    env_file: .env
+    multi_stage: true                 # Use multi-stage build for smaller image
+    healthcheck:
+      path: /health/live             # From observability.health config
+      interval: 30s
+      timeout: 5s
+
+  compose:
+    services:
+      app:
+        build: .
+        ports: ["8000:8000"]
+        depends_on: [postgres, redis]
+      postgres:
+        image: postgres:15
+        volumes: ["pgdata:/var/lib/postgresql/data"]
+        environment:
+          POSTGRES_DB: obligo
+          POSTGRES_USER: obligo
+          POSTGRES_PASSWORD: ${DB_PASSWORD}
+      redis:
+        image: redis:7-alpine
+
+  kubernetes:
+    enabled: true
+    namespace: obligo
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    ingress:
+      host: api.obligo.com
+      tls: true
+      cert_issuer: letsencrypt
+    hpa:
+      min_replicas: 2
+      max_replicas: 10
+      target_cpu: 70
+```
+
+**What gets generated:**
+
+```dockerfile
+# Generated: Dockerfile
+FROM python:3.11-slim AS builder
+WORKDIR /app
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
+
+FROM python:3.11-slim
+WORKDIR /app
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY src/ src/
+COPY alembic/ alembic/
+COPY alembic.ini .
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s CMD curl -f http://localhost:8000/health/live || exit 1
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Plus `docker-compose.yaml`, and if Kubernetes is enabled: `k8s/deployment.yaml`, `k8s/service.yaml`, `k8s/ingress.yaml`, `k8s/hpa.yaml`.
+
+**When they regenerate:**
+- Tech stack changes in `system.yaml`
+- Deployment config changes in `architecture.yaml`
+- New services added (database, cache, queue)
+- Health check config changes in observability section
+
+**DDD Tool integration:** A "Deployment" tab in the Sidebar shows the generated artifacts with a preview. The user can click "Regenerate" after changing architecture.yaml.
+
+---
+
+## Architecture.yaml Cross-Cutting Summary
+
+After adding observability, security, and deployment, the `cross_cutting` section of architecture.yaml controls:
+
+```yaml
+cross_cutting:
+  auth:            # JWT/sessions, RBAC roles (existing)
+  multi_tenancy:   # Tenant isolation (existing)
+  observability:   # Logging, tracing, metrics, health (new)
+  security:        # Rate limiting, CORS, headers, audit, scanning (new)
+
+deployment:        # Docker, compose, Kubernetes (new)
+```
+
+Claude Code reads all of these sections and generates the corresponding infrastructure code. The DDD Tool tracks these as generated artifacts (like flows) with hash-based change detection.
+
+---
+
+## Generated Artifacts Summary
+
+| Artifact | Generated From | File(s) | Regenerates When |
+|----------|---------------|---------|-----------------|
+| OpenAPI spec | Flow specs + errors.yaml + schemas | `openapi.yaml` | Flow HTTP triggers change |
+| CI/CD pipeline | architecture.yaml + system.yaml | `.github/workflows/ci.yaml` | Tech stack or commands change |
+| Database migrations | Schema specs | `alembic/versions/*.py` | Schema fields change |
+| Logging config | architecture.yaml observability | `src/shared/logging.py` | Logging config changes |
+| Tracing setup | architecture.yaml observability | `src/shared/tracing.py` | Tracing config changes |
+| Metrics definitions | architecture.yaml + flow specs | `src/shared/metrics.py` | Metrics config changes |
+| Health checks | architecture.yaml observability | `src/shared/health.py` | Health config changes |
+| Rate limiting | architecture.yaml security | `src/shared/rate_limit.py` | Rate limit rules change |
+| Security middleware | architecture.yaml security | `src/shared/security.py` | Security config changes |
+| Audit logging | architecture.yaml security | `src/shared/audit.py` | Audit config changes |
+| Dockerfile | architecture.yaml deployment | `Dockerfile` | Deployment config changes |
+| Docker Compose | architecture.yaml deployment | `docker-compose.yaml` | Services change |
+| K8s manifests | architecture.yaml deployment | `k8s/*.yaml` | K8s config changes |
+| CLAUDE.md | All specs + implementation status | `CLAUDE.md` | Any spec or status changes |
+
+---
+
+# Part 11: Technical Decisions
 
 ## Decision: Git over MCP for Sync
 
@@ -4689,7 +5258,7 @@ Public marketplace:
 
 ---
 
-# Part 11: Open Questions / Future Work
+# Part 12: Open Questions / Future Work
 
 ## MVP Scope (v0.1)
 **Included:**
@@ -4717,6 +5286,12 @@ Public marketplace:
 - **CLAUDE.md Auto-Generation:** Maintains CLAUDE.md with project structure, spec files, domains, rules (preserves custom section)
 - **Implementation Queue:** Batch processing of pending/stale flows with sequential Claude Code invocation
 - **Reverse Drift Detection:** Implementation Report parsing, LLM-powered code→spec reconciliation, sync scores, accept/remove/ignore actions
+- **OpenAPI Generation:** Auto-generate OpenAPI 3.0 spec from HTTP flow triggers, input/output schemas, error codes
+- **CI/CD Pipeline Generation:** Auto-generate GitHub Actions workflow from architecture.yaml (test, lint, type-check, spec-code sync check)
+- **Database Migration Tracking:** Schema hash tracking, change detection, migration prompt generation for Claude Code
+- **Observability Config:** Structured logging, OpenTelemetry tracing, Prometheus metrics, health checks — all defined in architecture.yaml and auto-generated
+- **Security Layer:** Rate limiting, CORS, security headers, input sanitization, audit logging — defined in architecture.yaml and auto-generated
+- **Deployment/IaC Generation:** Auto-generate Dockerfile, docker-compose, Kubernetes manifests from architecture.yaml deployment config
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage
@@ -4744,7 +5319,7 @@ Public marketplace:
 
 ---
 
-# Part 12: Key Files Reference
+# Part 13: Key Files Reference
 
 ## Project Structure (Complete)
 
