@@ -12,6 +12,10 @@ You are building **DDD (Diagram-Driven Development)** — a desktop app for visu
 
 ### What MVP Includes
 - Desktop app (Tauri + React)
+- **Multi-level canvas** (System Map → Domain Map → Flow Sheet)
+- **Breadcrumb navigation** between sheet levels
+- **Auto-generated** System Map (L1) and Domain Map (L2) from specs
+- **Portal nodes** for cross-domain navigation
 - Canvas with 5 node types (trigger, input, process, decision, terminal)
 - Right panel for editing node specs
 - Save/load YAML files
@@ -71,8 +75,19 @@ ddd-tool/
 │   ├── main.tsx
 │   ├── App.tsx
 │   ├── components/
+│   │   ├── Navigation/
+│   │   │   ├── Breadcrumb.tsx       # Breadcrumb bar (System > domain > flow)
+│   │   │   └── SheetTabs.tsx        # Optional tab bar for open sheets
+│   │   ├── SystemMap/
+│   │   │   ├── SystemMap.tsx        # Level 1: domain blocks + event arrows
+│   │   │   ├── DomainBlock.tsx      # Clickable domain block with flow count
+│   │   │   └── EventArrow.tsx       # Arrow between domains (shared with DomainMap)
+│   │   ├── DomainMap/
+│   │   │   ├── DomainMap.tsx        # Level 2: flow blocks + portals
+│   │   │   ├── FlowBlock.tsx        # Clickable flow block
+│   │   │   └── PortalNode.tsx       # Cross-domain navigation node
 │   │   ├── Canvas/
-│   │   │   ├── Canvas.tsx
+│   │   │   ├── Canvas.tsx           # Level 3: flow sheet (node editing)
 │   │   │   ├── Node.tsx
 │   │   │   ├── Connection.tsx
 │   │   │   └── nodes/
@@ -80,7 +95,8 @@ ddd-tool/
 │   │   │       ├── InputNode.tsx
 │   │   │       ├── ProcessNode.tsx
 │   │   │       ├── DecisionNode.tsx
-│   │   │       └── TerminalNode.tsx
+│   │   │       ├── TerminalNode.tsx
+│   │   │       └── SubFlowNode.tsx  # Navigable link to another flow sheet
 │   │   ├── SpecPanel/
 │   │   │   ├── SpecPanel.tsx
 │   │   │   ├── TriggerSpec.tsx
@@ -98,17 +114,21 @@ ddd-tool/
 │   │       ├── Select.tsx
 │   │       └── Modal.tsx
 │   ├── stores/
-│   │   ├── flow-store.ts      # Current flow state
-│   │   ├── project-store.ts   # Project/file state
+│   │   ├── sheet-store.ts     # Active sheet, navigation history, breadcrumbs
+│   │   ├── flow-store.ts      # Current flow state (Level 3)
+│   │   ├── project-store.ts   # Project/file state, domain configs
 │   │   ├── ui-store.ts        # UI state (selection, panels)
 │   │   └── git-store.ts       # Git state
 │   ├── types/
+│   │   ├── sheet.ts           # Sheet levels, navigation, breadcrumb types
+│   │   ├── domain.ts          # Domain config, event wiring, portal types
 │   │   ├── flow.ts
 │   │   ├── node.ts
 │   │   ├── spec.ts
 │   │   └── project.ts
 │   ├── utils/
 │   │   ├── yaml.ts
+│   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
 │   │   ├── mermaid.ts
 │   │   └── validation.ts
 │   └── styles/
@@ -127,6 +147,111 @@ ddd-tool/
 ### Week 1: Core Infrastructure
 
 #### Day 1-2: Types and Stores
+
+**File: `src/types/sheet.ts`**
+```typescript
+export type SheetLevel = 'system' | 'domain' | 'flow';
+
+export interface SheetLocation {
+  level: SheetLevel;
+  domainId?: string;   // Set for domain and flow levels
+  flowId?: string;     // Set for flow level only
+}
+
+export interface BreadcrumbSegment {
+  label: string;
+  location: SheetLocation;
+}
+
+export interface NavigationHistory {
+  past: SheetLocation[];
+  current: SheetLocation;
+}
+```
+
+**File: `src/types/domain.ts`**
+```typescript
+import { Position } from './node';
+
+export interface DomainConfig {
+  name: string;
+  description: string;
+  flows: DomainFlowEntry[];
+  publishes_events: EventWiring[];
+  consumes_events: EventWiring[];
+  layout: DomainLayout;
+}
+
+export interface DomainFlowEntry {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface EventWiring {
+  event: string;
+  from_flow?: string;       // For publishes_events
+  handled_by_flow?: string; // For consumes_events
+  description: string;
+}
+
+export interface DomainLayout {
+  flows: Record<string, Position>;
+  portals: Record<string, Position>;
+}
+
+export interface SystemLayout {
+  domains: Record<string, Position>;
+}
+
+// Derived data for rendering System Map (Level 1)
+export interface SystemMapData {
+  domains: SystemMapDomain[];
+  eventArrows: SystemMapArrow[];
+}
+
+export interface SystemMapDomain {
+  id: string;
+  name: string;
+  description: string;
+  flowCount: number;
+  position: Position;
+}
+
+export interface SystemMapArrow {
+  sourceDomain: string;
+  targetDomain: string;
+  events: string[];       // Event names flowing on this arrow
+}
+
+// Derived data for rendering Domain Map (Level 2)
+export interface DomainMapData {
+  domainId: string;
+  flows: DomainMapFlow[];
+  portals: DomainMapPortal[];
+  eventArrows: DomainMapArrow[];
+}
+
+export interface DomainMapFlow {
+  id: string;
+  name: string;
+  description: string;
+  position: Position;
+}
+
+export interface DomainMapPortal {
+  targetDomain: string;
+  position: Position;
+  events: string[];       // Events flowing through this portal
+}
+
+export interface DomainMapArrow {
+  sourceFlowId: string;
+  targetFlowId?: string;     // Within same domain
+  targetPortal?: string;     // To another domain
+  event: string;
+}
+```
 
 **File: `src/types/node.ts`**
 ```typescript
@@ -463,7 +588,480 @@ function getDefaultSpec(type: NodeType): any {
 }
 ```
 
-#### Day 3-4: Canvas Component
+**File: `src/stores/sheet-store.ts`**
+```typescript
+import { create } from 'zustand';
+import { SheetLevel, SheetLocation, BreadcrumbSegment } from '../types/sheet';
+
+interface SheetStore {
+  // State
+  current: SheetLocation;
+  history: SheetLocation[];   // Back-navigation stack
+
+  // Navigation
+  navigateTo: (location: SheetLocation) => void;
+  navigateUp: () => void;
+  navigateToSystem: () => void;
+  navigateToDomain: (domainId: string) => void;
+  navigateToFlow: (domainId: string, flowId: string) => void;
+
+  // Breadcrumbs (derived)
+  getBreadcrumbs: () => BreadcrumbSegment[];
+}
+
+export const useSheetStore = create<SheetStore>((set, get) => ({
+  current: { level: 'system' },
+  history: [],
+
+  navigateTo: (location) => {
+    const { current } = get();
+    set({
+      current: location,
+      history: [...get().history, current],
+    });
+  },
+
+  navigateUp: () => {
+    const { current, history } = get();
+    if (current.level === 'system') return;
+
+    if (current.level === 'flow') {
+      // Go up to domain
+      set({
+        current: { level: 'domain', domainId: current.domainId },
+        history: [...history, current],
+      });
+    } else if (current.level === 'domain') {
+      // Go up to system
+      set({
+        current: { level: 'system' },
+        history: [...history, current],
+      });
+    }
+  },
+
+  navigateToSystem: () => {
+    get().navigateTo({ level: 'system' });
+  },
+
+  navigateToDomain: (domainId) => {
+    get().navigateTo({ level: 'domain', domainId });
+  },
+
+  navigateToFlow: (domainId, flowId) => {
+    get().navigateTo({ level: 'flow', domainId, flowId });
+  },
+
+  getBreadcrumbs: () => {
+    const { current } = get();
+    const crumbs: BreadcrumbSegment[] = [
+      { label: 'System', location: { level: 'system' } },
+    ];
+
+    if (current.level === 'domain' || current.level === 'flow') {
+      crumbs.push({
+        label: current.domainId!,
+        location: { level: 'domain', domainId: current.domainId },
+      });
+    }
+
+    if (current.level === 'flow') {
+      crumbs.push({
+        label: current.flowId!,
+        location: { level: 'flow', domainId: current.domainId, flowId: current.flowId },
+      });
+    }
+
+    return crumbs;
+  },
+}));
+```
+
+#### Day 3-4: Multi-Level Canvas & Navigation
+
+**File: `src/App.tsx`** (sheet-level routing)
+```typescript
+import React from 'react';
+import { useSheetStore } from './stores/sheet-store';
+import { SystemMap } from './components/SystemMap/SystemMap';
+import { DomainMap } from './components/DomainMap/DomainMap';
+import { Canvas } from './components/Canvas/Canvas';
+import { Breadcrumb } from './components/Navigation/Breadcrumb';
+import { SpecPanel } from './components/SpecPanel/SpecPanel';
+import { Sidebar } from './components/Sidebar/Sidebar';
+
+export function App() {
+  const { current } = useSheetStore();
+
+  return (
+    <div className="app-layout">
+      <Breadcrumb />
+
+      <div className="main-area">
+        <Sidebar />
+
+        <div className="canvas-area">
+          {current.level === 'system' && <SystemMap />}
+          {current.level === 'domain' && <DomainMap domainId={current.domainId!} />}
+          {current.level === 'flow' && <Canvas domainId={current.domainId!} flowId={current.flowId!} />}
+        </div>
+
+        {current.level === 'flow' && <SpecPanel />}
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/Navigation/Breadcrumb.tsx`**
+```typescript
+import React from 'react';
+import { useSheetStore } from '../../stores/sheet-store';
+import { ChevronRight } from 'lucide-react';
+
+export function Breadcrumb() {
+  const { current, getBreadcrumbs, navigateTo, navigateUp } = useSheetStore();
+  const crumbs = getBreadcrumbs();
+
+  // Keyboard: Backspace/Esc to go up
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Backspace' || e.key === 'Escape') {
+        // Only if not focused on an input/textarea
+        if (
+          document.activeElement?.tagName !== 'INPUT' &&
+          document.activeElement?.tagName !== 'TEXTAREA'
+        ) {
+          e.preventDefault();
+          navigateUp();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigateUp]);
+
+  return (
+    <nav className="breadcrumb-bar flex items-center gap-1 px-4 py-2 bg-gray-900 border-b border-gray-700 text-sm">
+      {crumbs.map((crumb, i) => {
+        const isLast = i === crumbs.length - 1;
+        return (
+          <React.Fragment key={i}>
+            {i > 0 && <ChevronRight size={14} className="text-gray-500" />}
+            <button
+              onClick={() => !isLast && navigateTo(crumb.location)}
+              className={`
+                px-2 py-1 rounded
+                ${isLast
+                  ? 'text-white font-medium cursor-default'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800 cursor-pointer'
+                }
+              `}
+              disabled={isLast}
+            >
+              {crumb.label}
+            </button>
+          </React.Fragment>
+        );
+      })}
+    </nav>
+  );
+}
+```
+
+**File: `src/components/SystemMap/SystemMap.tsx`**
+```typescript
+import React from 'react';
+import { useSheetStore } from '../../stores/sheet-store';
+import { useProjectStore } from '../../stores/project-store';
+import { DomainBlock } from './DomainBlock';
+import { EventArrow } from './EventArrow';
+import { SystemMapData } from '../../types/domain';
+import { buildSystemMapData } from '../../utils/domain-parser';
+
+export function SystemMap() {
+  const { navigateToDomain } = useSheetStore();
+  const { domainConfigs, systemLayout } = useProjectStore();
+
+  const mapData: SystemMapData = React.useMemo(
+    () => buildSystemMapData(domainConfigs, systemLayout),
+    [domainConfigs, systemLayout]
+  );
+
+  return (
+    <div className="system-map relative w-full h-full overflow-auto">
+      <svg className="absolute inset-0 w-full h-full pointer-events-none">
+        {mapData.eventArrows.map((arrow, i) => (
+          <EventArrow
+            key={`${arrow.sourceDomain}-${arrow.targetDomain}-${i}`}
+            sourcePos={mapData.domains.find(d => d.id === arrow.sourceDomain)!.position}
+            targetPos={mapData.domains.find(d => d.id === arrow.targetDomain)!.position}
+            events={arrow.events}
+          />
+        ))}
+      </svg>
+
+      {mapData.domains.map(domain => (
+        <DomainBlock
+          key={domain.id}
+          domain={domain}
+          onDoubleClick={() => navigateToDomain(domain.id)}
+        />
+      ))}
+    </div>
+  );
+}
+```
+
+**File: `src/components/SystemMap/DomainBlock.tsx`**
+```typescript
+import React from 'react';
+import { SystemMapDomain } from '../../types/domain';
+import { Layers } from 'lucide-react';
+
+interface DomainBlockProps {
+  domain: SystemMapDomain;
+  onDoubleClick: () => void;
+}
+
+export function DomainBlock({ domain, onDoubleClick }: DomainBlockProps) {
+  return (
+    <div
+      className="domain-block absolute cursor-pointer select-none"
+      style={{
+        left: domain.position.x,
+        top: domain.position.y,
+        transform: 'translate(-50%, -50%)',
+      }}
+      onDoubleClick={onDoubleClick}
+    >
+      <div className="bg-gray-800 border-2 border-blue-500 rounded-xl px-6 py-4 shadow-lg hover:border-blue-400 transition-colors min-w-[180px]">
+        <div className="flex items-center gap-2 mb-1">
+          <Layers size={18} className="text-blue-400" />
+          <span className="font-semibold text-white">{domain.name}</span>
+        </div>
+        <p className="text-gray-400 text-xs mb-2">{domain.description}</p>
+        <span className="text-xs text-gray-500">{domain.flowCount} flows</span>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/DomainMap/DomainMap.tsx`**
+```typescript
+import React from 'react';
+import { useSheetStore } from '../../stores/sheet-store';
+import { useProjectStore } from '../../stores/project-store';
+import { FlowBlock } from './FlowBlock';
+import { PortalNode } from './PortalNode';
+import { EventArrow } from '../SystemMap/EventArrow';
+import { DomainMapData } from '../../types/domain';
+import { buildDomainMapData } from '../../utils/domain-parser';
+
+interface DomainMapProps {
+  domainId: string;
+}
+
+export function DomainMap({ domainId }: DomainMapProps) {
+  const { navigateToFlow, navigateToDomain } = useSheetStore();
+  const { domainConfigs } = useProjectStore();
+
+  const domainConfig = domainConfigs[domainId];
+  const mapData: DomainMapData = React.useMemo(
+    () => buildDomainMapData(domainConfig, domainConfigs),
+    [domainConfig, domainConfigs]
+  );
+
+  return (
+    <div className="domain-map relative w-full h-full overflow-auto">
+      <svg className="absolute inset-0 w-full h-full pointer-events-none">
+        {mapData.eventArrows.map((arrow, i) => {
+          const sourcePos = mapData.flows.find(f => f.id === arrow.sourceFlowId)?.position;
+          const targetPos = arrow.targetFlowId
+            ? mapData.flows.find(f => f.id === arrow.targetFlowId)?.position
+            : mapData.portals.find(p => p.targetDomain === arrow.targetPortal)?.position;
+          if (!sourcePos || !targetPos) return null;
+          return (
+            <EventArrow
+              key={`${arrow.sourceFlowId}-${arrow.event}-${i}`}
+              sourcePos={sourcePos}
+              targetPos={targetPos}
+              events={[arrow.event]}
+            />
+          );
+        })}
+      </svg>
+
+      {mapData.flows.map(flow => (
+        <FlowBlock
+          key={flow.id}
+          flow={flow}
+          onDoubleClick={() => navigateToFlow(domainId, flow.id)}
+        />
+      ))}
+
+      {mapData.portals.map(portal => (
+        <PortalNode
+          key={portal.targetDomain}
+          portal={portal}
+          onDoubleClick={() => navigateToDomain(portal.targetDomain)}
+        />
+      ))}
+    </div>
+  );
+}
+```
+
+**File: `src/components/DomainMap/PortalNode.tsx`**
+```typescript
+import React from 'react';
+import { DomainMapPortal } from '../../types/domain';
+import { ExternalLink } from 'lucide-react';
+
+interface PortalNodeProps {
+  portal: DomainMapPortal;
+  onDoubleClick: () => void;
+}
+
+export function PortalNode({ portal, onDoubleClick }: PortalNodeProps) {
+  return (
+    <div
+      className="portal-node absolute cursor-pointer select-none"
+      style={{
+        left: portal.position.x,
+        top: portal.position.y,
+        transform: 'translate(-50%, -50%)',
+      }}
+      onDoubleClick={onDoubleClick}
+    >
+      <div className="bg-gray-900 border-2 border-dashed border-purple-500 rounded-lg px-4 py-3 shadow-lg hover:border-purple-400 transition-colors">
+        <div className="flex items-center gap-2">
+          <ExternalLink size={16} className="text-purple-400" />
+          <span className="font-medium text-purple-300">{portal.targetDomain}</span>
+        </div>
+        <p className="text-gray-500 text-xs mt-1">
+          {portal.events.join(', ')}
+        </p>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/utils/domain-parser.ts`**
+```typescript
+import { DomainConfig, SystemLayout, SystemMapData, SystemMapArrow, DomainMapData, DomainMapArrow, DomainMapPortal } from '../types/domain';
+
+/**
+ * Build Level 1 (System Map) data from domain configs.
+ * Derives inter-domain event arrows by matching publishes_events → consumes_events.
+ */
+export function buildSystemMapData(
+  domainConfigs: Record<string, DomainConfig>,
+  systemLayout: SystemLayout
+): SystemMapData {
+  const domains = Object.entries(domainConfigs).map(([id, config]) => ({
+    id,
+    name: config.name,
+    description: config.description,
+    flowCount: config.flows.length,
+    position: systemLayout.domains[id] || { x: 0, y: 0 },
+  }));
+
+  // Build event arrows: for each published event, find which domain consumes it
+  const arrowMap = new Map<string, string[]>(); // "source->target" → event names
+
+  for (const [sourceId, sourceConfig] of Object.entries(domainConfigs)) {
+    for (const pub of sourceConfig.publishes_events) {
+      for (const [targetId, targetConfig] of Object.entries(domainConfigs)) {
+        if (targetId === sourceId) continue;
+        const consumed = targetConfig.consumes_events.find(c => c.event === pub.event);
+        if (consumed) {
+          const key = `${sourceId}->${targetId}`;
+          const existing = arrowMap.get(key) || [];
+          existing.push(pub.event);
+          arrowMap.set(key, existing);
+        }
+      }
+    }
+  }
+
+  const eventArrows: SystemMapArrow[] = Array.from(arrowMap.entries()).map(([key, events]) => {
+    const [sourceDomain, targetDomain] = key.split('->');
+    return { sourceDomain, targetDomain, events };
+  });
+
+  return { domains, eventArrows };
+}
+
+/**
+ * Build Level 2 (Domain Map) data from a single domain config.
+ * Shows flows, portals to other domains, and event arrows.
+ */
+export function buildDomainMapData(
+  domainConfig: DomainConfig,
+  allDomainConfigs: Record<string, DomainConfig>
+): DomainMapData {
+  const flows = domainConfig.flows.map(f => ({
+    id: f.id,
+    name: f.name,
+    description: f.description,
+    position: domainConfig.layout.flows[f.id] || { x: 0, y: 0 },
+  }));
+
+  // Build portals: other domains that consume our events or publish events we consume
+  const portalDomains = new Map<string, string[]>();
+
+  for (const pub of domainConfig.publishes_events) {
+    for (const [targetId, targetConfig] of Object.entries(allDomainConfigs)) {
+      if (targetId === domainConfig.name) continue;
+      const consumed = targetConfig.consumes_events.find(c => c.event === pub.event);
+      if (consumed) {
+        const events = portalDomains.get(targetId) || [];
+        events.push(pub.event);
+        portalDomains.set(targetId, events);
+      }
+    }
+  }
+
+  const portals: DomainMapPortal[] = Array.from(portalDomains.entries()).map(([targetDomain, events]) => ({
+    targetDomain,
+    position: domainConfig.layout.portals[targetDomain] || { x: 0, y: 0 },
+    events,
+  }));
+
+  // Build arrows from flows to portals (or other flows in same domain)
+  const eventArrows: DomainMapArrow[] = domainConfig.publishes_events.map(pub => {
+    // Does this event go to a portal or another flow in the same domain?
+    const internalConsumer = domainConfig.consumes_events.find(c => c.event === pub.event);
+    if (internalConsumer) {
+      return {
+        sourceFlowId: pub.from_flow!,
+        targetFlowId: internalConsumer.handled_by_flow,
+        event: pub.event,
+      };
+    }
+    // Goes to a portal
+    const targetDomain = Array.from(portalDomains.entries())
+      .find(([_, events]) => events.includes(pub.event))?.[0];
+    return {
+      sourceFlowId: pub.from_flow!,
+      targetPortal: targetDomain,
+      event: pub.event,
+    };
+  });
+
+  return {
+    domainId: domainConfig.name,
+    flows,
+    portals,
+    eventArrows,
+  };
+}
+```
+
+#### Day 5-6: Flow Canvas (Level 3)
 
 **File: `src/components/Canvas/Canvas.tsx`**
 ```typescript
@@ -1211,40 +1809,69 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 
 ### Manual Test Checklist
 
-1. **Create new flow**
+1. **System Map (Level 1)**
+   - [ ] App starts on System Map
+   - [ ] All domains from system.yaml shown as blocks
+   - [ ] Flow count badge visible on each domain block
+   - [ ] Event arrows drawn between connected domains
+   - [ ] Domain blocks are draggable (positions persist)
+   - [ ] Double-click domain → navigates to Domain Map
+
+2. **Domain Map (Level 2)**
+   - [ ] Flow blocks shown for all flows in domain
+   - [ ] Portal nodes shown for cross-domain connections
+   - [ ] Event arrows connect flows to portals
+   - [ ] Double-click flow block → navigates to Flow Sheet
+   - [ ] Double-click portal → navigates to target domain's map
+   - [ ] Flow blocks are draggable (positions persist)
+
+3. **Breadcrumb Navigation**
+   - [ ] Breadcrumb shows "System" on Level 1
+   - [ ] Breadcrumb shows "System > domain" on Level 2
+   - [ ] Breadcrumb shows "System > domain > flow" on Level 3
+   - [ ] Click earlier breadcrumb segment → navigates to that level
+   - [ ] Backspace/Esc → navigates one level up
+   - [ ] Backspace on System Map → no-op
+
+4. **Create new flow**
    - [ ] Click "New Flow" button
    - [ ] Enter name and domain
    - [ ] Canvas shows trigger + terminal nodes
 
-2. **Add nodes**
+5. **Add nodes**
    - [ ] Drag node from palette to canvas
    - [ ] Node appears at drop position
    - [ ] Node is selectable
 
-3. **Edit node spec**
+6. **Edit node spec**
    - [ ] Select node
    - [ ] Spec panel shows correct form
    - [ ] Changes update node data
 
-4. **Connect nodes**
+7. **Connect nodes**
    - [ ] Drag from output to input
    - [ ] Connection line appears
    - [ ] Connection saved in flow data
 
-5. **Save flow**
+8. **Sub-flow navigation**
+   - [ ] Double-click sub-flow node → navigates to referenced flow sheet
+   - [ ] Breadcrumb updates to show new flow
+   - [ ] Backspace returns to previous flow
+
+9. **Save flow**
    - [ ] Click Save
    - [ ] YAML file created
    - [ ] File content matches flow
 
-6. **Load flow**
-   - [ ] Open existing YAML
-   - [ ] Canvas shows correct nodes
-   - [ ] Spec panel shows correct data
+10. **Load flow**
+    - [ ] Open existing YAML
+    - [ ] Canvas shows correct nodes
+    - [ ] Spec panel shows correct data
 
-7. **Git status**
-   - [ ] Panel shows current branch
-   - [ ] Changed files listed
-   - [ ] Stage/commit works
+11. **Git status**
+    - [ ] Panel shows current branch
+    - [ ] Changed files listed
+    - [ ] Stage/commit works
 
 ---
 
@@ -1254,7 +1881,10 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 
 1. **State Management**
    - Use Zustand for all state
-   - Keep stores focused (flow, project, ui, git)
+   - Keep stores focused (sheet, flow, project, ui, git)
+   - `sheet-store` owns navigation state (current level, breadcrumbs, history)
+   - `project-store` owns domain configs parsed from domain.yaml files
+   - `flow-store` owns current flow being edited (Level 3 only)
    - Never mutate state directly
 
 2. **Tauri Commands**
@@ -1277,9 +1907,12 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 1. **Don't** build code generation in MVP
 2. **Don't** build MCP server
 3. **Don't** build reverse engineering
-4. **Do** focus on visual editing → YAML output
-5. **Do** make sure Git integration works
-6. **Do** validate YAML output format
+4. **Don't** make L1/L2 editable beyond repositioning — they are derived views
+5. **Do** focus on visual editing → YAML output
+6. **Do** build multi-level navigation early — it's the core UX
+7. **Do** parse domain.yaml files on project load to populate L1/L2
+8. **Do** make sure Git integration works
+9. **Do** validate YAML output format
 
 ---
 
@@ -1308,15 +1941,32 @@ npm run tauri dev
 
 ## Success Criteria for MVP
 
+### Multi-Level Navigation
+- [ ] System Map (L1) shows all domains as blocks with flow counts
+- [ ] Event arrows render between connected domains on System Map
+- [ ] Double-click domain block → drills into Domain Map (L2)
+- [ ] Domain Map shows flow blocks and portal nodes
+- [ ] Double-click flow block → drills into Flow Sheet (L3)
+- [ ] Double-click portal node → jumps to target domain's map
+- [ ] Breadcrumb bar shows current location (System > domain > flow)
+- [ ] Clicking breadcrumb segment navigates to that level
+- [ ] Backspace/Esc navigates one level up
+- [ ] Block positions on L1/L2 are draggable and persisted
+
+### Flow Sheet (L3)
 - [ ] Can create a new flow with name and domain
 - [ ] Can add 5 node types to canvas
 - [ ] Can edit node specs in right panel
 - [ ] Can connect nodes together
+- [ ] Sub-flow nodes navigate to referenced flow sheet on double-click
+
+### File Operations
 - [ ] Can save flow as YAML file
 - [ ] Can load flow from YAML file
 - [ ] Can see Git status
 - [ ] Can stage and commit changes
 - [ ] YAML format matches specification
+- [ ] Domain configs (domain.yaml) are parsed to populate L1/L2
 
 ---
 
@@ -1327,8 +1977,9 @@ npm run tauri dev
 3. Add Mermaid export
 4. Add undo/redo
 5. Add keyboard shortcuts
-6. Add expert agents
-7. Add templates/library
+6. Add minimap showing position within hierarchy
+7. Add expert agents
+8. Add templates/library
 
 ---
 

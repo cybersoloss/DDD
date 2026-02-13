@@ -209,7 +209,102 @@ Code must use these exact messages. Validation checks this.
 └────────────────────────────────────────────────────────────────┘
 ```
 
+## Multi-Level Canvas Architecture
+
+A single canvas cannot scale to show an entire application. DDD uses a **3-level hierarchical sheet system** where each level provides the right abstraction for its scope. Users drill down by double-clicking, and navigate back via a breadcrumb bar.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ LEVEL 1: SYSTEM MAP                                              │
+│ One sheet. Auto-generated from system.yaml + domain.yaml files.  │
+│ Shows domains as blocks, event arrows between them.              │
+│                                                                   │
+│   ┌──────────┐  contract.ingested  ┌──────────┐                 │
+│   │ ingestion│────────────────────▶│ analysis │                 │
+│   │ (4 flows)│                     │ (3 flows)│                 │
+│   └──────────┘                     └──────────┘                 │
+│        │                                │                        │
+│        │ webhook.received               │ analysis.completed    │
+│        ▼                                ▼                        │
+│   ┌──────────┐                    ┌──────────┐                  │
+│   │   api    │                    │notification│                 │
+│   │ (5 flows)│                    │ (2 flows) │                 │
+│   └──────────┘                    └──────────┘                  │
+│                                                                   │
+│   Double-click domain → Level 2                                  │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ LEVEL 2: DOMAIN MAP                                              │
+│ One sheet per domain. Shows flows as blocks within a domain,     │
+│ event connections between flows, and portal nodes to other       │
+│ domains.                                                         │
+│                                                                   │
+│   DOMAIN: ingestion                                              │
+│                                                                   │
+│   ┌──────────────┐     ┌───────────────┐                        │
+│   │ webhook-     │────▶│ scheduled-    │                        │
+│   │ ingestion    │event│ sync          │                        │
+│   └──────────────┘     └───────────────┘                        │
+│          │                                                       │
+│          │ event: contract.ingested                              │
+│          ▼                                                       │
+│   ╔══════════════╗  ← portal to analysis domain                 │
+│   ║ ➜ analysis   ║                                               │
+│   ╚══════════════╝                                               │
+│                                                                   │
+│   Double-click flow → Level 3                                    │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ LEVEL 3: FLOW SHEET                                              │
+│ One sheet per flow. Shows individual nodes and connections.      │
+│ This is the existing detailed canvas.                            │
+│                                                                   │
+│   FLOW: webhook-ingestion                                        │
+│                                                                   │
+│   ⬡ trigger → ◇ validate_sig → ▱ validate_input                │
+│                                    │                             │
+│                              ⌗ store → ▭➤ event                 │
+│                                           │                      │
+│                                      ⬭ return                   │
+│                                                                   │
+│   Sub-flow nodes (▢) link to other flow sheets                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Navigation Model
+
+| Action | Result |
+|--------|--------|
+| Double-click domain block (Level 1) | Drill into that domain's sheet (Level 2) |
+| Double-click flow block (Level 2) | Drill into that flow's sheet (Level 3) |
+| Double-click sub-flow node (Level 3) | Jump to referenced flow's sheet (Level 3) |
+| Double-click portal node (Level 2) | Jump to target domain's sheet (Level 2) |
+| Click breadcrumb segment | Navigate back to that level |
+| Keyboard: Backspace / Esc | Navigate one level up |
+
+**Breadcrumb bar** always visible at top of canvas:
+
+```
+System > ingestion > webhook-ingestion
+  ^          ^              ^
+  L1         L2             L3 (current)
+```
+
+### Sheet Data Sources
+
+| Level | Auto-generated from | Editable? |
+|-------|---------------------|-----------|
+| System Map (L1) | `system.yaml` domains + `domain.yaml` event wiring | Layout only (positions) |
+| Domain Map (L2) | `domain.yaml` flow list + inter-flow events | Layout only (positions) |
+| Flow Sheet (L3) | `flows/*.yaml` | Fully editable (nodes, connections, specs) |
+
+Levels 1 and 2 are **derived views** — their content comes from spec files. Users can reposition blocks but cannot add/remove domains or flows from these views (that happens via spec files or by creating new flow sheets). Level 3 is the primary editing surface.
+
 ## Node Types
+
+### Flow-Level Nodes (Level 3)
 
 | Type | Icon | Purpose |
 |------|------|---------|
@@ -223,12 +318,27 @@ Code must use these exact messages. Validation checks this.
 | Terminal | ⬭ | Response, end flow |
 | Loop | ↺ | Iteration |
 | Parallel | ═ | Concurrent execution |
-| Sub-flow | ▢ | Call another flow |
+| Sub-flow | ▢ | Call another flow (navigable link) |
+
+### Navigation Nodes (Level 2)
+
+| Type | Icon | Purpose |
+|------|------|---------|
+| Flow Block | ▣ | Represents a flow within a domain (double-click to drill in) |
+| Portal | ╔══╗ | Link to another domain (double-click to jump) |
+| Event Arrow | ──▶ | Async event connection between flows or to portals |
+
+### Domain Blocks (Level 1)
+
+| Type | Icon | Purpose |
+|------|------|---------|
+| Domain Block | ▣ | Represents a domain (shows flow count, double-click to drill in) |
+| Event Arrow | ──▶ | Async event connection between domains |
 
 ## Connection Types Between Flows
 
-1. **Event-Based (Async):** Publisher/subscriber via event bus
-2. **Direct Call (Sync):** Sub-flow node with input/output mapping
+1. **Event-Based (Async):** Publisher/subscriber via event bus — shown as arrows on Level 1 and Level 2
+2. **Direct Call (Sync):** Sub-flow node with input/output mapping — shown as ▢ node on Level 3
 3. **Shared Data Models:** `$ref:/schemas/SchemaName` references
 4. **API Contracts:** Internal APIs connecting domains
 
@@ -241,6 +351,7 @@ Code must use these exact messages. Validation checks this.
 ```
 specs/
 ├── system.yaml              # Project identity, tech stack, domains
+├── system-layout.yaml       # System Map (L1) block positions (managed by DDD Tool)
 ├── architecture.yaml        # Project structure, infrastructure, cross-cutting
 ├── config.yaml              # Environment variables, secrets schema
 ├── schemas/
@@ -256,7 +367,7 @@ specs/
 │   └── api.yaml             # API conventions (pagination, filtering)
 └── domains/
     └── {domain}/
-        ├── domain.yaml
+        ├── domain.yaml      # Domain info, flows, events, L2 layout positions
         └── flows/
             └── {flow}.yaml
 ```
@@ -290,7 +401,104 @@ system:
       description: Email, Slack, and webhook notifications
 ```
 
-## Architecture Config (NEW - Critical for Code Generation)
+## Domain Config (Drives Level 1 & Level 2 Sheets)
+
+Each domain has a `domain.yaml` that declares its flows, published events, and consumed events. This data drives the System Map (Level 1) and Domain Map (Level 2) visualizations automatically.
+
+```yaml
+# specs/domains/ingestion/domain.yaml
+domain:
+  name: ingestion
+  description: Webhook and data ingestion from CLM providers
+
+  flows:
+    - id: webhook-ingestion
+      name: Webhook Ingestion
+      description: Receives and processes webhooks from CLM providers
+    - id: scheduled-sync
+      name: Scheduled Sync
+      description: Periodic sync with CLM provider APIs
+
+  # Events this domain publishes (outgoing arrows on System Map)
+  publishes_events:
+    - event: contract.ingested
+      from_flow: webhook-ingestion
+      description: Fired when a new contract is received via webhook
+    - event: contract.synced
+      from_flow: scheduled-sync
+      description: Fired when a contract is synced from provider API
+
+  # Events this domain consumes (incoming arrows on System Map)
+  consumes_events:
+    - event: analysis.completed
+      handled_by_flow: webhook-ingestion  # or a dedicated flow
+      description: Notification that analysis of an ingested contract is done
+
+  # Layout positions for Domain Map (Level 2) — managed by DDD Tool
+  layout:
+    flows:
+      webhook-ingestion: { x: 100, y: 100 }
+      scheduled-sync: { x: 400, y: 100 }
+    portals:
+      analysis: { x: 100, y: 300 }
+```
+
+```yaml
+# specs/domains/analysis/domain.yaml
+domain:
+  name: analysis
+  description: Contract analysis and obligation extraction
+
+  flows:
+    - id: extract-obligations
+      name: Extract Obligations
+      description: Extract obligations from contract using LLM
+    - id: classify-risk
+      name: Classify Risk
+      description: Classify risk level of extracted obligations
+
+  publishes_events:
+    - event: analysis.completed
+      from_flow: extract-obligations
+      description: Fired when obligation extraction is complete
+    - event: risk.classified
+      from_flow: classify-risk
+      description: Fired when risk classification is complete
+
+  consumes_events:
+    - event: contract.ingested
+      handled_by_flow: extract-obligations
+      description: Triggers obligation extraction for new contracts
+    - event: contract.synced
+      handled_by_flow: extract-obligations
+      description: Triggers obligation extraction for synced contracts
+
+  layout:
+    flows:
+      extract-obligations: { x: 100, y: 100 }
+      classify-risk: { x: 400, y: 100 }
+    portals:
+      ingestion: { x: 100, y: -100 }
+      notification: { x: 400, y: 300 }
+```
+
+### System Map Layout
+
+The System Map (Level 1) also stores layout positions for domain blocks:
+
+```yaml
+# specs/system-layout.yaml (managed by DDD Tool)
+system_layout:
+  domains:
+    ingestion: { x: 100, y: 200 }
+    analysis: { x: 400, y: 200 }
+    api: { x: 100, y: 500 }
+    notification: { x: 400, y: 500 }
+```
+
+This file is auto-managed by the DDD Tool when users reposition domain blocks on the System Map canvas.
+
+## Architecture Config (Critical for Code Generation)
 
 ```yaml
 # specs/architecture.yaml
@@ -1192,11 +1400,34 @@ The validator checks:
 
 ## Key Components
 
-### Visual Editor
-- Canvas with drag-drop nodes
-- Zoom/pan navigation
+### Multi-Level Canvas (see Part 4: Multi-Level Canvas Architecture)
+- **3-level hierarchy:** System Map → Domain Map → Flow Sheet
+- **Breadcrumb navigation** at top of canvas
+- **Double-click** to drill into domains, flows, sub-flows
+- **Portal nodes** for cross-domain navigation
+- Levels 1-2 are auto-derived from specs; Level 3 is the editing surface
+- Zoom/pan navigation on all levels
 - Undo/redo history
-- Keyboard shortcuts
+- Keyboard shortcuts (Backspace/Esc to navigate up)
+
+### Visual Editor (Level 3 — Flow Sheet)
+- Canvas with drag-drop nodes
+- 11 node types (trigger, input, process, decision, service call, data store, event, terminal, loop, parallel, sub-flow)
+- Connection drawing between nodes
+- Sub-flow nodes are navigable links to other flow sheets
+
+### System Map (Level 1 — Read-Only)
+- Auto-generated from `system.yaml` + `domain.yaml` files
+- Domain blocks with flow count badges
+- Event arrows between domains (from `publishes_events`/`consumes_events`)
+- Repositionable blocks (positions saved to `system-layout.yaml`)
+
+### Domain Map (Level 2 — Read-Only)
+- Auto-generated from `domain.yaml` + flow files
+- Flow blocks within a domain
+- Inter-flow event connections
+- Portal nodes linking to other domains
+- Repositionable blocks (positions saved to `domain.yaml` layout section)
 
 ### Spec Panel
 - Right sidebar with type-specific fields
@@ -1204,6 +1435,7 @@ The validator checks:
 - Preset templates (username, email, password)
 - Contextual tooltips
 - Cmd+K command palette
+- Context-aware: shows domain info on Level 2, flow spec on Level 3
 
 ### Git Panel
 - Branch selector
@@ -1368,7 +1600,11 @@ Public marketplace:
 
 ## MVP Scope (v0.1)
 **Included:**
-- Canvas + 5 basic node types
+- Multi-level canvas (System Map → Domain Map → Flow Sheet)
+- Breadcrumb navigation between levels
+- Canvas + 5 basic node types (Level 3)
+- Auto-generated System Map and Domain Map (Levels 1-2)
+- Portal nodes for cross-domain navigation
 - Spec panel (basic fields)
 - YAML export
 - Mermaid preview
@@ -1415,6 +1651,7 @@ obligo/
 ├── specs/                    # ═══ ALL SPECS LIVE HERE ═══
 │   │
 │   ├── system.yaml           # Project identity, tech stack, domains
+│   ├── system-layout.yaml    # System Map (L1) positions (managed by DDD Tool)
 │   ├── architecture.yaml     # Structure, infrastructure, cross-cutting
 │   ├── config.yaml           # Environment variables schema
 │   │
@@ -1436,23 +1673,23 @@ obligo/
 │   │
 │   └── domains/
 │       ├── ingestion/
-│       │   ├── domain.yaml
+│       │   ├── domain.yaml      # Flows, events, L2 layout
 │       │   └── flows/
 │       │       ├── webhook-ingestion.yaml
 │       │       └── scheduled-sync.yaml
 │       ├── analysis/
-│       │   ├── domain.yaml
+│       │   ├── domain.yaml      # Flows, events, L2 layout
 │       │   └── flows/
 │       │       ├── extract-obligations.yaml
 │       │       └── classify-risk.yaml
 │       ├── api/
-│       │   ├── domain.yaml
+│       │   ├── domain.yaml      # Flows, events, L2 layout
 │       │   └── flows/
 │       │       ├── list-contracts.yaml
 │       │       ├── get-contract.yaml
 │       │       └── update-obligation.yaml
 │       └── notification/
-│           ├── domain.yaml
+│           ├── domain.yaml      # Flows, events, L2 layout
 │           └── flows/
 │               ├── send-email.yaml
 │               └── send-slack.yaml
