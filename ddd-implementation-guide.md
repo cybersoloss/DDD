@@ -64,6 +64,7 @@ ddd-tool/
 │       ├── commands/
 │       │   ├── mod.rs
 │       │   ├── file.rs        # File operations
+│       │   ├── entity.rs      # Domain/flow CRUD (create, rename, delete, move, duplicate)
 │       │   ├── git.rs         # Git operations
 │       │   ├── project.rs     # Project management
 │       │   ├── llm.rs         # LLM API proxy (Anthropic/OpenAI/Ollama)
@@ -85,13 +86,17 @@ ddd-tool/
 │   │   │   ├── Breadcrumb.tsx       # Breadcrumb bar (System > domain > flow)
 │   │   │   └── SheetTabs.tsx        # Optional tab bar for open sheets
 │   │   ├── SystemMap/
-│   │   │   ├── SystemMap.tsx        # Level 1: domain blocks + event arrows
-│   │   │   ├── DomainBlock.tsx      # Clickable domain block with flow count
-│   │   │   └── EventArrow.tsx       # Arrow between domains (shared with DomainMap)
+│   │   │   ├── SystemMap.tsx          # Level 1: domain blocks + event arrows
+│   │   │   ├── DomainBlock.tsx        # Clickable domain block with flow count
+│   │   │   ├── DomainContextMenu.tsx  # Right-click menu: rename, delete, edit, add event
+│   │   │   ├── CanvasContextMenu.tsx  # Right-click L1 background: add domain
+│   │   │   └── EventArrow.tsx         # Arrow between domains (shared with DomainMap)
 │   │   ├── DomainMap/
-│   │   │   ├── DomainMap.tsx        # Level 2: flow blocks + portals
-│   │   │   ├── FlowBlock.tsx        # Clickable flow block
-│   │   │   └── PortalNode.tsx       # Cross-domain navigation node
+│   │   │   ├── DomainMap.tsx          # Level 2: flow blocks + portals
+│   │   │   ├── FlowBlock.tsx          # Clickable flow block
+│   │   │   ├── FlowContextMenu.tsx    # Right-click menu: rename, delete, duplicate, move, change type
+│   │   │   ├── L2CanvasContextMenu.tsx # Right-click L2 background: add flow
+│   │   │   └── PortalNode.tsx         # Cross-domain navigation node
 │   │   ├── Canvas/
 │   │   │   ├── Canvas.tsx           # Level 3: flow sheet (routes to traditional or agent)
 │   │   │   ├── AgentCanvas.tsx      # Agent flow layout (agent loop + tools + guardrails)
@@ -346,6 +351,43 @@ export interface DomainMapArrow {
   targetFlowId?: string;     // Within same domain
   targetPortal?: string;     // To another domain
   event: string;
+}
+
+// Entity management action types
+export type FlowType = 'traditional' | 'agent' | 'orchestration';
+
+export interface CreateDomainPayload {
+  name: string;
+  description: string;
+}
+
+export interface RenameDomainPayload {
+  oldName: string;
+  newName: string;
+}
+
+export interface CreateFlowPayload {
+  domainId: string;
+  name: string;
+  flowType: FlowType;
+}
+
+export interface RenameFlowPayload {
+  domainId: string;
+  oldId: string;
+  newName: string;
+}
+
+export interface MoveFlowPayload {
+  sourceDomain: string;
+  targetDomain: string;
+  flowId: string;
+}
+
+export interface DuplicateFlowPayload {
+  domainId: string;
+  flowId: string;
+  newName: string;       // defaults to "{name}-copy"
 }
 ```
 
@@ -1307,6 +1349,598 @@ export function DomainBlock({ domain, onDoubleClick }: DomainBlockProps) {
     </div>
   );
 }
+```
+
+**File: `src/components/SystemMap/DomainContextMenu.tsx`**
+```typescript
+import React from 'react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
+import { Plus, Edit2, Trash2, FileText } from 'lucide-react';
+import { useProjectStore } from '../../stores/project-store';
+
+interface DomainContextMenuProps {
+  domainId: string;
+  children: React.ReactNode;
+}
+
+export function DomainContextMenu({ domainId, children }: DomainContextMenuProps) {
+  const { renameDomain, deleteDomain, editDomainDescription, addDomainEvent } =
+    useProjectStore();
+
+  const [renaming, setRenaming] = React.useState(false);
+  const [newName, setNewName] = React.useState('');
+
+  const handleRename = () => {
+    if (newName.trim()) {
+      renameDomain(domainId, newName.trim());
+      setRenaming(false);
+    }
+  };
+
+  const handleDelete = () => {
+    const confirmed = window.confirm(
+      `Delete domain "${domainId}" and all its flows? This cannot be undone.`
+    );
+    if (confirmed) deleteDomain(domainId);
+  };
+
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-1 min-w-[180px] z-50">
+          <ContextMenu.Item
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+            onSelect={() => setRenaming(true)}
+          >
+            <Edit2 size={14} /> Rename
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+            onSelect={() => editDomainDescription(domainId)}
+          >
+            <FileText size={14} /> Edit description
+          </ContextMenu.Item>
+
+          <ContextMenu.Separator className="h-px bg-gray-600 my-1" />
+
+          <ContextMenu.Sub>
+            <ContextMenu.SubTrigger className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer">
+              <Plus size={14} /> Add event
+            </ContextMenu.SubTrigger>
+            <ContextMenu.SubContent className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-1 min-w-[160px]">
+              <ContextMenu.Item
+                className="px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+                onSelect={() => addDomainEvent(domainId, 'publish')}
+              >
+                Add published event
+              </ContextMenu.Item>
+              <ContextMenu.Item
+                className="px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+                onSelect={() => addDomainEvent(domainId, 'consume')}
+              >
+                Add consumed event
+              </ContextMenu.Item>
+            </ContextMenu.SubContent>
+          </ContextMenu.Sub>
+
+          <ContextMenu.Separator className="h-px bg-gray-600 my-1" />
+
+          <ContextMenu.Item
+            className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/30 rounded cursor-pointer"
+            onSelect={handleDelete}
+          >
+            <Trash2 size={14} /> Delete domain
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
+  );
+}
+```
+
+**File: `src/components/SystemMap/CanvasContextMenu.tsx`** (right-click on L1 canvas background)
+```typescript
+import React, { useState } from 'react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
+import * as Dialog from '@radix-ui/react-dialog';
+import { Plus } from 'lucide-react';
+import { useProjectStore } from '../../stores/project-store';
+
+interface CanvasContextMenuProps {
+  children: React.ReactNode;
+}
+
+export function L1CanvasContextMenu({ children }: CanvasContextMenuProps) {
+  const { createDomain } = useProjectStore();
+  const [showDialog, setShowDialog] = useState(false);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+
+  const handleCreate = async () => {
+    if (!name.trim()) return;
+    await createDomain({ name: name.trim(), description: description.trim() });
+    setShowDialog(false);
+    setName('');
+    setDescription('');
+  };
+
+  return (
+    <>
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-1 min-w-[160px] z-50">
+            <ContextMenu.Item
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+              onSelect={() => setShowDialog(true)}
+            >
+              <Plus size={14} /> Add domain
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
+
+      <Dialog.Root open={showDialog} onOpenChange={setShowDialog}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
+          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-800 border border-gray-600 rounded-xl p-6 w-[400px] z-50">
+            <Dialog.Title className="text-lg font-semibold text-white mb-4">
+              Add Domain
+            </Dialog.Title>
+            <div className="space-y-3">
+              <input
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                placeholder="Domain name (e.g. users)"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                autoFocus
+              />
+              <textarea
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white resize-none"
+                placeholder="Description"
+                rows={2}
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                className="px-4 py-2 text-sm text-gray-400 hover:text-white"
+                onClick={() => setShowDialog(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-500"
+                onClick={handleCreate}
+              >
+                Create
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
+  );
+}
+```
+
+**File: `src/components/DomainMap/FlowContextMenu.tsx`**
+```typescript
+import React, { useState } from 'react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
+import { Edit2, Trash2, Copy, ArrowRightLeft, RefreshCw } from 'lucide-react';
+import { useProjectStore } from '../../stores/project-store';
+import { FlowType } from '../../types/domain';
+
+interface FlowContextMenuProps {
+  domainId: string;
+  flowId: string;
+  flowName: string;
+  children: React.ReactNode;
+}
+
+export function FlowContextMenu({
+  domainId,
+  flowId,
+  flowName,
+  children,
+}: FlowContextMenuProps) {
+  const {
+    renameFlow,
+    deleteFlow,
+    duplicateFlow,
+    moveFlow,
+    changeFlowType,
+    domainConfigs,
+  } = useProjectStore();
+
+  const otherDomains = Object.keys(domainConfigs).filter(d => d !== domainId);
+
+  const handleDelete = () => {
+    const confirmed = window.confirm(
+      `Delete flow "${flowName}"? This cannot be undone.`
+    );
+    if (confirmed) deleteFlow(domainId, flowId);
+  };
+
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-1 min-w-[180px] z-50">
+          <ContextMenu.Item
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+            onSelect={() => renameFlow(domainId, flowId)}
+          >
+            <Edit2 size={14} /> Rename
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+            onSelect={() => duplicateFlow(domainId, flowId)}
+          >
+            <Copy size={14} /> Duplicate
+          </ContextMenu.Item>
+
+          {otherDomains.length > 0 && (
+            <ContextMenu.Sub>
+              <ContextMenu.SubTrigger className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer">
+                <ArrowRightLeft size={14} /> Move to...
+              </ContextMenu.SubTrigger>
+              <ContextMenu.SubContent className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-1 min-w-[140px]">
+                {otherDomains.map(d => (
+                  <ContextMenu.Item
+                    key={d}
+                    className="px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+                    onSelect={() => moveFlow(domainId, d, flowId)}
+                  >
+                    {d}
+                  </ContextMenu.Item>
+                ))}
+              </ContextMenu.SubContent>
+            </ContextMenu.Sub>
+          )}
+
+          <ContextMenu.Sub>
+            <ContextMenu.SubTrigger className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer">
+              <RefreshCw size={14} /> Change type
+            </ContextMenu.SubTrigger>
+            <ContextMenu.SubContent className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-1 min-w-[140px]">
+              {(['traditional', 'agent', 'orchestration'] as FlowType[]).map(t => (
+                <ContextMenu.Item
+                  key={t}
+                  className="px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+                  onSelect={() => changeFlowType(domainId, flowId, t)}
+                >
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </ContextMenu.Item>
+              ))}
+            </ContextMenu.SubContent>
+          </ContextMenu.Sub>
+
+          <ContextMenu.Separator className="h-px bg-gray-600 my-1" />
+
+          <ContextMenu.Item
+            className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/30 rounded cursor-pointer"
+            onSelect={handleDelete}
+          >
+            <Trash2 size={14} /> Delete flow
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
+  );
+}
+```
+
+**File: `src/components/DomainMap/L2CanvasContextMenu.tsx`** (right-click on L2 canvas background)
+```typescript
+import React, { useState } from 'react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
+import * as Dialog from '@radix-ui/react-dialog';
+import { Plus } from 'lucide-react';
+import { useProjectStore } from '../../stores/project-store';
+import { useSheetStore } from '../../stores/sheet-store';
+import { FlowType } from '../../types/domain';
+
+export function L2CanvasContextMenu({ children }: { children: React.ReactNode }) {
+  const { createFlow } = useProjectStore();
+  const domainId = useSheetStore(s => s.currentDomain);
+  const [showDialog, setShowDialog] = useState(false);
+  const [name, setName] = useState('');
+  const [flowType, setFlowType] = useState<FlowType>('traditional');
+
+  const handleCreate = async () => {
+    if (!name.trim() || !domainId) return;
+    await createFlow({ domainId, name: name.trim(), flowType });
+    setShowDialog(false);
+    setName('');
+    setFlowType('traditional');
+  };
+
+  return (
+    <>
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-1 min-w-[160px] z-50">
+            <ContextMenu.Item
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 rounded cursor-pointer"
+              onSelect={() => setShowDialog(true)}
+            >
+              <Plus size={14} /> Add flow
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
+
+      <Dialog.Root open={showDialog} onOpenChange={setShowDialog}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
+          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-800 border border-gray-600 rounded-xl p-6 w-[400px] z-50">
+            <Dialog.Title className="text-lg font-semibold text-white mb-4">
+              Add Flow
+            </Dialog.Title>
+            <div className="space-y-3">
+              <input
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                placeholder="Flow name (e.g. user-register)"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                autoFocus
+              />
+              <div className="flex gap-2">
+                {(['traditional', 'agent', 'orchestration'] as FlowType[]).map(t => (
+                  <button
+                    key={t}
+                    className={`px-3 py-1.5 text-xs rounded border ${
+                      flowType === t
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-500'
+                    }`}
+                    onClick={() => setFlowType(t)}
+                  >
+                    {t.charAt(0).toUpperCase() + t.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                className="px-4 py-2 text-sm text-gray-400 hover:text-white"
+                onClick={() => setShowDialog(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-500"
+                onClick={handleCreate}
+              >
+                Create
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
+  );
+}
+```
+
+**Wrap existing DomainBlock in DomainContextMenu — update `SystemMap.tsx`:**
+```typescript
+// In SystemMap.tsx render, wrap each DomainBlock:
+import { DomainContextMenu } from './DomainContextMenu';
+import { L1CanvasContextMenu } from './CanvasContextMenu';
+
+// Wrap the canvas div:
+<L1CanvasContextMenu>
+  <div className="system-map relative w-full h-full overflow-auto">
+    ...
+    {mapData.domains.map(domain => (
+      <DomainContextMenu key={domain.id} domainId={domain.id}>
+        <DomainBlock
+          domain={domain}
+          onDoubleClick={() => navigateToDomain(domain.id)}
+        />
+      </DomainContextMenu>
+    ))}
+  </div>
+</L1CanvasContextMenu>
+```
+
+**Wrap existing FlowBlock in FlowContextMenu — update `DomainMap.tsx`:**
+```typescript
+// In DomainMap.tsx render, wrap each FlowBlock:
+import { FlowContextMenu } from './FlowContextMenu';
+import { L2CanvasContextMenu } from './L2CanvasContextMenu';
+
+// Wrap the canvas div:
+<L2CanvasContextMenu>
+  <div className="domain-map relative w-full h-full overflow-auto">
+    ...
+    {mapData.flows.map(flow => (
+      <FlowContextMenu
+        key={flow.id}
+        domainId={domainId}
+        flowId={flow.id}
+        flowName={flow.name}
+      >
+        <FlowBlock
+          flow={flow}
+          onDoubleClick={() => navigateToFlow(domainId, flow.id)}
+        />
+      </FlowContextMenu>
+    ))}
+  </div>
+</L2CanvasContextMenu>
+```
+
+**Entity management actions — add to `src/stores/project-store.ts`:**
+```typescript
+import { invoke } from '@tauri-apps/api/core';
+import {
+  CreateDomainPayload,
+  RenameDomainPayload,
+  CreateFlowPayload,
+  RenameFlowPayload,
+  MoveFlowPayload,
+  FlowType,
+} from '../types/domain';
+
+// Add these actions to the project store:
+
+createDomain: async (payload: CreateDomainPayload) => {
+  const { projectPath } = get();
+  await invoke('create_domain', {
+    projectPath,
+    name: payload.name,
+    description: payload.description,
+  });
+  // Update system.yaml
+  const systemYaml = get().systemConfig;
+  systemYaml.domains.push({ name: payload.name, description: payload.description });
+  await invoke('write_file', {
+    path: `${projectPath}/specs/system.yaml`,
+    content: YAML.stringify(systemYaml),
+  });
+  // Reload project to refresh domain configs
+  await get().loadProject(projectPath);
+},
+
+renameDomain: async (oldName: string, newName: string) => {
+  const { projectPath } = get();
+  await invoke('rename_domain', { projectPath, oldName, newName });
+  // Update system.yaml
+  const systemYaml = get().systemConfig;
+  const domainEntry = systemYaml.domains.find((d: any) => d.name === oldName);
+  if (domainEntry) domainEntry.name = newName;
+  await invoke('write_file', {
+    path: `${projectPath}/specs/system.yaml`,
+    content: YAML.stringify(systemYaml),
+  });
+  // Update cross-references in other domain.yaml files
+  await get().updateCrossReferences(oldName, newName);
+  await get().loadProject(projectPath);
+},
+
+deleteDomain: async (name: string) => {
+  const { projectPath } = get();
+  await invoke('delete_domain', { projectPath, name });
+  // Remove from system.yaml
+  const systemYaml = get().systemConfig;
+  systemYaml.domains = systemYaml.domains.filter((d: any) => d.name !== name);
+  await invoke('write_file', {
+    path: `${projectPath}/specs/system.yaml`,
+    content: YAML.stringify(systemYaml),
+  });
+  // Clean up event/portal references in other domains
+  await get().removeOrphanedReferences(name);
+  await get().loadProject(projectPath);
+},
+
+editDomainDescription: async (domainId: string) => {
+  // Opens inline edit — actual UI handled by DomainContextMenu dialog
+  // Writes updated description to domain.yaml
+  const { projectPath, domainConfigs } = get();
+  const config = domainConfigs[domainId];
+  // ... prompt for new description, update domain.yaml
+},
+
+addDomainEvent: async (domainId: string, type: 'publish' | 'consume') => {
+  // Opens dialog for event name + payload
+  // Appends to publishes_events or consumes_events in domain.yaml
+},
+
+createFlow: async (payload: CreateFlowPayload) => {
+  const { projectPath } = get();
+  const flowId = await invoke<string>('create_flow', {
+    projectPath,
+    domain: payload.domainId,
+    name: payload.name,
+    flowType: payload.flowType,
+  });
+  await get().loadProject(projectPath);
+  return flowId;
+},
+
+renameFlow: async (domainId: string, flowId: string) => {
+  // Opens inline rename — actual name entry handled by UI
+  // Calls invoke('rename_flow', ...) then reloads
+},
+
+deleteFlow: async (domainId: string, flowId: string) => {
+  const { projectPath } = get();
+  await invoke('delete_flow', { projectPath, domain: domainId, flowId });
+  await get().loadProject(projectPath);
+},
+
+duplicateFlow: async (domainId: string, flowId: string) => {
+  const { projectPath } = get();
+  await invoke('duplicate_flow', {
+    projectPath,
+    domain: domainId,
+    flowId,
+    newName: `${flowId}-copy`,
+  });
+  await get().loadProject(projectPath);
+},
+
+moveFlow: async (sourceDomain: string, targetDomain: string, flowId: string) => {
+  const { projectPath } = get();
+  await invoke('move_flow', { projectPath, sourceDomain, targetDomain, flowId });
+  await get().loadProject(projectPath);
+},
+
+changeFlowType: async (domainId: string, flowId: string, newType: FlowType) => {
+  // Read existing flow, update type field, warn if agent/orch nodes will be lost
+  const { projectPath } = get();
+  const flowPath = `${projectPath}/specs/domains/${domainId}/flows/${flowId}.yaml`;
+  const content = await invoke<string>('read_file', { path: flowPath });
+  const flowYaml = YAML.parse(content);
+  flowYaml.flow.type = newType;
+  // Remove type-specific sections if switching away
+  if (newType !== 'agent') delete flowYaml.agent_loop;
+  if (newType !== 'orchestration') delete flowYaml.orchestrator;
+  await invoke('write_file', { path: flowPath, content: YAML.stringify(flowYaml) });
+  await get().loadProject(projectPath);
+},
+
+// Helper: update cross-domain references when a domain is renamed
+updateCrossReferences: async (oldName: string, newName: string) => {
+  const { projectPath, domainConfigs } = get();
+  for (const [id, config] of Object.entries(domainConfigs)) {
+    if (id === newName) continue; // Skip the renamed domain itself
+    const domainYamlPath = `${projectPath}/specs/domains/${id}/domain.yaml`;
+    let content = await invoke<string>('read_file', { path: domainYamlPath });
+    if (content.includes(oldName)) {
+      content = content.replaceAll(oldName, newName);
+      await invoke('write_file', { path: domainYamlPath, content });
+    }
+  }
+},
+
+// Helper: remove orphaned references when a domain is deleted
+removeOrphanedReferences: async (deletedDomain: string) => {
+  const { projectPath, domainConfigs } = get();
+  for (const [id, config] of Object.entries(domainConfigs)) {
+    if (id === deletedDomain) continue;
+    const domainYamlPath = `${projectPath}/specs/domains/${id}/domain.yaml`;
+    let content = await invoke<string>('read_file', { path: domainYamlPath });
+    // Remove event references pointing to deleted domain
+    // This is a simplified version — production should parse YAML properly
+    if (content.includes(deletedDomain)) {
+      const yaml = YAML.parse(content);
+      if (yaml.consumes_events) {
+        yaml.consumes_events = yaml.consumes_events.filter(
+          (e: any) => !e.from_domain || e.from_domain !== deletedDomain
+        );
+      }
+      await invoke('write_file', { path: domainYamlPath, content: YAML.stringify(yaml) });
+    }
+  }
+},
 ```
 
 **File: `src/components/DomainMap/DomainMap.tsx`**
@@ -3098,6 +3732,276 @@ pub struct FileEntry {
     name: String,
     path: String,
     is_directory: bool,
+}
+```
+
+**File: `src-tauri/src/commands/entity.rs`**
+```rust
+use std::fs;
+use std::path::PathBuf;
+use tauri::command;
+
+/// Create a new domain: create directory + domain.yaml + flows/ subdirectory
+#[command]
+pub async fn create_domain(
+    project_path: String,
+    name: String,
+    description: String,
+) -> Result<(), String> {
+    let domain_dir = PathBuf::from(&project_path)
+        .join("specs/domains")
+        .join(&name);
+
+    if domain_dir.exists() {
+        return Err(format!("Domain '{}' already exists", name));
+    }
+
+    // Create directory structure
+    let flows_dir = domain_dir.join("flows");
+    fs::create_dir_all(&flows_dir).map_err(|e| e.to_string())?;
+
+    // Write domain.yaml
+    let domain_yaml = format!(
+        "domain:\n  name: {}\n  description: {}\n\npublishes_events: []\nconsumes_events: []\n",
+        name, description
+    );
+    fs::write(domain_dir.join("domain.yaml"), domain_yaml)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Rename domain directory and update all cross-references
+#[command]
+pub async fn rename_domain(
+    project_path: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    let specs = PathBuf::from(&project_path).join("specs");
+    let old_dir = specs.join("domains").join(&old_name);
+    let new_dir = specs.join("domains").join(&new_name);
+
+    if !old_dir.exists() {
+        return Err(format!("Domain '{}' not found", old_name));
+    }
+    if new_dir.exists() {
+        return Err(format!("Domain '{}' already exists", new_name));
+    }
+
+    fs::rename(&old_dir, &new_dir).map_err(|e| e.to_string())?;
+
+    // Update domain.yaml inside the renamed directory
+    let domain_yaml_path = new_dir.join("domain.yaml");
+    if domain_yaml_path.exists() {
+        let content = fs::read_to_string(&domain_yaml_path)
+            .map_err(|e| e.to_string())?;
+        let updated = content.replace(
+            &format!("name: {}", old_name),
+            &format!("name: {}", new_name),
+        );
+        fs::write(&domain_yaml_path, updated).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Delete a domain directory (after confirmation in UI)
+#[command]
+pub async fn delete_domain(
+    project_path: String,
+    name: String,
+) -> Result<u32, String> {
+    let domain_dir = PathBuf::from(&project_path)
+        .join("specs/domains")
+        .join(&name);
+
+    if !domain_dir.exists() {
+        return Err(format!("Domain '{}' not found", name));
+    }
+
+    // Count flows for confirmation
+    let flows_dir = domain_dir.join("flows");
+    let flow_count = if flows_dir.exists() {
+        fs::read_dir(&flows_dir)
+            .map(|entries| entries.filter_map(|e| e.ok()).count() as u32)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    fs::remove_dir_all(&domain_dir).map_err(|e| e.to_string())?;
+    Ok(flow_count)
+}
+
+/// Create a new flow YAML file with starter template
+#[command]
+pub async fn create_flow(
+    project_path: String,
+    domain: String,
+    name: String,
+    flow_type: String,  // "traditional" | "agent" | "orchestration"
+) -> Result<String, String> {
+    let flow_id = name.to_lowercase().replace(' ', "-");
+    let flow_path = PathBuf::from(&project_path)
+        .join("specs/domains")
+        .join(&domain)
+        .join("flows")
+        .join(format!("{}.yaml", flow_id));
+
+    if flow_path.exists() {
+        return Err(format!("Flow '{}' already exists in domain '{}'", flow_id, domain));
+    }
+
+    let yaml = match flow_type.as_str() {
+        "agent" => format!(
+            "flow:\n  id: {id}\n  name: {name}\n  domain: {domain}\n  type: agent\n  description: \"\"\n\ntrigger:\n  type: http\n  method: POST\n  path: /api/{domain}/{id}\n\nagent_loop:\n  model: default\n  max_iterations: 10\n  system_prompt: \"\"\n\nnodes: []\n",
+            id = flow_id, name = name, domain = domain
+        ),
+        "orchestration" => format!(
+            "flow:\n  id: {id}\n  name: {name}\n  domain: {domain}\n  type: orchestration\n  description: \"\"\n\ntrigger:\n  type: http\n  method: POST\n  path: /api/{domain}/{id}\n\norchestrator:\n  strategy: supervisor\n  agents: []\n\nnodes: []\n",
+            id = flow_id, name = name, domain = domain
+        ),
+        _ => format!(
+            "flow:\n  id: {id}\n  name: {name}\n  domain: {domain}\n  type: traditional\n  description: \"\"\n\ntrigger:\n  type: http\n  method: POST\n  path: /api/{domain}/{id}\n\nnodes:\n  - id: done\n    type: terminal\n    spec:\n      status: 200\n      body:\n        message: \"Success\"\n",
+            id = flow_id, name = name, domain = domain
+        ),
+    };
+
+    // Ensure parent directory exists
+    if let Some(parent) = flow_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&flow_path, yaml).map_err(|e| e.to_string())?;
+
+    Ok(flow_id)
+}
+
+/// Rename a flow file and update its internal id field
+#[command]
+pub async fn rename_flow(
+    project_path: String,
+    domain: String,
+    old_id: String,
+    new_name: String,
+) -> Result<String, String> {
+    let new_id = new_name.to_lowercase().replace(' ', "-");
+    let flows_dir = PathBuf::from(&project_path)
+        .join("specs/domains")
+        .join(&domain)
+        .join("flows");
+
+    let old_path = flows_dir.join(format!("{}.yaml", old_id));
+    let new_path = flows_dir.join(format!("{}.yaml", new_id));
+
+    if !old_path.exists() {
+        return Err(format!("Flow '{}' not found", old_id));
+    }
+    if new_path.exists() && new_id != old_id {
+        return Err(format!("Flow '{}' already exists", new_id));
+    }
+
+    // Update YAML content
+    let content = fs::read_to_string(&old_path).map_err(|e| e.to_string())?;
+    let updated = content
+        .replace(&format!("id: {}", old_id), &format!("id: {}", new_id))
+        .replace(&format!("name: {}", old_id), &format!("name: {}", new_name));
+    fs::write(&old_path, updated).map_err(|e| e.to_string())?;
+
+    // Rename file
+    if new_id != old_id {
+        fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+    }
+
+    Ok(new_id)
+}
+
+/// Delete a flow YAML file
+#[command]
+pub async fn delete_flow(
+    project_path: String,
+    domain: String,
+    flow_id: String,
+) -> Result<(), String> {
+    let flow_path = PathBuf::from(&project_path)
+        .join("specs/domains")
+        .join(&domain)
+        .join("flows")
+        .join(format!("{}.yaml", flow_id));
+
+    if !flow_path.exists() {
+        return Err(format!("Flow '{}' not found", flow_id));
+    }
+
+    fs::remove_file(&flow_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Duplicate a flow YAML file with a new id
+#[command]
+pub async fn duplicate_flow(
+    project_path: String,
+    domain: String,
+    flow_id: String,
+    new_name: String,
+) -> Result<String, String> {
+    let new_id = new_name.to_lowercase().replace(' ', "-");
+    let flows_dir = PathBuf::from(&project_path)
+        .join("specs/domains")
+        .join(&domain)
+        .join("flows");
+
+    let source_path = flows_dir.join(format!("{}.yaml", flow_id));
+    let target_path = flows_dir.join(format!("{}.yaml", new_id));
+
+    if !source_path.exists() {
+        return Err(format!("Flow '{}' not found", flow_id));
+    }
+    if target_path.exists() {
+        return Err(format!("Flow '{}' already exists", new_id));
+    }
+
+    let content = fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
+    let updated = content
+        .replace(&format!("id: {}", flow_id), &format!("id: {}", new_id))
+        .replace(&format!("name: {}", flow_id), &format!("name: {}", new_name));
+    fs::write(&target_path, updated).map_err(|e| e.to_string())?;
+
+    Ok(new_id)
+}
+
+/// Move a flow from one domain to another
+#[command]
+pub async fn move_flow(
+    project_path: String,
+    source_domain: String,
+    target_domain: String,
+    flow_id: String,
+) -> Result<(), String> {
+    let specs = PathBuf::from(&project_path).join("specs/domains");
+    let source = specs.join(&source_domain).join("flows").join(format!("{}.yaml", flow_id));
+    let target_dir = specs.join(&target_domain).join("flows");
+    let target = target_dir.join(format!("{}.yaml", flow_id));
+
+    if !source.exists() {
+        return Err(format!("Flow '{}' not found in '{}'", flow_id, source_domain));
+    }
+    if target.exists() {
+        return Err(format!("Flow '{}' already exists in '{}'", flow_id, target_domain));
+    }
+
+    // Update domain field in YAML
+    let content = fs::read_to_string(&source).map_err(|e| e.to_string())?;
+    let updated = content.replace(
+        &format!("domain: {}", source_domain),
+        &format!("domain: {}", target_domain),
+    );
+
+    fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+    fs::write(&target, updated).map_err(|e| e.to_string())?;
+    fs::remove_file(&source).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 ```
 
@@ -12305,7 +13209,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
 1. **Don't** build code generation in MVP
 2. **Don't** build MCP server
 3. **Don't** build reverse engineering
-4. **Don't** make L1/L2 editable beyond repositioning — they are derived views
+4. **Do** support entity management on L1/L2 (add/rename/delete domains and flows) via right-click context menus — all operations must update YAML files and cross-references atomically
 5. **Don't** try to run/test agents within the DDD Tool in MVP — just design them
 6. **Don't** try to execute routing rules or circuit breakers — DDD is a design tool, not a runtime
 7. **Do** focus on visual editing → YAML output
@@ -12365,6 +13269,13 @@ import { ImplementGate } from '../Validation/ImplementGate';
 61. **Do** validate cross-domain event payloads structurally (field names + types), not just by event name — two domains consuming the same event name but expecting different shapes is a common bug
 62. **Do** re-run system validation after git pull — specs may have changed on disk
 63. **Don't** validate deleted/orphaned spec files — only validate flows that exist in the current project index
+64. **Do** update system.yaml atomically with domain directory operations — a domain directory without a system.yaml entry (or vice versa) is a corrupt state
+65. **Don't** allow renaming a domain/flow to an existing name — check for duplicates before invoking the Tauri command
+66. **Do** update all cross-domain references when renaming a domain — event wiring, portal targets, orchestration agent refs, and mapping.yaml entries all contain domain names
+67. **Don't** silently delete domains with flows — always show a confirmation dialog with flow count before deleting
+68. **Do** reload the full project after any entity CRUD operation — partial state updates are error-prone; a full reload from disk is safer and simpler
+69. **Don't** allow moving a flow to its current domain — filter out the source domain from the "Move to..." submenu
+70. **Do** warn users when changing flow type will lose type-specific data (agent_loop, orchestrator sections) — show a confirmation before destructive type conversion
 
 ---
 
@@ -12597,6 +13508,23 @@ npm run tauri dev
 - [ ] Implementation gate blocks on errors, warns on warnings, green on clean
 - [ ] Batch implementation pre-validates all selected flows
 - [ ] Validation badges on Level 1 domain blocks and Level 2 flow blocks
+
+### Entity Management
+- [ ] Right-click L1 canvas background → "Add domain" dialog → creates directory + domain.yaml + updates system.yaml
+- [ ] Right-click domain block → "Rename" → renames directory, updates domain.yaml, system.yaml, and cross-references
+- [ ] Right-click domain block → "Delete" → confirmation with flow count → removes directory and system.yaml entry
+- [ ] Right-click domain block → "Edit description" → inline edit → updates domain.yaml
+- [ ] Right-click domain block → "Add published/consumed event" → updates domain.yaml, renders new arrow on L1
+- [ ] Right-click L2 canvas background → "Add flow" dialog (name + type selector) → creates flow YAML, opens L3
+- [ ] Right-click flow block → "Rename" → renames file, updates flow.id, updates cross-references
+- [ ] Right-click flow block → "Delete" → confirmation → removes flow file
+- [ ] Right-click flow block → "Duplicate" → creates copy with "-copy" suffix
+- [ ] Right-click flow block → "Move to..." → shows other domains → moves file and updates domain field
+- [ ] Right-click flow block → "Change type" → traditional/agent/orchestration with warning if data will be lost
+- [ ] L3 toolbar → click flow name → inline rename → updates file and id
+- [ ] L3 right-click canvas → "Clear canvas" → confirmation → removes all nodes except trigger
+- [ ] All entity operations update disk files atomically (no partial states)
+- [ ] Project reloads from disk after every entity CRUD to ensure consistency
 
 ---
 

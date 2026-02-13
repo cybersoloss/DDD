@@ -2931,18 +2931,50 @@ The validator checks:
 - Connection drawing between nodes
 - Sub-flow nodes are navigable links to other flow sheets
 
-### System Map (Level 1 — Read-Only)
+### System Map (Level 1)
 - Auto-generated from `system.yaml` + `domain.yaml` files
 - Domain blocks with flow count badges
 - Event arrows between domains (from `publishes_events`/`consumes_events`)
 - Repositionable blocks (positions saved to `system-layout.yaml`)
 
-### Domain Map (Level 2 — Read-Only)
+**Domain management (right-click context menu on L1):**
+
+| Action | What happens |
+|--------|-------------|
+| **Add domain** | Right-click canvas → "Add domain" → enter name + description → creates `specs/domains/{name}/domain.yaml` + `flows/` directory, updates `system.yaml`, adds block to canvas |
+| **Rename domain** | Right-click domain block → "Rename" → enter new name → renames `specs/domains/{old}/` to `specs/domains/{new}/`, updates `system.yaml`, updates all cross-domain references (events, portals, orchestration agent refs) |
+| **Delete domain** | Right-click domain block → "Delete" → confirmation dialog ("This will delete {n} flows. Are you sure?") → removes `specs/domains/{name}/` directory, updates `system.yaml`, removes event/portal references from other domains |
+| **Edit description** | Right-click domain block → "Edit description" → inline edit → updates `domain.yaml` |
+| **Add event** | Right-click domain block → "Add published event" / "Add consumed event" → enter event name + payload → updates `domain.yaml`, draws new event arrow on canvas |
+
+### Domain Map (Level 2)
 - Auto-generated from `domain.yaml` + flow files
 - Flow blocks within a domain
 - Inter-flow event connections
 - Portal nodes linking to other domains
 - Repositionable blocks (positions saved to `domain.yaml` layout section)
+
+**Flow management (right-click context menu on L2):**
+
+| Action | What happens |
+|--------|-------------|
+| **Add flow** | Right-click canvas → "Add flow" → enter name, select type (traditional/agent/orchestration) → creates `specs/domains/{domain}/flows/{name}.yaml` with trigger + terminal, adds block to canvas, opens L3 |
+| **Rename flow** | Right-click flow block → "Rename" → enter new name → renames flow file, updates `flow.id`, updates all cross-references (sub-flow nodes, orchestration agent refs, portal references, mapping.yaml) |
+| **Delete flow** | Right-click flow block → "Delete" → confirmation dialog → removes flow YAML file, removes from mapping.yaml, removes portal/event references |
+| **Duplicate flow** | Right-click flow block → "Duplicate" → creates copy with `{name}-copy` → new flow file with all nodes/connections copied |
+| **Move to domain** | Right-click flow block → "Move to..." → select target domain → moves flow file to target domain's `flows/` directory, updates all references |
+| **Change flow type** | Right-click flow block → "Change type" → traditional/agent/orchestration → warns if nodes will be lost ("Agent nodes will be removed. Continue?"), restructures flow |
+
+### Flow Sheet (Level 3)
+
+**Flow-level actions (toolbar or right-click canvas background):**
+
+| Action | What happens |
+|--------|-------------|
+| **Rename flow** | Click flow name in toolbar → inline edit → updates flow.id and filename |
+| **Change trigger type** | Click trigger node → spec panel → change type (http/event/scheduled/manual) |
+| **Delete all nodes** | Right-click canvas → "Clear canvas" → confirmation → removes all nodes except trigger |
+| **Import from template** | Right-click canvas → "Import template" → select a template flow → merges nodes into current canvas as ghost preview |
 
 ### Spec Panel
 - Right sidebar with type-specific fields
@@ -6403,6 +6435,7 @@ Claude Code reads all of these sections and generates the corresponding infrastr
 - **Error Handling:** Defined recovery for file, Git, LLM, PTY, and canvas errors with auto-retry, fallback, and crash recovery
 - **Undo/Redo:** Per-flow command pattern with immutable snapshots (Cmd+Z / Cmd+Shift+Z), 100-level history
 - **Design Validation:** Flow-level (graph completeness, spec completeness, reference integrity), domain-level (duplicate detection, internal event matching), system-level (cross-domain event wiring, payload shape matching, portal integrity, orchestration cycle detection), real-time canvas indicators, implementation gate
+- **Entity Management:** Add/rename/delete domains (L1), add/rename/delete/duplicate/move flows (L2), rename/clear flows (L3) — all via right-click context menu with file operations and cross-reference updates
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage
