@@ -151,7 +151,9 @@ ddd-tool/
 │   │   │   ├── TerminalEmbed.tsx       # Embedded PTY terminal for Claude Code
 │   │   │   ├── TestResults.tsx         # Test output display with fix loop
 │   │   │   ├── ImplementationQueue.tsx # Queue view for batch implementation
-│   │   │   └── StaleBanner.tsx         # Stale detection warning banner
+│   │   │   ├── StaleBanner.tsx         # Stale detection warning banner
+│   │   │   ├── ReconciliationReport.tsx # Code→spec drift report with accept/remove/ignore
+│   │   │   └── SyncBadge.tsx           # Sync score badge for flow blocks
 │   │   ├── MemoryPanel/
 │   │   │   ├── MemoryPanel.tsx        # Main memory panel (sidebar toggle)
 │   │   │   ├── SummaryCard.tsx        # Project summary display
@@ -6174,6 +6176,46 @@ export interface ImplementationConfig {
     scope_pattern: string;
     auto_run: boolean;
   };
+  reconciliation: {
+    auto_run: boolean;
+    auto_accept_matching: boolean;
+    notify_on_drift: boolean;
+  };
+}
+
+/** Reconciliation report comparing code vs spec */
+export interface ReconciliationReport {
+  flowId: string;
+  syncScore: number;           // 0-100
+  reconciledAt: string;        // ISO timestamp
+  matching: ReconciliationItem[];    // Spec = Code
+  codeOnly: ReconciliationItem[];    // Code has, spec doesn't
+  specOnly: ReconciliationItem[];    // Spec has, code doesn't
+}
+
+export interface ReconciliationItem {
+  id: string;                  // Unique ID for this item
+  description: string;         // Human-readable description
+  category: 'endpoint' | 'validation' | 'error_handling' | 'middleware' | 'schema' | 'response' | 'logic' | 'other';
+  codeLocation?: string;       // e.g. "src/domains/api/services.py:23"
+  specLocation?: string;       // e.g. "nodes[2].spec.fields.email"
+  severity: 'minor' | 'moderate' | 'significant';
+  resolution?: 'accepted' | 'removed' | 'ignored';
+  resolvedAt?: string;
+}
+
+/** Accepted deviation stored in mapping.yaml */
+export interface AcceptedDeviation {
+  description: string;
+  codeLocation: string;
+  acceptedAt: string;
+}
+
+/** Extended flow mapping with reconciliation data */
+export interface FlowMappingExtended extends FlowMapping {
+  sync_score?: number;
+  last_reconciled_at?: string;
+  accepted_deviations?: AcceptedDeviation[];
 }
 ```
 
@@ -6234,6 +6276,13 @@ interface ImplementationState {
 
   // CLAUDE.md
   regenerateClaudeMd: (projectPath: string) => Promise<void>;
+
+  // Reconciliation
+  reconciliationReport: ReconciliationReport | null;
+  isReconciling: boolean;
+  reconcileFlow: (flowId: string, projectPath: string) => Promise<void>;
+  resolveReconciliationItem: (flowId: string, itemId: string, resolution: 'accepted' | 'removed' | 'ignored', projectPath: string) => Promise<void>;
+  parseImplementationNotes: (terminalOutput: string) => string[];
 }
 
 export const useImplementationStore = create<ImplementationState>((set, get) => ({
@@ -6242,6 +6291,8 @@ export const useImplementationStore = create<ImplementationState>((set, get) => 
   currentPrompt: null,
   ptySession: null,
   testResults: null,
+  reconciliationReport: null,
+  isReconciling: false,
   isRunningTests: false,
   queue: [],
   staleResults: {},
@@ -6311,6 +6362,11 @@ export const useImplementationStore = create<ImplementationState>((set, get) => 
         // Regenerate CLAUDE.md
         if (config?.claude_code.post_implement.regenerate_claude_md) {
           await get().regenerateClaudeMd(projectPath);
+        }
+
+        // Auto-reconcile (reverse drift detection)
+        if (config?.reconciliation?.auto_run) {
+          await get().reconcileFlow(flowId, projectPath);
         }
       }
     } catch (err) {
@@ -6512,6 +6568,11 @@ export const useImplementationStore = create<ImplementationState>((set, get) => 
             scope_pattern: 'tests/**/test_{flow_id}*',
             auto_run: true,
           },
+          reconciliation: {
+            auto_run: true,
+            auto_accept_matching: true,
+            notify_on_drift: true,
+          },
         },
       });
     }
@@ -6521,7 +6582,173 @@ export const useImplementationStore = create<ImplementationState>((set, get) => 
     const content = await generateClaudeMd(projectPath);
     await invoke('write_file', { path: `${projectPath}/CLAUDE.md`, content });
   },
+
+  reconcileFlow: async (flowId, projectPath) => {
+    set({ isReconciling: true, reconciliationReport: null });
+
+    try {
+      const mapping = get().mappings[flowId];
+      if (!mapping) throw new Error(`No mapping found for ${flowId}`);
+
+      // Read the spec and all implementation files
+      const specContent = await invoke<string>('read_file', { path: `${projectPath}/${mapping.spec}` });
+      const codeContents: Record<string, string> = {};
+      for (const file of mapping.files) {
+        try {
+          codeContents[file] = await invoke<string>('read_file', { path: `${projectPath}/${file}` });
+        } catch { /* file may have been deleted */ }
+      }
+
+      // Send to Design Assistant LLM for comparison
+      const { useLLMStore } = await import('./llm-store');
+      const reconciliationPrompt = buildReconciliationPrompt(flowId, specContent, codeContents);
+      const response = await useLLMStore.getState().sendRawMessage(reconciliationPrompt, 'review_flow');
+
+      // Parse LLM response into structured report
+      const report = parseReconciliationResponse(flowId, response);
+      set({ reconciliationReport: report, isReconciling: false });
+
+      // Update mapping with sync score
+      const updatedMapping = { ...mapping, sync_score: report.syncScore, last_reconciled_at: new Date().toISOString() };
+      await get().updateMapping(flowId, updatedMapping, projectPath);
+    } catch (err) {
+      set({ isReconciling: false });
+      console.error('Reconciliation failed:', err);
+    }
+  },
+
+  resolveReconciliationItem: async (flowId, itemId, resolution, projectPath) => {
+    const report = get().reconciliationReport;
+    if (!report) return;
+
+    // Find and update the item
+    const allItems = [...report.codeOnly, ...report.specOnly];
+    const item = allItems.find(i => i.id === itemId);
+    if (!item) return;
+
+    item.resolution = resolution;
+    item.resolvedAt = new Date().toISOString();
+
+    if (resolution === 'accepted' && report.codeOnly.some(i => i.id === itemId)) {
+      // Accept into spec — use LLM to generate spec update
+      const { useLLMStore } = await import('./llm-store');
+      const mapping = get().mappings[flowId];
+      const specContent = await invoke<string>('read_file', { path: `${projectPath}/${mapping.spec}` });
+      const codeFile = item.codeLocation?.split(':')[0] ?? '';
+      const codeContent = codeFile ? await invoke<string>('read_file', { path: `${projectPath}/${codeFile}` }) : '';
+
+      const updatePrompt = `The following item exists in code but not in the spec. Generate an updated spec YAML that includes this item.\n\nItem: ${item.description}\nCode location: ${item.codeLocation}\nCode:\n${codeContent}\n\nCurrent spec:\n${specContent}\n\nReturn only the updated YAML.`;
+      const updatedSpec = await useLLMStore.getState().sendRawMessage(updatePrompt, 'suggest_spec');
+      await invoke('write_file', { path: `${projectPath}/${mapping.spec}`, content: updatedSpec });
+    } else if (resolution === 'removed') {
+      // Remove from code — build targeted Claude Code prompt
+      const removePrompt = `Remove this from the implementation — it's not in the spec:\n${item.description}\nLocation: ${item.codeLocation}`;
+      set({
+        currentPrompt: {
+          flowId,
+          domain: flowId.split('/')[0],
+          content: removePrompt,
+          specFiles: [],
+          mode: 'update',
+          agentFlow: false,
+          editedByUser: false,
+        },
+        panelState: 'prompt_ready',
+      });
+    } else if (resolution === 'ignored') {
+      // Store as accepted deviation in mapping
+      const mapping = get().mappings[flowId];
+      const deviations = (mapping as any).accepted_deviations ?? [];
+      deviations.push({
+        description: item.description,
+        codeLocation: item.codeLocation ?? '',
+        acceptedAt: new Date().toISOString(),
+      });
+      await get().updateMapping(flowId, { ...mapping, accepted_deviations: deviations } as any, projectPath);
+    }
+
+    // Recalculate sync score
+    const unresolved = [...report.codeOnly, ...report.specOnly].filter(i => !i.resolution);
+    const total = report.matching.length + report.codeOnly.length + report.specOnly.length;
+    const resolved = report.matching.length + (report.codeOnly.length + report.specOnly.length - unresolved.length);
+    report.syncScore = total > 0 ? Math.round((resolved / total) * 100) : 100;
+
+    set({ reconciliationReport: { ...report } });
+  },
+
+  parseImplementationNotes: (terminalOutput) => {
+    // Extract "## Implementation Notes" section from Claude Code output
+    const notesMatch = terminalOutput.match(/## Implementation Notes\n([\s\S]*?)(?=\n##|\n---|\Z)/);
+    if (!notesMatch) return [];
+
+    const notes = notesMatch[1];
+    if (notes.includes('No deviations')) return [];
+
+    // Extract bullet points
+    return notes
+      .split('\n')
+      .filter(line => line.trim().startsWith('-') || line.trim().startsWith('*'))
+      .map(line => line.trim().replace(/^[-*]\s*/, ''));
+  },
 }));
+
+// --- Helper functions for reconciliation ---
+
+function buildReconciliationPrompt(
+  flowId: string,
+  specContent: string,
+  codeContents: Record<string, string>
+): string {
+  let prompt = `Compare this flow spec against its implementation code. For each item, determine if the code matches the spec, if the code has something the spec doesn't, or if the spec has something the code doesn't.\n\n`;
+  prompt += `## Flow Spec (${flowId})\n\`\`\`yaml\n${specContent}\n\`\`\`\n\n`;
+  prompt += `## Implementation Code\n`;
+  for (const [file, content] of Object.entries(codeContents)) {
+    prompt += `### ${file}\n\`\`\`\n${content}\n\`\`\`\n\n`;
+  }
+  prompt += `## Response Format\nRespond with JSON only:\n\`\`\`json\n{\n  "matching": [{"description": "...", "category": "..."}],\n  "codeOnly": [{"description": "...", "category": "...", "codeLocation": "file:line", "severity": "minor|moderate|significant"}],\n  "specOnly": [{"description": "...", "category": "...", "specLocation": "...", "severity": "minor|moderate|significant"}]\n}\n\`\`\``;
+  return prompt;
+}
+
+function parseReconciliationResponse(flowId: string, response: string): ReconciliationReport {
+  // Extract JSON from response
+  const jsonMatch = response.match(/```json\n([\s\S]*?)\n```/) ?? response.match(/\{[\s\S]*\}/);
+  const parsed = JSON.parse(jsonMatch?.[1] ?? jsonMatch?.[0] ?? '{}');
+
+  const matching = (parsed.matching ?? []).map((item: any, i: number) => ({
+    id: `match-${i}`,
+    description: item.description,
+    category: item.category ?? 'other',
+    severity: 'minor' as const,
+  }));
+
+  const codeOnly = (parsed.codeOnly ?? []).map((item: any, i: number) => ({
+    id: `code-${i}`,
+    description: item.description,
+    category: item.category ?? 'other',
+    codeLocation: item.codeLocation,
+    severity: item.severity ?? 'moderate',
+  }));
+
+  const specOnly = (parsed.specOnly ?? []).map((item: any, i: number) => ({
+    id: `spec-${i}`,
+    description: item.description,
+    category: item.category ?? 'other',
+    specLocation: item.specLocation,
+    severity: item.severity ?? 'moderate',
+  }));
+
+  const total = matching.length + codeOnly.length + specOnly.length;
+  const syncScore = total > 0 ? Math.round((matching.length / total) * 100) : 100;
+
+  return {
+    flowId,
+    syncScore,
+    reconciledAt: new Date().toISOString(),
+    matching,
+    codeOnly,
+    specOnly,
+  };
+}
 ```
 
 **File: `src/utils/prompt-builder.ts`**
@@ -6600,7 +6827,16 @@ export async function buildPrompt(flowId: string, domain: string): Promise<Built
   content += `- Tests: tests/unit/domains/${domain}/\n\n`;
 
   content += `## After implementation\n\n`;
-  content += `Update .ddd/mapping.yaml with the flow mapping.\n`;
+  content += `Update .ddd/mapping.yaml with the flow mapping.\n\n`;
+
+  // Implementation Report instruction for reverse drift detection
+  content += `## Implementation Report (required)\n\n`;
+  content += `After implementing, output a section titled \`## Implementation Notes\` with:\n`;
+  content += `1. **Deviations** — Anything you did differently from the spec\n`;
+  content += `2. **Additions** — Anything you added that the spec didn't mention\n`;
+  content += `3. **Ambiguities resolved** — Anything the spec was unclear about and how you decided\n`;
+  content += `4. **Schema changes** — Any new fields, changed types, or migration implications\n\n`;
+  content += `If you followed the spec exactly with no changes, write: "No deviations."\n`;
 
   if (isAgent) {
     content += `\n## Agent-specific\n\n`;
@@ -7517,6 +7753,227 @@ export function StaleBanner({ staleResult }: Props) {
 }
 ```
 
+**File: `src/components/ImplementationPanel/ReconciliationReport.tsx`**
+```tsx
+import { useImplementationStore } from '../../stores/implementation-store';
+import { useProjectStore } from '../../stores/project-store';
+import type { ReconciliationItem } from '../../types/implementation';
+import { CheckCircle, AlertTriangle, XCircle, Loader2, ArrowDownToLine, Trash2, EyeOff } from 'lucide-react';
+
+export function ReconciliationReport() {
+  const { reconciliationReport: report, isReconciling, resolveReconciliationItem } = useImplementationStore();
+  const { projectPath } = useProjectStore();
+
+  if (isReconciling) {
+    return (
+      <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        Reconciling spec vs code...
+      </div>
+    );
+  }
+
+  if (!report) return null;
+
+  const scoreColor = report.syncScore >= 95 ? 'text-green-600' :
+    report.syncScore >= 80 ? 'text-yellow-600' :
+    report.syncScore >= 50 ? 'text-amber-600' : 'text-red-600';
+
+  const scoreBg = report.syncScore >= 95 ? 'bg-green-50' :
+    report.syncScore >= 80 ? 'bg-yellow-50' :
+    report.syncScore >= 50 ? 'bg-amber-50' : 'bg-red-50';
+
+  const handleResolve = (itemId: string, resolution: 'accepted' | 'removed' | 'ignored') => {
+    resolveReconciliationItem(report.flowId, itemId, resolution, projectPath);
+  };
+
+  const renderItem = (item: ReconciliationItem, type: 'codeOnly' | 'specOnly') => (
+    <div key={item.id} className="px-4 py-2 border-b border-gray-50">
+      <div className="flex items-start gap-2">
+        {type === 'codeOnly' ? (
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" />
+        ) : (
+          <XCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="text-xs text-gray-700">{item.description}</div>
+          {item.codeLocation && (
+            <div className="text-[10px] text-gray-400 mt-0.5 font-mono">{item.codeLocation}</div>
+          )}
+          <div className="text-[10px] text-gray-400 mt-0.5">
+            <span className={`px-1 py-0.5 rounded ${
+              item.severity === 'significant' ? 'bg-red-50 text-red-500' :
+              item.severity === 'moderate' ? 'bg-amber-50 text-amber-500' :
+              'bg-gray-50 text-gray-400'
+            }`}>
+              {item.severity}
+            </span>
+            <span className="ml-1">{item.category}</span>
+          </div>
+          {!item.resolution && (
+            <div className="mt-1.5 flex gap-1">
+              {type === 'codeOnly' && (
+                <>
+                  <button
+                    onClick={() => handleResolve(item.id, 'accepted')}
+                    className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 bg-green-50 text-green-600 rounded hover:bg-green-100"
+                  >
+                    <ArrowDownToLine className="w-2.5 h-2.5" /> Accept into spec
+                  </button>
+                  <button
+                    onClick={() => handleResolve(item.id, 'removed')}
+                    className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" /> Remove from code
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => handleResolve(item.id, 'ignored')}
+                className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 bg-gray-50 text-gray-500 rounded hover:bg-gray-100"
+              >
+                <EyeOff className="w-2.5 h-2.5" /> Ignore
+              </button>
+            </div>
+          )}
+          {item.resolution && (
+            <div className="mt-1 text-[10px] text-gray-400 italic">
+              {item.resolution === 'accepted' ? 'Accepted into spec' :
+               item.resolution === 'removed' ? 'Queued for removal' : 'Ignored'}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="border-t border-gray-200">
+      {/* Sync score header */}
+      <div className={`px-4 py-2 ${scoreBg} border-b border-gray-100 flex items-center justify-between`}>
+        <div className="text-xs font-medium">
+          <span className={scoreColor}>Sync: {report.syncScore}%</span>
+          <span className="text-gray-400 ml-2">
+            {report.matching.length} matching, {report.codeOnly.length} code-only, {report.specOnly.length} spec-only
+          </span>
+        </div>
+      </div>
+
+      {/* Matching items (collapsed by default) */}
+      {report.matching.length > 0 && (
+        <details className="border-b border-gray-100">
+          <summary className="px-4 py-1.5 text-[10px] font-medium text-green-500 cursor-pointer hover:bg-gray-50">
+            Matching ({report.matching.length})
+          </summary>
+          {report.matching.map(item => (
+            <div key={item.id} className="px-4 py-1 flex items-center gap-2 text-xs text-gray-500">
+              <CheckCircle className="w-3 h-3 text-green-400 flex-shrink-0" />
+              {item.description}
+            </div>
+          ))}
+        </details>
+      )}
+
+      {/* Code-only items (drift) */}
+      {report.codeOnly.length > 0 && (
+        <div className="border-b border-gray-100">
+          <div className="px-4 py-1.5 text-[10px] font-medium text-amber-500 uppercase">
+            Code has, spec doesn't ({report.codeOnly.length})
+          </div>
+          {report.codeOnly.map(item => renderItem(item, 'codeOnly'))}
+        </div>
+      )}
+
+      {/* Spec-only items (missing implementation) */}
+      {report.specOnly.length > 0 && (
+        <div className="border-b border-gray-100">
+          <div className="px-4 py-1.5 text-[10px] font-medium text-red-400 uppercase">
+            Spec has, code doesn't ({report.specOnly.length})
+          </div>
+          {report.specOnly.map(item => renderItem(item, 'specOnly'))}
+        </div>
+      )}
+
+      {report.syncScore === 100 && (
+        <div className="px-4 py-3 text-xs text-green-600 text-center">
+          Spec and code are fully in sync.
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**File: `src/components/ImplementationPanel/SyncBadge.tsx`**
+```tsx
+interface Props {
+  syncScore: number | undefined;
+  onClick?: () => void;
+}
+
+export function SyncBadge({ syncScore, onClick }: Props) {
+  if (syncScore === undefined) return null;
+
+  const color = syncScore >= 95 ? 'text-green-600 bg-green-50' :
+    syncScore >= 80 ? 'text-yellow-600 bg-yellow-50' :
+    syncScore >= 50 ? 'text-amber-600 bg-amber-50' : 'text-red-600 bg-red-50';
+
+  const icon = syncScore >= 95 ? '✓' :
+    syncScore >= 80 ? '~' :
+    syncScore >= 50 ? '⚠' : '✗';
+
+  return (
+    <button
+      onClick={onClick}
+      className={`text-[10px] px-1.5 py-0.5 rounded ${color} hover:opacity-80`}
+      title={`Sync score: ${syncScore}% — click to view reconciliation report`}
+    >
+      {icon} {syncScore}% synced
+    </button>
+  );
+}
+```
+
+**Update `src/components/ImplementationPanel/ImplementationPanel.tsx` — add reconciliation:**
+```tsx
+// Add to imports
+import { ReconciliationReport } from './ReconciliationReport';
+
+// Add after test results in the done/failed state:
+{(panelState === 'done' || panelState === 'failed') && (
+  <div className="flex-1 flex flex-col">
+    {/* ... existing done/failed UI ... */}
+    {(testResults || isRunningTests) && currentPrompt && (
+      <TestResults results={testResults} isRunning={isRunningTests} flowId={currentPrompt.flowId} />
+    )}
+    {/* Reconciliation report — shown after tests */}
+    <ReconciliationReport />
+  </div>
+)}
+```
+
+**Update `src/components/DomainMap/FlowBlock.tsx` — add sync badge:**
+```tsx
+// Add to imports
+import { SyncBadge } from '../ImplementationPanel/SyncBadge';
+import { useImplementationStore } from '../../stores/implementation-store';
+
+// Inside FlowBlock render, after test badge:
+const { mappings, togglePanel, reconcileFlow } = useImplementationStore();
+const mapping = mappings[`${domainId}/${flowId}`];
+
+// In the flow block JSX:
+{mapping?.sync_score !== undefined && (
+  <SyncBadge
+    syncScore={mapping.sync_score}
+    onClick={() => {
+      togglePanel();
+      reconcileFlow(`${domainId}/${flowId}`, projectPath);
+    }}
+  />
+)}
+```
+
 **Update `src/App.tsx` — add Implementation Panel:**
 ```tsx
 // Add to imports
@@ -7798,6 +8255,33 @@ nanoid = "0.4"
     - [ ] "Implement selected" processes flows sequentially (prompt → run → test → next)
     - [ ] Implemented flows show test result counts
 
+32. **Reverse Drift Detection — Implementation Report**
+    - [ ] Prompt includes "Implementation Report" instruction asking Claude Code to list deviations
+    - [ ] Terminal output is parsed for `## Implementation Notes` section after Claude Code finishes
+    - [ ] "No deviations" is detected and skips reconciliation
+    - [ ] Non-empty notes trigger auto-reconciliation (if configured)
+
+33. **Reverse Drift Detection — Reconciliation**
+    - [ ] After implementation, reconciliation runs automatically (configurable)
+    - [ ] Reconciliation reads spec YAML and generated code files
+    - [ ] LLM compares spec vs code and produces structured report
+    - [ ] Report shows matching items, code-only items, and spec-only items
+    - [ ] Sync score calculated and displayed (100% = perfect match)
+    - [ ] "Accept into spec" updates flow YAML to include code addition
+    - [ ] "Remove from code" builds targeted Claude Code prompt
+    - [ ] "Ignore" stores accepted deviation in mapping.yaml
+    - [ ] Accepted deviations don't trigger drift warnings again
+    - [ ] Matching items collapsed by default (expandable)
+    - [ ] Each item shows severity (minor/moderate/significant) and category
+
+34. **Reverse Drift Detection — Sync Score**
+    - [ ] Sync score badge shown on L2 flow blocks alongside test badge
+    - [ ] Green (≥95%), yellow (80-94%), amber (50-79%), red (<50%)
+    - [ ] Clicking sync badge opens reconciliation report
+    - [ ] Sync score in toolbar on L3 flow sheet
+    - [ ] Sync score stored in .ddd/mapping.yaml per flow
+    - [ ] Sync score recalculates when items are resolved
+
 ---
 
 ## Phase 5: Key Implementation Notes
@@ -7881,6 +8365,10 @@ nanoid = "0.4"
 29. **Do** include only referenced schemas in prompts (resolve from `$ref` and `data_store` model), not all schemas
 30. **Do** preserve the `<!-- CUSTOM -->` section when regenerating CLAUDE.md — users add project-specific instructions there
 31. **Don't** parse test output from raw text in production — use JSON reporters (`--json-report` for pytest, `--json` for jest) for accurate test results
+32. **Do** always include the Implementation Report instruction in prompts — without it, reverse drift detection has no structured data to parse
+33. **Don't** auto-accept reconciliation items without user review — always show the report and let the user decide accept/remove/ignore
+34. **Do** store accepted deviations in mapping.yaml so they don't re-trigger drift warnings on every reconciliation
+35. **Don't** run reconciliation with the full codebase — only send the files listed in the flow's mapping, not the entire project
 
 ---
 
@@ -8031,6 +8519,22 @@ npm run tauri dev
 - [ ] Implementation Queue shows all flows grouped by status
 - [ ] Batch implementation processes selected flows sequentially
 - [ ] Configuration loaded from .ddd/config.yaml with sensible defaults
+
+### Reverse Drift Detection
+- [ ] Prompt includes Implementation Report instruction requesting structured deviation notes
+- [ ] Terminal output parsed for `## Implementation Notes` section
+- [ ] Auto-reconciliation triggers after implementation (configurable via reconciliation.auto_run)
+- [ ] Reconciliation sends spec + code to Design Assistant LLM for structured comparison
+- [ ] Reconciliation report shows matching, code-only, and spec-only items
+- [ ] Sync score (0-100%) calculated from matching vs total items
+- [ ] "Accept into spec" uses LLM to generate updated spec YAML including the addition
+- [ ] "Remove from code" builds targeted Claude Code prompt to remove the item
+- [ ] "Ignore" stores accepted deviation in mapping.yaml (won't warn again)
+- [ ] Sync score badge displayed on L2 flow blocks (green/yellow/amber/red)
+- [ ] Clicking sync badge opens reconciliation report in Implementation Panel
+- [ ] Sync score persisted in .ddd/mapping.yaml per flow
+- [ ] Accepted deviations tracked and excluded from future reconciliation warnings
+- [ ] Reconciliation available manually via "Reconcile" button in Implementation Panel
 
 ---
 

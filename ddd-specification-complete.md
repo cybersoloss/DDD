@@ -4381,6 +4381,167 @@ testing:
   scoped: true
   scope_pattern: "tests/**/test_{flow_id}*"
   auto_run: true
+
+reconciliation:
+  auto_run: true                 # Auto-reconcile after implementation
+  auto_accept_matching: true     # Auto-accept items where code matches spec
+  notify_on_drift: true          # Show notification when drift detected
+```
+
+#### 7. Reverse Drift Detection
+
+Stale Detection (section 3 above) catches when **specs change but code hasn't been updated**. Reverse Drift Detection catches the opposite: when **code changes but specs haven't been updated**. Together they form a bidirectional sync loop.
+
+**The problem:** Claude Code follows the spec, but it also makes practical decisions — adding error handling the spec didn't mention, splitting a node into multiple steps, using a slightly different response shape, or adding middleware. These deviations are invisible to the DDD Tool. Over time, the flow diagrams show the *original design* but not what the code *actually does*.
+
+**Three layers work together to detect and resolve this:**
+
+##### Layer 1: Implementation Report
+
+The Prompt Builder (section 2 above) includes an instruction asking Claude Code to report what it actually did:
+
+```markdown
+## Implementation Report (required)
+
+After implementing, output a section titled `## Implementation Notes` with:
+
+1. **Deviations** — Anything you did differently from the spec (different field names,
+   changed error codes, reordered steps, etc.)
+2. **Additions** — Anything you added that the spec didn't mention (middleware,
+   validation, caching, extra error handling, helper functions, etc.)
+3. **Ambiguities resolved** — Anything the spec was unclear about and how you decided
+4. **Schema changes** — Any new fields, changed types, or migration implications
+
+If you followed the spec exactly with no changes, write: "No deviations."
+```
+
+The DDD Tool parses this structured output from the terminal after Claude Code finishes. If anything other than "No deviations" is found, it triggers reconciliation.
+
+##### Layer 2: Code → Spec Reconciliation
+
+After implementation, the DDD Tool's Design Assistant (the embedded LLM) reads the generated code files and compares them against the flow spec. It produces a **reconciliation report**:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ RECONCILIATION — api/user-register                            │
+│                                                                │
+│ Sync Score: 85%  (3 items need attention)                     │
+│                                                                │
+│ ✓ Matching (spec = code):                                     │
+│   • POST /auth/register endpoint                             │
+│   • validate_input → 3 field validations                     │
+│   • check_duplicate → DUPLICATE_ENTRY error                  │
+│   • create_user → User model insert                          │
+│   • return_success → 201 response                            │
+│                                                                │
+│ ⚠ Code has but spec doesn't:                                  │
+│   • rate_limit middleware (10 req/min per IP)                 │
+│     [Accept into spec]  [Remove from code]  [Ignore]         │
+│   • password_hash uses bcrypt (spec says "hash()")           │
+│     [Accept into spec]  [Ignore]                             │
+│   • response includes "token" field (spec only has user)     │
+│     [Accept into spec]  [Remove from code]  [Ignore]         │
+│                                                                │
+│ ⚠ Spec has but code doesn't:                                  │
+│   (none — all spec nodes are implemented)                     │
+│                                                                │
+│ [Accept all matching]  [Dismiss]                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**How reconciliation works:**
+
+1. The DDD Tool reads all files listed in `.ddd/mapping.yaml` for the flow
+2. It sends both the flow spec YAML and the implementation code to the Design Assistant LLM
+3. The LLM compares them and outputs a structured JSON reconciliation report
+4. The DDD Tool displays the report in the Implementation Panel
+
+**Reconciliation actions per item:**
+
+| Action | What happens |
+|--------|-------------|
+| **Accept into spec** | DDD Tool updates the flow spec YAML to include the addition (adds a node, updates a field, etc.). The canvas reflects the change immediately. |
+| **Remove from code** | Builds a targeted prompt for Claude Code: "Remove {item} from the implementation — it's not in the spec." |
+| **Ignore** | Marks this item as a known deviation. Stored in `.ddd/mapping.yaml` under `accepted_deviations`. Won't trigger drift warnings again. |
+
+**Accept into spec** is the most powerful action — it reverse-engineers code changes back into the flow diagram. For example, if Claude Code added a `rate_limit` middleware, accepting it adds a process node to the flow with the rate limiting spec filled in. The LLM generates the node spec based on what the code actually does.
+
+##### Layer 3: Sync Score
+
+Each implemented flow gets a **sync score** indicating how closely the code matches the spec:
+
+| Score | Meaning | Badge |
+|-------|---------|-------|
+| **100%** | Code matches spec exactly | ✓ (green) |
+| **80-99%** | Minor additions (extra validation, logging) | ~ (yellow) |
+| **50-79%** | Significant divergence (extra endpoints, changed schemas) | ⚠ (amber) |
+| **< 50%** | Code barely resembles spec | ✗ (red) |
+
+**Where sync scores appear:**
+
+On Level 2 (Domain Map), flow blocks show the sync badge alongside test badges:
+```
+┌──────────────────┐
+│ user-register     │
+│ ✓ 4/4 tests      │    ← test badge
+│ ~ 85% synced     │    ← sync badge
+└──────────────────┘
+```
+
+On Level 3 (Flow Sheet), a sync indicator appears in the toolbar:
+```
+[Flow: user-register]  [✓ Tests: 4/4]  [~ Sync: 85%]  [▶ Implement]
+```
+
+Clicking the sync badge opens the reconciliation report.
+
+##### The Full Bidirectional Sync Cycle
+
+```
+┌──────────────┐   Stale Detection    ┌───────────────┐
+│  SPEC        │ ────────────────────▶ │  CODE         │
+│  (YAML)      │   "Spec changed,     │  (src/)       │
+│              │    code is stale"     │               │
+│              │                       │               │
+│              │   Reverse Drift       │               │
+│              │ ◀──────────────────── │               │
+│              │   "Code diverged,     │               │
+│              │    spec is outdated"  │               │
+└──────┬───────┘                       └───────┬───────┘
+       │                                       │
+       │         ┌──────────────┐              │
+       └────────▶│ RECONCILE    │◀─────────────┘
+                 │              │
+                 │ • Compare    │
+                 │ • Score      │
+                 │ • Accept /   │
+                 │   Remove /   │
+                 │   Ignore     │
+                 └──────────────┘
+```
+
+**When reconciliation runs:**
+- Automatically after every Claude Code implementation (if `reconciliation.auto_run: true`)
+- Manually via "Reconcile" button in Implementation Panel
+- On project load, for any flow that was implemented outside the DDD Tool (e.g., manually edited code)
+- After git pull, if code files in mapping changed but spec didn't
+
+**Reconciliation data storage:**
+
+```yaml
+# .ddd/mapping.yaml — extended with reconciliation data
+flows:
+  api/user-register:
+    spec: specs/domains/api/flows/user-register.yaml
+    spec_hash: abc123...
+    files: [src/domains/api/router.py, src/domains/api/schemas.py, src/domains/api/services.py]
+    implemented_at: "2025-01-15T10:30:00Z"
+    sync_score: 85
+    last_reconciled_at: "2025-01-15T10:32:00Z"
+    accepted_deviations:
+      - description: "password_hash uses bcrypt"
+        code_location: "src/domains/api/services.py:23"
+        accepted_at: "2025-01-15T10:33:00Z"
 ```
 
 ---
@@ -4555,6 +4716,7 @@ Public marketplace:
 - **Test Runner:** Auto-runs tests after implementation, displays results linked to flows, fix-and-retest loop
 - **CLAUDE.md Auto-Generation:** Maintains CLAUDE.md with project structure, spec files, domains, rules (preserves custom section)
 - **Implementation Queue:** Batch processing of pending/stale flows with sequential Claude Code invocation
+- **Reverse Drift Detection:** Implementation Report parsing, LLM-powered code→spec reconciliation, sync scores, accept/remove/ignore actions
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage
