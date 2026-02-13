@@ -178,6 +178,10 @@ ddd-tool/
 │   │   │   └── GitSettings.tsx        # Commit messages, branch naming
 │   │   ├── FirstRun/
 │   │   │   └── FirstRunWizard.tsx     # First-time setup (LLM + Claude Code + project)
+│   │   ├── Validation/
+│   │   │   ├── ValidationPanel.tsx    # Validation results (errors, warnings, info) per scope
+│   │   │   ├── ValidationBadge.tsx    # Compact badge for canvas (✓/⚠/✗ + count)
+│   │   │   └── ImplementGate.tsx      # Pre-implementation validation gate (validate → prompt → run)
 │   │   └── shared/
 │   │       ├── Button.tsx
 │   │       ├── Input.tsx
@@ -193,7 +197,8 @@ ddd-tool/
 │   │   ├── memory-store.ts    # Project memory layers, refresh triggers
 │   │   ├── implementation-store.ts  # Implementation panel state, queue, test results
 │   │   ├── app-store.ts         # App-level state: current view, recent projects, first-run
-│   │   └── undo-store.ts        # Per-flow undo/redo stacks
+│   │   ├── undo-store.ts        # Per-flow undo/redo stacks
+│   │   └── validation-store.ts  # Validation results per flow/domain/system, gate state
 │   ├── types/
 │   │   ├── sheet.ts           # Sheet levels, navigation, breadcrumb types
 │   │   ├── domain.ts          # Domain config, event wiring, portal types
@@ -205,7 +210,8 @@ ddd-tool/
 │   │   ├── memory.ts          # Project memory layer types
 │   │   ├── implementation.ts  # Implementation panel, prompt builder, test runner types
 │   │   ├── test-generator.ts  # Derived test cases, test paths, boundary tests, spec compliance
-│   │   └── app.ts             # App shell types: recent projects, settings, first-run, undo
+│   │   ├── app.ts             # App shell types: recent projects, settings, first-run, undo
+│   │   └── validation.ts     # Validation issue types, scopes, severity, gate state
 │   ├── utils/
 │   │   ├── yaml.ts
 │   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
@@ -218,6 +224,7 @@ ddd-tool/
 │   │   ├── dockerfile-generator.ts # Generate Dockerfile + compose from deployment config
 │   │   ├── migration-tracker.ts    # Track schema hashes, detect changes, build migration prompts
 │   │   ├── test-case-deriver.ts   # Walk flow graphs, derive test paths + boundary tests
+│   │   ├── flow-validator.ts      # Flow, domain, and system-level validation engine
 │   │   ├── mermaid.ts
 │   │   └── validation.ts
 │   └── styles/
@@ -10637,6 +10644,1167 @@ updateSpec: (nodeId, field, value) => {
 
 ---
 
+### Design Validation
+
+**File: `src/types/validation.ts`**
+```typescript
+export type ValidationSeverity = 'error' | 'warning' | 'info';
+export type ValidationScope = 'flow' | 'domain' | 'system';
+export type ValidationCategory =
+  | 'graph_completeness'
+  | 'spec_completeness'
+  | 'reference_integrity'
+  | 'agent_validation'
+  | 'orchestration_validation'
+  | 'domain_consistency'
+  | 'event_wiring'
+  | 'cross_domain_data'
+  | 'portal_wiring'
+  | 'orchestration_wiring';
+
+export interface ValidationIssue {
+  id: string;
+  scope: ValidationScope;
+  severity: ValidationSeverity;
+  category: ValidationCategory;
+  message: string;
+  detail?: string;                     // Longer explanation
+  suggestion?: string;                 // How to fix
+  nodeId?: string;                     // Which node (for flow-level)
+  flowId?: string;                     // Which flow
+  domainId?: string;                   // Which domain
+  relatedFlowId?: string;             // For cross-domain issues, the other flow
+  relatedDomainId?: string;           // For cross-domain issues, the other domain
+}
+
+export interface ValidationResult {
+  scope: ValidationScope;
+  targetId: string;                    // flow ID, domain name, or 'system'
+  issues: ValidationIssue[];
+  errorCount: number;
+  warningCount: number;
+  infoCount: number;
+  isValid: boolean;                    // true if errorCount === 0
+  validatedAt: string;
+}
+
+export interface ImplementGateState {
+  flowValidation: ValidationResult | null;
+  domainValidation: ValidationResult | null;
+  systemValidation: ValidationResult | null;
+  canImplement: boolean;               // true if no errors at any level
+  hasWarnings: boolean;
+}
+```
+
+**File: `src/utils/flow-validator.ts`**
+```typescript
+import { DddFlow, DddNode } from '../types/flow';
+import { ValidationIssue, ValidationResult } from '../types/validation';
+
+// ============================================================
+// FLOW-LEVEL VALIDATION
+// ============================================================
+
+export function validateFlow(
+  flow: DddFlow,
+  errorCodes: string[],
+  schemaNames: string[],
+  allFlowIds: string[]
+): ValidationResult {
+  const issues: ValidationIssue[] = [
+    ...validateGraphCompleteness(flow),
+    ...validateSpecCompleteness(flow),
+    ...validateReferenceIntegrity(flow, errorCodes, schemaNames, allFlowIds),
+    ...(flow.flow_type === 'agent' ? validateAgentFlow(flow) : []),
+    ...(flow.flow_type === 'orchestration' ? validateOrchestrationFlow(flow, allFlowIds) : []),
+  ];
+
+  return buildResult('flow', flow.id, issues);
+}
+
+function validateGraphCompleteness(flow: DddFlow): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const nodeMap = new Map(flow.nodes.map(n => [n.id, n]));
+
+  // Trigger exists
+  const triggers = flow.nodes.filter(n => n.type === 'trigger');
+  if (triggers.length === 0) {
+    issues.push(issue('error', 'graph_completeness', 'Flow has no trigger node', flow.id));
+  } else if (triggers.length > 1) {
+    issues.push(issue('error', 'graph_completeness', 'Flow has multiple trigger nodes — only one allowed', flow.id));
+  }
+
+  // Find all reachable nodes from trigger via BFS
+  const reachable = new Set<string>();
+  if (triggers[0]) {
+    const queue = [triggers[0].id];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (reachable.has(current)) continue;
+      reachable.add(current);
+      const node = nodeMap.get(current);
+      if (!node) continue;
+      const connections = node.connections || {};
+      for (const targetId of Object.values(connections)) {
+        if (typeof targetId === 'string' && !reachable.has(targetId)) {
+          queue.push(targetId);
+        }
+      }
+    }
+  }
+
+  // Orphaned nodes
+  for (const node of flow.nodes) {
+    if (!reachable.has(node.id) && node.type !== 'trigger') {
+      issues.push(issue('error', 'graph_completeness',
+        `Node "${node.id}" is unreachable from trigger`, flow.id, node.id));
+    }
+  }
+
+  // All paths reach terminal (check for dead-ends)
+  for (const node of flow.nodes) {
+    if (!reachable.has(node.id)) continue;
+    if (node.type === 'terminal') continue;
+
+    const connections = node.connections || {};
+    const targets = Object.values(connections).filter(v => typeof v === 'string');
+
+    if (targets.length === 0 && node.type !== 'trigger') {
+      issues.push(issue('error', 'graph_completeness',
+        `Node "${node.id}" (${node.type}) has no outgoing connections — dead end`,
+        flow.id, node.id,
+        'Connect this node to a downstream node or terminal'));
+    }
+  }
+
+  // Decision branches complete
+  for (const node of flow.nodes) {
+    if (node.type === 'decision') {
+      const conn = node.connections || {};
+      if (!conn['true'] && !conn['false']) {
+        issues.push(issue('error', 'graph_completeness',
+          `Decision "${node.id}" has no branches connected`, flow.id, node.id));
+      } else if (!conn['true']) {
+        issues.push(issue('error', 'graph_completeness',
+          `Decision "${node.id}" missing true branch`, flow.id, node.id));
+      } else if (!conn['false']) {
+        issues.push(issue('error', 'graph_completeness',
+          `Decision "${node.id}" missing false branch`, flow.id, node.id));
+      }
+    }
+  }
+
+  // Input node branches
+  for (const node of flow.nodes) {
+    if (node.type === 'input') {
+      const conn = node.connections || {};
+      if (!conn['valid']) {
+        issues.push(issue('error', 'graph_completeness',
+          `Input "${node.id}" missing valid branch`, flow.id, node.id));
+      }
+      if (!conn['invalid']) {
+        issues.push(issue('warning', 'graph_completeness',
+          `Input "${node.id}" missing invalid branch — validation errors won't be handled`,
+          flow.id, node.id));
+      }
+    }
+  }
+
+  // Cycle detection for traditional flows
+  if (flow.flow_type !== 'agent') {
+    if (hasCycle(flow)) {
+      issues.push(issue('error', 'graph_completeness',
+        'Flow contains a cycle — traditional flows must be acyclic (DAG)', flow.id));
+    }
+  }
+
+  return issues;
+}
+
+function validateSpecCompleteness(flow: DddFlow): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  for (const node of flow.nodes) {
+    const spec = node.spec || {};
+
+    if (node.type === 'trigger') {
+      if (!spec.type) {
+        issues.push(issue('error', 'spec_completeness',
+          `Trigger "${node.id}" has no type defined`, flow.id, node.id,
+          'Set trigger type (http, event, scheduled, manual)'));
+      }
+      if (spec.type === 'http') {
+        if (!spec.method) issues.push(issue('error', 'spec_completeness',
+          `HTTP trigger "${node.id}" missing method`, flow.id, node.id));
+        if (!spec.path) issues.push(issue('error', 'spec_completeness',
+          `HTTP trigger "${node.id}" missing path`, flow.id, node.id));
+      }
+    }
+
+    if (node.type === 'input') {
+      const fields = spec.fields || {};
+      for (const [name, rules] of Object.entries(fields)) {
+        const r = rules as any;
+        if (!r.type) {
+          issues.push(issue('error', 'spec_completeness',
+            `Input "${node.id}" field "${name}" has no type`, flow.id, node.id));
+        }
+        if (r.required && !r.error) {
+          issues.push(issue('error', 'spec_completeness',
+            `Input "${node.id}" required field "${name}" has no error message`,
+            flow.id, node.id, 'Add error message for validation feedback'));
+        }
+        if ((r.min_length !== undefined || r.max_length !== undefined || r.format) && !r.error) {
+          issues.push(issue('warning', 'spec_completeness',
+            `Input "${node.id}" field "${name}" has validation rules but no error message`,
+            flow.id, node.id));
+        }
+      }
+    }
+
+    if (node.type === 'decision') {
+      if (!spec.check && !spec.condition) {
+        issues.push(issue('error', 'spec_completeness',
+          `Decision "${node.id}" has no check or condition defined`, flow.id, node.id));
+      }
+      if (spec.on_true && !spec.on_true.error_code) {
+        issues.push(issue('warning', 'spec_completeness',
+          `Decision "${node.id}" error branch has no error_code`, flow.id, node.id));
+      }
+    }
+
+    if (node.type === 'terminal') {
+      if (!spec.status && flow.nodes.find(n => n.type === 'trigger')?.spec?.type === 'http') {
+        issues.push(issue('warning', 'spec_completeness',
+          `Terminal "${node.id}" has no HTTP status code`, flow.id, node.id));
+      }
+      if (!spec.body) {
+        issues.push(issue('info', 'spec_completeness',
+          `Terminal "${node.id}" has no response body defined`, flow.id, node.id));
+      }
+    }
+
+    if (node.type === 'data_store') {
+      if (!spec.operation) {
+        issues.push(issue('error', 'spec_completeness',
+          `Data store "${node.id}" has no operation (create/read/update/delete)`, flow.id, node.id));
+      }
+      if (!spec.model) {
+        issues.push(issue('error', 'spec_completeness',
+          `Data store "${node.id}" has no model specified`, flow.id, node.id));
+      }
+    }
+
+    if (node.type === 'process' && !spec.description) {
+      issues.push(issue('warning', 'spec_completeness',
+        `Process "${node.id}" has no description`, flow.id, node.id));
+    }
+  }
+
+  return issues;
+}
+
+function validateReferenceIntegrity(
+  flow: DddFlow,
+  errorCodes: string[],
+  schemaNames: string[],
+  allFlowIds: string[]
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  for (const node of flow.nodes) {
+    const spec = node.spec || {};
+
+    // Error code references
+    const codes = extractErrorCodes(node);
+    for (const code of codes) {
+      if (!errorCodes.includes(code)) {
+        issues.push(issue('error', 'reference_integrity',
+          `Error code "${code}" not found in errors.yaml`, flow.id, node.id,
+          `Add "${code}" to specs/shared/errors.yaml or use an existing code`));
+      }
+    }
+
+    // Schema model references
+    if (node.type === 'data_store' && spec.model) {
+      if (!schemaNames.includes(spec.model.toLowerCase())) {
+        issues.push(issue('error', 'reference_integrity',
+          `Model "${spec.model}" not found in specs/schemas/`, flow.id, node.id,
+          `Create specs/schemas/${spec.model.toLowerCase()}.yaml`));
+      }
+    }
+
+    // Sub-flow references
+    if (node.type === 'sub_flow' && spec.flow_ref) {
+      if (!allFlowIds.includes(spec.flow_ref)) {
+        issues.push(issue('error', 'reference_integrity',
+          `Sub-flow "${spec.flow_ref}" does not exist`, flow.id, node.id));
+      }
+    }
+  }
+
+  return issues;
+}
+
+function validateAgentFlow(flow: DddFlow): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  const agentLoops = flow.nodes.filter(n => n.type === 'agent_loop');
+  if (agentLoops.length === 0) {
+    issues.push(issue('error', 'agent_validation', 'Agent flow has no agent_loop node', flow.id));
+    return issues;
+  }
+  if (agentLoops.length > 1) {
+    issues.push(issue('error', 'agent_validation', 'Agent flow has multiple agent_loop nodes', flow.id));
+  }
+
+  const agent = agentLoops[0];
+  const tools = flow.nodes.filter(n => n.type === 'tool');
+  if (tools.length === 0) {
+    issues.push(issue('error', 'agent_validation', 'Agent has no tools connected', flow.id, agent.id));
+  }
+
+  const terminalTools = tools.filter(t => t.spec?.terminal);
+  if (terminalTools.length === 0) {
+    issues.push(issue('error', 'agent_validation',
+      'Agent has no terminal tool — loop has no way to end', flow.id, agent.id,
+      'Mark at least one tool as terminal: true'));
+  }
+
+  if (!agent.spec?.max_iterations) {
+    issues.push(issue('warning', 'agent_validation',
+      'Agent loop has no max_iterations — could run indefinitely', flow.id, agent.id));
+  }
+
+  if (!agent.spec?.model) {
+    issues.push(issue('warning', 'agent_validation',
+      'Agent loop has no LLM model specified', flow.id, agent.id));
+  }
+
+  const guardrails = flow.nodes.filter(n => n.type === 'guardrail');
+  for (const g of guardrails) {
+    if (!g.spec?.checks || g.spec.checks.length === 0) {
+      issues.push(issue('warning', 'agent_validation',
+        `Guardrail "${g.id}" has no checks defined`, flow.id, g.id));
+    }
+  }
+
+  const humanGates = flow.nodes.filter(n => n.type === 'human_gate');
+  for (const h of humanGates) {
+    if (!h.spec?.description) {
+      issues.push(issue('warning', 'agent_validation',
+        `Human gate "${h.id}" has no description — user won't know what they're approving`,
+        flow.id, h.id));
+    }
+  }
+
+  return issues;
+}
+
+function validateOrchestrationFlow(flow: DddFlow, allFlowIds: string[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  // Orchestrator checks
+  for (const node of flow.nodes.filter(n => n.type === 'orchestrator')) {
+    const agents = node.spec?.agents || [];
+    if (agents.length < 2) {
+      issues.push(issue('error', 'orchestration_validation',
+        `Orchestrator "${node.id}" needs at least 2 agents`, flow.id, node.id));
+    }
+    if (!node.spec?.strategy) {
+      issues.push(issue('error', 'orchestration_validation',
+        `Orchestrator "${node.id}" has no strategy defined`, flow.id, node.id));
+    }
+    // Verify referenced agents exist
+    for (const agentId of agents) {
+      if (!allFlowIds.includes(agentId)) {
+        issues.push(issue('error', 'orchestration_validation',
+          `Orchestrator "${node.id}" references agent "${agentId}" which doesn't exist`,
+          flow.id, node.id));
+      }
+    }
+  }
+
+  // Router checks
+  for (const node of flow.nodes.filter(n => n.type === 'smart_router')) {
+    const rules = node.spec?.rules || [];
+    if (rules.length === 0) {
+      issues.push(issue('error', 'orchestration_validation',
+        `Router "${node.id}" has no routing rules`, flow.id, node.id));
+    }
+    if (!node.spec?.fallback) {
+      issues.push(issue('warning', 'orchestration_validation',
+        `Router "${node.id}" has no fallback agent`, flow.id, node.id));
+    }
+    // Verify rule targets exist
+    for (const rule of rules) {
+      if (rule.target && !allFlowIds.includes(rule.target)) {
+        issues.push(issue('error', 'orchestration_validation',
+          `Router "${node.id}" rule targets "${rule.target}" which doesn't exist`,
+          flow.id, node.id));
+      }
+    }
+    if (node.spec?.circuit_breaker) {
+      if (!node.spec.circuit_breaker.failure_threshold) {
+        issues.push(issue('warning', 'orchestration_validation',
+          `Router "${node.id}" circuit breaker missing failure_threshold`, flow.id, node.id));
+      }
+    }
+  }
+
+  // Handoff checks
+  for (const node of flow.nodes.filter(n => n.type === 'handoff')) {
+    if (!node.spec?.target) {
+      issues.push(issue('error', 'orchestration_validation',
+        `Handoff "${node.id}" has no target agent`, flow.id, node.id));
+    } else if (!allFlowIds.includes(node.spec.target)) {
+      issues.push(issue('error', 'orchestration_validation',
+        `Handoff "${node.id}" targets "${node.spec.target}" which doesn't exist`,
+        flow.id, node.id));
+    }
+    if (!node.spec?.mode) {
+      issues.push(issue('warning', 'orchestration_validation',
+        `Handoff "${node.id}" has no mode (transfer/consult/collaborate)`, flow.id, node.id));
+    }
+  }
+
+  // Agent group checks
+  for (const node of flow.nodes.filter(n => n.type === 'agent_group')) {
+    const members = node.spec?.members || [];
+    if (members.length < 2) {
+      issues.push(issue('error', 'orchestration_validation',
+        `Agent group "${node.id}" needs at least 2 members`, flow.id, node.id));
+    }
+    for (const memberId of members) {
+      if (!allFlowIds.includes(memberId)) {
+        issues.push(issue('error', 'orchestration_validation',
+          `Agent group "${node.id}" member "${memberId}" doesn't exist`, flow.id, node.id));
+      }
+    }
+  }
+
+  return issues;
+}
+
+// ============================================================
+// DOMAIN-LEVEL VALIDATION
+// ============================================================
+
+export function validateDomain(
+  domainName: string,
+  flows: DddFlow[],
+  domainYaml: any
+): ValidationResult {
+  const issues: ValidationIssue[] = [];
+
+  // Duplicate flow IDs
+  const flowIds = flows.map(f => f.id);
+  const seen = new Set<string>();
+  for (const id of flowIds) {
+    if (seen.has(id)) {
+      issues.push({
+        id: crypto.randomUUID(), scope: 'domain', severity: 'error',
+        category: 'domain_consistency', domainId: domainName,
+        message: `Duplicate flow ID "${id}" in domain "${domainName}"`,
+      });
+    }
+    seen.add(id);
+  }
+
+  // Duplicate HTTP paths
+  const httpPaths = new Map<string, string>();
+  for (const flow of flows) {
+    const trigger = flow.nodes.find(n => n.type === 'trigger');
+    if (trigger?.spec?.type === 'http' && trigger.spec.method && trigger.spec.path) {
+      const key = `${trigger.spec.method} ${trigger.spec.path}`;
+      if (httpPaths.has(key)) {
+        issues.push({
+          id: crypto.randomUUID(), scope: 'domain', severity: 'error',
+          category: 'domain_consistency', domainId: domainName, flowId: flow.id,
+          message: `Duplicate HTTP endpoint "${key}" — also used by flow "${httpPaths.get(key)}"`,
+        });
+      }
+      httpPaths.set(key, flow.id);
+    }
+  }
+
+  // Domain.yaml flow list matches actual files
+  if (domainYaml?.flows) {
+    const declared = new Set(domainYaml.flows.map((f: any) => f.id || f.name || f));
+    for (const flow of flows) {
+      if (!declared.has(flow.id)) {
+        issues.push({
+          id: crypto.randomUUID(), scope: 'domain', severity: 'info',
+          category: 'domain_consistency', domainId: domainName, flowId: flow.id,
+          message: `Flow "${flow.id}" exists on disk but not listed in domain.yaml`,
+        });
+      }
+    }
+  }
+
+  return buildResult('domain', domainName, issues);
+}
+
+// ============================================================
+// SYSTEM-LEVEL VALIDATION (CROSS-DOMAIN WIRING)
+// ============================================================
+
+export function validateSystem(
+  domains: Array<{ name: string; config: any; flows: DddFlow[] }>,
+  schemas: string[],
+  allFlowIds: string[]
+): ValidationResult {
+  const issues: ValidationIssue[] = [
+    ...validateEventWiring(domains),
+    ...validatePortalWiring(domains),
+    ...validateOrchestrationWiring(domains, allFlowIds),
+    ...validateCrossDomainData(domains, schemas),
+  ];
+
+  return buildResult('system', 'system', issues);
+}
+
+function validateEventWiring(
+  domains: Array<{ name: string; config: any; flows: DddFlow[] }>
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  // Collect all published and consumed events
+  const published: Array<{ event: string; domain: string; payload?: any }> = [];
+  const consumed: Array<{ event: string; domain: string; expectedPayload?: any }> = [];
+
+  for (const domain of domains) {
+    const config = domain.config || {};
+    for (const event of config.publishes_events || []) {
+      published.push({
+        event: typeof event === 'string' ? event : event.name,
+        domain: domain.name,
+        payload: typeof event === 'object' ? event.payload : undefined,
+      });
+    }
+    for (const event of config.consumes_events || []) {
+      consumed.push({
+        event: typeof event === 'string' ? event : event.name,
+        domain: domain.name,
+        expectedPayload: typeof event === 'object' ? event.payload : undefined,
+      });
+    }
+  }
+
+  // Consumed events must have a publisher
+  for (const c of consumed) {
+    const publisher = published.find(p => p.event === c.event);
+    if (!publisher) {
+      issues.push({
+        id: crypto.randomUUID(), scope: 'system', severity: 'error',
+        category: 'event_wiring', domainId: c.domain,
+        message: `Domain "${c.domain}" consumes event "${c.event}" but no domain publishes it`,
+        suggestion: `Add "${c.event}" to publishes_events in the producing domain`,
+      });
+    }
+  }
+
+  // Published events should have at least one consumer
+  for (const p of published) {
+    const consumer = consumed.find(c => c.event === p.event);
+    if (!consumer) {
+      issues.push({
+        id: crypto.randomUUID(), scope: 'system', severity: 'warning',
+        category: 'event_wiring', domainId: p.domain,
+        message: `Domain "${p.domain}" publishes event "${p.event}" but no domain consumes it`,
+        suggestion: 'Either add a consumer or remove the published event',
+      });
+    }
+  }
+
+  // Event payload shape matching
+  for (const c of consumed) {
+    const publisher = published.find(p => p.event === c.event);
+    if (publisher && publisher.payload && c.expectedPayload) {
+      const pubFields = Object.keys(publisher.payload);
+      const conFields = Object.keys(c.expectedPayload);
+      const missingInPub = conFields.filter(f => !pubFields.includes(f));
+      const extraInPub = pubFields.filter(f => !conFields.includes(f));
+
+      if (missingInPub.length > 0) {
+        issues.push({
+          id: crypto.randomUUID(), scope: 'system', severity: 'error',
+          category: 'event_wiring', domainId: c.domain,
+          relatedDomainId: publisher.domain,
+          message: `Event "${c.event}" payload mismatch: consumer "${c.domain}" expects fields [${missingInPub.join(', ')}] but publisher "${publisher.domain}" doesn't provide them`,
+          suggestion: 'Update publisher payload or consumer expectations to match',
+        });
+      }
+      if (extraInPub.length > 0) {
+        issues.push({
+          id: crypto.randomUUID(), scope: 'system', severity: 'info',
+          category: 'event_wiring', domainId: publisher.domain,
+          relatedDomainId: c.domain,
+          message: `Event "${c.event}": publisher "${publisher.domain}" sends extra fields [${extraInPub.join(', ')}] not consumed by "${c.domain}"`,
+        });
+      }
+    }
+  }
+
+  // Event naming consistency check
+  const allEventNames = [...published, ...consumed].map(e => e.event);
+  const patterns = {
+    dotCase: /^[a-z]+\.[a-z_]+$/,          // contract.ingested
+    camelCase: /^[a-z]+[A-Z][a-zA-Z]+$/,   // contractIngested
+    snakeCase: /^[a-z]+_[a-z_]+$/,          // contract_ingested
+  };
+  const detected = new Set<string>();
+  for (const name of allEventNames) {
+    if (patterns.dotCase.test(name)) detected.add('dot.case');
+    else if (patterns.camelCase.test(name)) detected.add('camelCase');
+    else if (patterns.snakeCase.test(name)) detected.add('snake_case');
+  }
+  if (detected.size > 1) {
+    issues.push({
+      id: crypto.randomUUID(), scope: 'system', severity: 'warning',
+      category: 'event_wiring',
+      message: `Inconsistent event naming: mixing ${[...detected].join(', ')} conventions`,
+      suggestion: 'Standardize on one naming convention (recommended: entity.action)',
+    });
+  }
+
+  return issues;
+}
+
+function validatePortalWiring(
+  domains: Array<{ name: string; config: any; flows: DddFlow[] }>
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const domainNames = new Set(domains.map(d => d.name));
+
+  for (const domain of domains) {
+    const portals = domain.config?.portals || [];
+    for (const portal of portals) {
+      const targetDomain = typeof portal === 'string' ? portal : portal.target;
+      if (!domainNames.has(targetDomain)) {
+        issues.push({
+          id: crypto.randomUUID(), scope: 'system', severity: 'error',
+          category: 'portal_wiring', domainId: domain.name,
+          message: `Portal in "${domain.name}" points to domain "${targetDomain}" which doesn't exist`,
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
+function validateOrchestrationWiring(
+  domains: Array<{ name: string; config: any; flows: DddFlow[] }>,
+  allFlowIds: string[]
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  // Build orchestration dependency graph for cycle detection
+  const orchGraph = new Map<string, string[]>();
+
+  for (const domain of domains) {
+    for (const flow of domain.flows) {
+      if (flow.flow_type !== 'orchestration') continue;
+
+      const agentRefs: string[] = [];
+      for (const node of flow.nodes) {
+        if (node.type === 'orchestrator') {
+          agentRefs.push(...(node.spec?.agents || []));
+        }
+        if (node.type === 'smart_router') {
+          for (const rule of node.spec?.rules || []) {
+            if (rule.target) agentRefs.push(rule.target);
+          }
+          if (node.spec?.fallback) agentRefs.push(node.spec.fallback);
+        }
+        if (node.type === 'handoff' && node.spec?.target) {
+          agentRefs.push(node.spec.target);
+        }
+      }
+      orchGraph.set(flow.id, agentRefs);
+    }
+  }
+
+  // Detect cycles in orchestration graph
+  function detectCycle(start: string, visited: Set<string>, path: string[]): string[] | null {
+    if (path.includes(start)) return [...path, start];
+    if (visited.has(start)) return null;
+    visited.add(start);
+    const deps = orchGraph.get(start) || [];
+    for (const dep of deps) {
+      if (orchGraph.has(dep)) {  // only follow orchestration flows
+        const cycle = detectCycle(dep, visited, [...path, start]);
+        if (cycle) return cycle;
+      }
+    }
+    return null;
+  }
+
+  const visited = new Set<string>();
+  for (const flowId of orchGraph.keys()) {
+    const cycle = detectCycle(flowId, visited, []);
+    if (cycle) {
+      issues.push({
+        id: crypto.randomUUID(), scope: 'system', severity: 'error',
+        category: 'orchestration_wiring',
+        message: `Circular orchestration dependency: ${cycle.join(' → ')}`,
+        suggestion: 'Break the cycle by removing one orchestration reference',
+      });
+      break; // Report first cycle only
+    }
+  }
+
+  return issues;
+}
+
+function validateCrossDomainData(
+  domains: Array<{ name: string; config: any; flows: DddFlow[] }>,
+  schemas: string[]
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  // Check cross-domain API dependencies (service_call nodes targeting other domains)
+  const httpEndpoints = new Map<string, string>(); // "METHOD /path" → flow.id
+  for (const domain of domains) {
+    for (const flow of domain.flows) {
+      const trigger = flow.nodes.find(n => n.type === 'trigger');
+      if (trigger?.spec?.type === 'http' && trigger.spec.method && trigger.spec.path) {
+        httpEndpoints.set(`${trigger.spec.method} ${trigger.spec.path}`, flow.id);
+      }
+    }
+  }
+
+  for (const domain of domains) {
+    for (const flow of domain.flows) {
+      for (const node of flow.nodes) {
+        if (node.type === 'service_call' && node.spec?.method && node.spec?.path) {
+          const key = `${node.spec.method} ${node.spec.path}`;
+          if (!httpEndpoints.has(key)) {
+            issues.push({
+              id: crypto.randomUUID(), scope: 'system', severity: 'warning',
+              category: 'cross_domain_data', domainId: domain.name, flowId: flow.id,
+              message: `Service call in "${flow.id}" targets "${key}" which doesn't match any flow endpoint`,
+              suggestion: 'Verify the target endpoint exists or create the flow',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function issue(
+  severity: ValidationIssue['severity'],
+  category: ValidationIssue['category'],
+  message: string,
+  flowId?: string,
+  nodeId?: string,
+  suggestion?: string
+): ValidationIssue {
+  return {
+    id: crypto.randomUUID(),
+    scope: 'flow',
+    severity,
+    category,
+    message,
+    flowId,
+    nodeId,
+    suggestion,
+  };
+}
+
+function buildResult(scope: ValidationResult['scope'], targetId: string, issues: ValidationIssue[]): ValidationResult {
+  return {
+    scope,
+    targetId,
+    issues,
+    errorCount: issues.filter(i => i.severity === 'error').length,
+    warningCount: issues.filter(i => i.severity === 'warning').length,
+    infoCount: issues.filter(i => i.severity === 'info').length,
+    isValid: issues.filter(i => i.severity === 'error').length === 0,
+    validatedAt: new Date().toISOString(),
+  };
+}
+
+function extractErrorCodes(node: DddNode): string[] {
+  const codes: string[] = [];
+  const spec = node.spec || {};
+  if (spec.error_code) codes.push(spec.error_code);
+  if (spec.on_true?.error_code) codes.push(spec.on_true.error_code);
+  if (spec.on_false?.error_code) codes.push(spec.on_false.error_code);
+  return codes;
+}
+
+function hasCycle(flow: DddFlow): boolean {
+  const nodeMap = new Map(flow.nodes.map(n => [n.id, n]));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  function dfs(nodeId: string): boolean {
+    if (visiting.has(nodeId)) return true;
+    if (visited.has(nodeId)) return false;
+    visiting.add(nodeId);
+    const node = nodeMap.get(nodeId);
+    if (node) {
+      for (const target of Object.values(node.connections || {})) {
+        if (typeof target === 'string' && dfs(target)) return true;
+      }
+    }
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+    return false;
+  }
+
+  for (const node of flow.nodes) {
+    if (dfs(node.id)) return true;
+  }
+  return false;
+}
+```
+
+**File: `src/stores/validation-store.ts`**
+```typescript
+import { create } from 'zustand';
+import { ValidationResult, ImplementGateState } from '../types/validation';
+import { validateFlow, validateDomain, validateSystem } from '../utils/flow-validator';
+import { useFlowStore } from './flow-store';
+import { useProjectStore } from './project-store';
+
+interface ValidationStore {
+  // Results cache
+  flowResults: Record<string, ValidationResult>;
+  domainResults: Record<string, ValidationResult>;
+  systemResult: ValidationResult | null;
+
+  // Actions
+  validateCurrentFlow: () => void;
+  validateDomain: (domainName: string) => void;
+  validateSystem: () => void;
+  validateAll: () => void;
+
+  // Implementation gate
+  checkImplementGate: (flowId: string) => ImplementGateState;
+
+  // Node-level queries
+  getNodeIssues: (flowId: string, nodeId: string) => ValidationResult['issues'];
+}
+
+export const useValidationStore = create<ValidationStore>((set, get) => ({
+  flowResults: {},
+  domainResults: {},
+  systemResult: null,
+
+  validateCurrentFlow: () => {
+    const flow = useFlowStore.getState().currentFlow;
+    if (!flow) return;
+
+    const project = useProjectStore.getState();
+    const errorCodes = project.errorCodes || [];
+    const schemaNames = project.schemaNames || [];
+    const allFlowIds = project.allFlowIds || [];
+
+    const result = validateFlow(flow, errorCodes, schemaNames, allFlowIds);
+    set({ flowResults: { ...get().flowResults, [flow.id]: result } });
+  },
+
+  validateDomain: (domainName) => {
+    const project = useProjectStore.getState();
+    const domainFlows = project.getFlowsForDomain(domainName);
+    const domainConfig = project.getDomainConfig(domainName);
+
+    const result = validateDomain(domainName, domainFlows, domainConfig);
+    set({ domainResults: { ...get().domainResults, [domainName]: result } });
+  },
+
+  validateSystem: () => {
+    const project = useProjectStore.getState();
+    const domains = project.domains.map(d => ({
+      name: d.name,
+      config: project.getDomainConfig(d.name),
+      flows: project.getFlowsForDomain(d.name),
+    }));
+    const schemas = project.schemaNames || [];
+    const allFlowIds = project.allFlowIds || [];
+
+    const result = validateSystem(domains, schemas, allFlowIds);
+    set({ systemResult: result });
+  },
+
+  validateAll: () => {
+    const project = useProjectStore.getState();
+    // Validate all flows
+    for (const flowId of project.allFlowIds) {
+      const flow = project.getFlow(flowId);
+      if (flow) {
+        const result = validateFlow(flow, project.errorCodes, project.schemaNames, project.allFlowIds);
+        set(state => ({
+          flowResults: { ...state.flowResults, [flowId]: result },
+        }));
+      }
+    }
+    // Validate all domains
+    for (const domain of project.domains) {
+      get().validateDomain(domain.name);
+    }
+    // Validate system
+    get().validateSystem();
+  },
+
+  checkImplementGate: (flowId) => {
+    // Ensure fresh validation
+    get().validateCurrentFlow();
+    const flow = useFlowStore.getState().currentFlow;
+    if (flow) {
+      const domainName = flow.domain;
+      if (domainName) get().validateDomain(domainName);
+    }
+    get().validateSystem();
+
+    const flowResult = get().flowResults[flowId] || null;
+    const domainResult = flow?.domain ? get().domainResults[flow.domain] || null : null;
+    const systemResult = get().systemResult;
+
+    const hasErrors = [flowResult, domainResult, systemResult]
+      .some(r => r && r.errorCount > 0);
+    const hasWarnings = [flowResult, domainResult, systemResult]
+      .some(r => r && r.warningCount > 0);
+
+    return {
+      flowValidation: flowResult,
+      domainValidation: domainResult,
+      systemValidation: systemResult,
+      canImplement: !hasErrors,
+      hasWarnings,
+    };
+  },
+
+  getNodeIssues: (flowId, nodeId) => {
+    const result = get().flowResults[flowId];
+    if (!result) return [];
+    return result.issues.filter(i => i.nodeId === nodeId);
+  },
+}));
+```
+
+**Component: `src/components/Validation/ValidationPanel.tsx`**
+```tsx
+import { ValidationResult, ValidationIssue } from '../../types/validation';
+
+interface Props {
+  result: ValidationResult;
+  title: string;
+  onSelectNode?: (nodeId: string) => void;
+  onFixWithAI?: (issues: ValidationIssue[]) => void;
+}
+
+export function ValidationPanel({ result, title, onSelectNode, onFixWithAI }: Props) {
+  const errors = result.issues.filter(i => i.severity === 'error');
+  const warnings = result.issues.filter(i => i.severity === 'warning');
+  const infos = result.issues.filter(i => i.severity === 'info');
+
+  return (
+    <div className="validation-panel p-3">
+      <h3 className="font-semibold mb-2">Validation — {title}</h3>
+      <div className="text-sm mb-3">
+        {result.errorCount > 0 && <span className="text-red-600 mr-3">✗ {result.errorCount} errors</span>}
+        {result.warningCount > 0 && <span className="text-amber-600 mr-3">⚠ {result.warningCount} warnings</span>}
+        {result.infoCount > 0 && <span className="text-blue-600">ℹ {result.infoCount} info</span>}
+        {result.isValid && result.warningCount === 0 && (
+          <span className="text-green-600">✓ All checks passed</span>
+        )}
+      </div>
+
+      {errors.length > 0 && (
+        <IssueSection title="Errors (must fix)" issues={errors}
+          color="red" onSelectNode={onSelectNode} />
+      )}
+      {warnings.length > 0 && (
+        <IssueSection title="Warnings" issues={warnings}
+          color="amber" onSelectNode={onSelectNode} />
+      )}
+      {infos.length > 0 && (
+        <IssueSection title="Info" issues={infos}
+          color="blue" onSelectNode={onSelectNode} />
+      )}
+
+      {result.issues.length > 0 && onFixWithAI && (
+        <button onClick={() => onFixWithAI(result.issues)}
+          className="btn btn-sm mt-3">
+          Fix all with AI ✨
+        </button>
+      )}
+    </div>
+  );
+}
+
+function IssueSection({ title, issues, color, onSelectNode }: {
+  title: string; issues: ValidationIssue[]; color: string;
+  onSelectNode?: (nodeId: string) => void;
+}) {
+  return (
+    <div className="mb-3">
+      <h4 className={`text-sm font-medium text-${color}-700 mb-1`}>{title}</h4>
+      {issues.map(issue => (
+        <div key={issue.id} className={`border-l-2 border-${color}-300 pl-3 py-1.5 mb-1 text-sm`}>
+          <div>{issue.message}</div>
+          {issue.suggestion && (
+            <div className="text-xs text-gray-500 mt-0.5">→ {issue.suggestion}</div>
+          )}
+          {issue.nodeId && onSelectNode && (
+            <button onClick={() => onSelectNode(issue.nodeId!)}
+              className="text-xs text-blue-600 underline mt-0.5">
+              Select node
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+**Component: `src/components/Validation/ValidationBadge.tsx`**
+```tsx
+interface Props {
+  errorCount: number;
+  warningCount: number;
+  onClick?: () => void;
+}
+
+export function ValidationBadge({ errorCount, warningCount, onClick }: Props) {
+  if (errorCount > 0) {
+    return (
+      <button onClick={onClick} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-red-100 text-red-800">
+        ✗ {errorCount} errors
+      </button>
+    );
+  }
+  if (warningCount > 0) {
+    return (
+      <button onClick={onClick} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-yellow-100 text-yellow-800">
+        ⚠ {warningCount} warnings
+      </button>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-800">
+      ✓ valid
+    </span>
+  );
+}
+```
+
+**Component: `src/components/Validation/ImplementGate.tsx`**
+```tsx
+import { useValidationStore } from '../../stores/validation-store';
+import { ValidationPanel } from './ValidationPanel';
+
+export function ImplementGate({ flowId, onProceed }: { flowId: string; onProceed: () => void }) {
+  const { checkImplementGate } = useValidationStore();
+  const gate = checkImplementGate(flowId);
+
+  return (
+    <div className="implement-gate p-3 border rounded">
+      <h3 className="font-semibold mb-3">Pre-Implementation Check</h3>
+
+      <div className="space-y-2 mb-4">
+        <GateStep label="Flow validation" result={gate.flowValidation} />
+        <GateStep label="Domain validation" result={gate.domainValidation} />
+        <GateStep label="System validation" result={gate.systemValidation} />
+      </div>
+
+      {!gate.canImplement ? (
+        <div className="text-red-600 text-sm mb-3">
+          ✗ Cannot implement — fix all errors first
+        </div>
+      ) : gate.hasWarnings ? (
+        <div className="flex gap-2">
+          <button onClick={onProceed} className="btn btn-primary btn-sm">
+            Implement anyway ({gate.flowValidation?.warningCount || 0} warnings)
+          </button>
+          <button className="btn btn-sm">Fix first</button>
+        </div>
+      ) : (
+        <button onClick={onProceed} className="btn btn-primary btn-sm bg-green-600">
+          ▶ Implement (all checks passed)
+        </button>
+      )}
+    </div>
+  );
+}
+
+function GateStep({ label, result }: { label: string; result: any }) {
+  if (!result) return <div className="text-sm text-gray-400">⏳ {label}: checking...</div>;
+  if (result.errorCount > 0) return <div className="text-sm text-red-600">✗ {label}: {result.errorCount} errors</div>;
+  if (result.warningCount > 0) return <div className="text-sm text-amber-600">⚠ {label}: {result.warningCount} warnings</div>;
+  return <div className="text-sm text-green-600">✓ {label}: passed</div>;
+}
+```
+
+**Integration: auto-validate on flow changes (debounced):**
+```typescript
+// In flow-store.ts or a useEffect in Canvas.tsx
+import { debounce } from '../utils/debounce';
+
+const debouncedValidate = debounce(() => {
+  useValidationStore.getState().validateCurrentFlow();
+}, 500);
+
+// Call after every mutation:
+addNode: (node) => {
+  // ... existing logic
+  debouncedValidate();
+},
+deleteNode: (nodeId) => {
+  // ... existing logic
+  debouncedValidate();
+},
+// ... same for moveNode, addConnection, updateSpec, etc.
+```
+
+**Integration: node border color from validation:**
+```tsx
+// In Node.tsx, determine border color:
+const nodeIssues = useValidationStore.getState().getNodeIssues(flowId, node.id);
+const hasErrors = nodeIssues.some(i => i.severity === 'error');
+const hasWarnings = nodeIssues.some(i => i.severity === 'warning');
+
+const borderClass = hasErrors ? 'border-red-500 border-2'
+  : hasWarnings ? 'border-amber-400 border-2'
+  : 'border-gray-300';
+
+// Tooltip on hover showing issues
+{nodeIssues.length > 0 && (
+  <div className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500" title={
+    nodeIssues.map(i => i.message).join('\n')
+  } />
+)}
+```
+
+**Integration: update ImplementationPanel to use gate:**
+```tsx
+// Replace direct "Implement" button with gate:
+import { ImplementGate } from '../Validation/ImplementGate';
+
+// In ImplementationPanel:
+{activeSubTab === 'prompt' && (
+  <>
+    <ImplementGate flowId={currentFlowId} onProceed={() => runClaudeCode()} />
+    <PromptPreview />
+  </>
+)}
+```
+
+---
+
 ## Phase 4: Testing the MVP
 
 ### Manual Test Checklist
@@ -11043,6 +12211,42 @@ updateSpec: (nodeId, field, value) => {
     - [ ] Buttons grayed out when stack is empty
     - [ ] Stack cleared when flow is closed
 
+49. **Flow-Level Validation**
+    - [ ] Graph completeness: trigger exists, all paths reach terminal, no orphaned nodes
+    - [ ] Dead-end detection: non-terminal nodes with no outgoing connections flagged as error
+    - [ ] Decision branches: both true and false must be connected
+    - [ ] Input branches: valid branch required, invalid branch warned
+    - [ ] Cycle detection for traditional flows (agent flows excluded)
+    - [ ] Spec completeness: trigger type, HTTP method/path, input field types, error messages
+    - [ ] Reference integrity: error codes exist in errors.yaml, models exist in schemas/
+    - [ ] Agent validation: agent_loop exists, tools connected, terminal tool exists, max_iterations
+    - [ ] Orchestration validation: agents assigned, strategy defined, rules defined, targets exist
+
+50. **Domain-Level Validation**
+    - [ ] Duplicate flow IDs detected within a domain
+    - [ ] Duplicate HTTP endpoints detected within a domain
+    - [ ] Domain.yaml flow list matches actual flow files on disk
+
+51. **System-Level Validation (Cross-Domain Wiring)**
+    - [ ] Consumed events have at least one publisher (error if missing)
+    - [ ] Published events have at least one consumer (warning if unused)
+    - [ ] Event payload shapes match between publisher and consumer
+    - [ ] Event naming consistency checked (dot.case vs camelCase vs snake_case)
+    - [ ] Portal targets point to existing domains
+    - [ ] Circular orchestration dependencies detected (A→B→A)
+    - [ ] Cross-domain API dependencies verified (service_call targets exist)
+
+52. **Validation UI and Gate**
+    - [ ] Real-time canvas indicators: green/amber/red borders on nodes, red dot for errors
+    - [ ] Validation panel accessible from toolbar (Level 1/2/3)
+    - [ ] Issues show message, suggestion, and "Select node" link
+    - [ ] "Fix all with AI" sends issues to Design Assistant for ghost-preview fixes
+    - [ ] Implementation gate: 3-step (validate → prompt → run)
+    - [ ] Errors block implementation — button disabled
+    - [ ] Warnings allow "Implement anyway" with warning count
+    - [ ] Batch implementation pre-validates all selected flows before starting
+    - [ ] Validation badges on Level 1 (domain blocks) and Level 2 (flow blocks)
+
 ---
 
 ## Phase 5: Key Implementation Notes
@@ -11051,7 +12255,7 @@ updateSpec: (nodeId, field, value) => {
 
 1. **State Management**
    - Use Zustand for all state
-   - Keep stores focused (sheet, flow, project, ui, git, llm, implementation, app, undo)
+   - Keep stores focused (sheet, flow, project, ui, git, llm, implementation, app, undo, validation)
    - `sheet-store` owns navigation state (current level, breadcrumbs, history)
    - `project-store` owns domain configs parsed from domain.yaml files
    - `flow-store` owns current flow being edited (Level 3 only)
@@ -11060,6 +12264,7 @@ updateSpec: (nodeId, field, value) => {
    - `implementation-store` owns panel state, PTY session, queue, test results, mappings
    - `app-store` owns app-level view state, recent projects, global settings, errors, auto-save
    - `undo-store` owns per-flow undo/redo stacks with immutable snapshots
+   - `validation-store` owns per-flow/domain/system validation results and implementation gate
    - Never mutate state directly
 
 2. **Tauri Commands**
@@ -11153,6 +12358,13 @@ updateSpec: (nodeId, field, value) => {
 54. **Don't** include undo/redo for side-effects (git, file writes, LLM calls) — only canvas and spec mutations are undoable
 55. **Do** prune recent projects on load — removing entries where the folder no longer exists prevents confusing dead links
 56. **Do** show the first-run wizard only once — set a flag in `~/.ddd-tool/settings.json` after completion
+57. **Do** debounce flow validation (500ms) — validating on every keystroke will lag the canvas
+58. **Don't** block the canvas while validation runs — validate async and update indicators when done
+59. **Do** validate before implementation, not just during editing — the gate is the last line of defense
+60. **Don't** allow "Fix all with AI" to auto-apply fixes — always show as ghost preview for user review
+61. **Do** validate cross-domain event payloads structurally (field names + types), not just by event name — two domains consuming the same event name but expecting different shapes is a common bug
+62. **Do** re-run system validation after git pull — specs may have changed on disk
+63. **Don't** validate deleted/orphaned spec files — only validate flows that exist in the current project index
 
 ---
 
@@ -11372,6 +12584,19 @@ npm run tauri dev
 - [ ] Undo/redo per-flow with Cmd+Z / Cmd+Shift+Z, max 100 snapshots, coalescing rapid changes
 - [ ] Undo/redo toolbar buttons with tooltips, grayed when empty
 - [ ] All errors logged to ~/.ddd-tool/logs/ddd-tool.log with rotation
+
+### Design Validation
+- [ ] Flow-level: graph completeness (trigger, reachability, dead-ends, branches), spec completeness, reference integrity
+- [ ] Agent-level: agent_loop present, tools connected, terminal tool, max_iterations, guardrail checks
+- [ ] Orchestration-level: agents assigned, strategy defined, rules+targets exist, handoff targets exist
+- [ ] Domain-level: no duplicate flow IDs, no duplicate HTTP endpoints, domain.yaml consistency
+- [ ] System-level: consumed events have publishers, payload shapes match, naming consistency
+- [ ] System-level: portal targets exist, no circular orchestration, cross-domain API targets verified
+- [ ] Canvas real-time indicators: node borders (green/amber/red), error dots, hover tooltips
+- [ ] Validation panel per scope (flow/domain/system) with grouped issues + "Select node" + "Fix with AI"
+- [ ] Implementation gate blocks on errors, warns on warnings, green on clean
+- [ ] Batch implementation pre-validates all selected flows
+- [ ] Validation badges on Level 1 domain blocks and Level 2 flow blocks
 
 ---
 

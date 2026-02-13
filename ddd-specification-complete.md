@@ -4387,6 +4387,339 @@ FlowSnapshot = {
 | `Cmd+Shift+Z` / `Ctrl+Shift+Z` | Redo |
 | `Cmd+Y` / `Ctrl+Y` | Redo (alternative) |
 
+### Design Validation
+
+Before a flow reaches Claude Code for implementation, the DDD Tool validates the design for completeness, correctness, and cross-domain integrity. Validation runs at three scopes: **Flow-level** (single flow graph), **Domain-level** (flows within a domain), and **System-level** (cross-domain wiring). The "Implement" button is blocked until all critical issues are resolved.
+
+#### Validation Severity
+
+| Severity | Icon | Meaning | Blocks implementation? |
+|----------|------|---------|----------------------|
+| **Error** | ✗ (red) | Design is broken — will produce incorrect or unimplementable code | Yes |
+| **Warning** | ⚠ (amber) | Design is technically valid but likely incomplete or suspicious | No (user can override) |
+| **Info** | ℹ (blue) | Suggestion for improvement — doesn't affect correctness | No |
+
+#### 1. Flow-Level Validation (Single Flow)
+
+Runs whenever a flow is saved, and always before implementation.
+
+**Graph completeness:**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Trigger exists | Error | Every flow must have exactly one trigger node |
+| All paths reach terminal | Error | Starting from trigger, every possible path through the graph must end at a terminal node. Dead-end nodes (non-terminal with no outgoing connections) are errors. |
+| No orphaned nodes | Error | Every node must be reachable from the trigger. Unreachable nodes are flagged. |
+| No circular paths (non-agent) | Error | Traditional flows must be acyclic (DAGs). Agent flows are excluded — their loop is intentional. |
+| Decision branches complete | Error | Every decision node must have both `true` and `false` connections |
+| Input node has connections | Error | Every input node must connect to at least one downstream node for both `valid` and `invalid` branches |
+| Terminal nodes have no outgoing | Warning | Terminal nodes should not connect to anything |
+
+**Spec completeness:**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Trigger type defined | Error | Trigger must have `type` (http, event, scheduled, manual) |
+| HTTP trigger has method + path | Error | If trigger type is `http`, both `method` and `path` are required |
+| Input fields have types | Error | Every field in an input node must have a `type` |
+| Required fields have error messages | Error | If a field is `required: true`, it must have an `error` message |
+| Validation rules have error messages | Warning | Fields with `min_length`, `max_length`, `format` etc. should have `error` messages |
+| Decision has check defined | Error | Decision node must have `check` or `condition` specified |
+| Decision has error_code on true | Warning | Decision error branches should reference an error code from errors.yaml |
+| Terminal has status code | Warning | HTTP flow terminal nodes should have `status` defined |
+| Terminal has response body | Info | Terminal nodes should have `body` for non-empty responses |
+| Data store has operation + model | Error | Data store nodes must have `operation` (create/read/update/delete) and `model` |
+| Process node has description | Warning | Process nodes should describe what they do |
+
+**Reference integrity:**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Error codes exist | Error | Every error code referenced in the flow (e.g., `DUPLICATE_ENTRY`) must exist in `specs/shared/errors.yaml` |
+| Schema models exist | Error | Every model referenced in data_store nodes (e.g., `User`) must have a corresponding `specs/schemas/{model}.yaml` |
+| Sub-flow references exist | Error | Sub-flow nodes must reference an existing flow in the same or another domain |
+| Event references exist | Warning | Event publish/consume references should match defined events in domain.yaml |
+| Field references resolve | Warning | Data expressions like `$.email` or `$.user.id` should reference fields that exist in the flow's data context |
+
+**Agent flow validation (when `flow_type: agent`):**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Agent loop exists | Error | Agent flows must have exactly one `agent_loop` node |
+| At least one tool | Error | Agent must have at least one tool node connected |
+| At least one terminal tool | Error | At least one tool must be `terminal: true` (can end the loop) |
+| Max iterations defined | Warning | Agent loop should have `max_iterations` to prevent infinite loops |
+| LLM model specified | Warning | Agent loop should specify which model to use |
+| Guardrail has checks | Warning | Guardrail nodes should have at least one check defined |
+| Human gate has description | Warning | Human gate should describe what the user is approving |
+
+**Orchestration flow validation (when `flow_type: orchestration`):**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Orchestrator has agents | Error | Orchestrator must reference at least 2 agents |
+| Orchestrator has strategy | Error | Must specify strategy (supervisor, round_robin, broadcast, consensus) |
+| Router has rules | Error | Smart router must have at least one routing rule |
+| Router has fallback | Warning | Smart router should define a fallback agent |
+| Handoff has target | Error | Handoff node must specify target agent |
+| Handoff has mode | Warning | Handoff should specify mode (transfer, consult, collaborate) |
+| Agent group has members | Error | Agent group must list at least 2 member agents |
+| Referenced agents exist | Error | All agent IDs referenced in orchestrator/router/handoff must correspond to actual agent flows in the project |
+| Circuit breaker thresholds | Warning | If circuit breaker is configured, `failure_threshold` and `timeout` should be specified |
+
+#### 2. Domain-Level Validation (Flows Within a Domain)
+
+Runs when any flow in the domain is saved, or when the domain map (Level 2) is viewed.
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| No duplicate flow IDs | Error | Every flow within a domain must have a unique `flow.id` |
+| No duplicate HTTP paths | Error | Two flows in the same domain cannot have the same HTTP method + path combination |
+| Internal event consumers matched | Warning | If flow A publishes event X and flow B in the same domain consumes event X, verify the event payload shapes match |
+| Shared schema consistency | Warning | If two flows in the same domain use the same model (e.g., `User`), they should reference the same schema file |
+| Domain.yaml matches flows | Info | `domain.yaml` flow list should match the actual flow files on disk |
+
+#### 3. System-Level Validation (Cross-Domain Wiring)
+
+Runs on project load, after git pull, and before batch implementation. This is the critical cross-domain check.
+
+**Event wiring:**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Published events have consumers | Warning | If domain A publishes event `contract.ingested`, at least one other domain should consume it. An event published to nobody is suspicious. |
+| Consumed events have publishers | Error | If domain B consumes event `contract.ingested`, some domain must publish it. Consuming a non-existent event is broken. |
+| Event payload shapes match | Error | The publisher's event payload shape must match what the consumer expects. If publisher sends `{ contract_id, source }` but consumer expects `{ document_id, origin }`, this is a field mismatch. |
+| Event names are consistent | Warning | Event names should follow a consistent pattern (e.g., `{entity}.{action}`). `contract.ingested` vs `contractIngested` vs `CONTRACT_INGESTED` flags an inconsistency. |
+
+**Cross-domain data contracts:**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Shared schemas are identical | Error | If domain A and domain B both reference `specs/schemas/user.yaml`, they get the same schema. But if domain A defines `User` inline while domain B uses the schema file, flag the divergence. |
+| Cross-domain field references | Warning | If flow in domain A passes `$.user.id` to an event consumed by domain B, verify `user.id` exists in the User schema |
+| API dependencies are valid | Warning | If domain A's flow calls domain B's API (via service_call node), verify the target endpoint exists as a flow in domain B |
+
+**Portal wiring:**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Portal targets exist | Error | Every portal node on Level 2 must point to an existing domain |
+| Portal flow references exist | Error | If a portal says "api/user-register triggers ingestion/webhook-ingestion", both flows must exist |
+| Bidirectional portals match | Warning | If domain A has a portal to domain B, domain B should have a portal back to domain A (unless the relationship is one-way) |
+
+**Orchestration wiring:**
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| Orchestrated agents exist | Error | Agents referenced in orchestration flows must exist as actual agent flows somewhere in the project |
+| Agent domains match | Warning | If an orchestrator in domain A references an agent in domain B, verify the cross-domain dependency is intentional (show info noting the cross-domain reference) |
+| No circular orchestration | Error | Agent A orchestrates Agent B which orchestrates Agent A → infinite loop. Detect cycles in the orchestration graph. |
+| Router targets reachable | Error | Every agent targeted by a smart router must exist and be a valid agent flow |
+
+#### Validation Panel UI
+
+The validation panel is accessible from:
+- **Level 3 toolbar:** ✓ button shows flow-level issues
+- **Level 2 toolbar:** ✓ button shows domain-level issues
+- **Level 1 toolbar:** ✓ button shows system-level issues
+- **Implementation Panel:** validation summary shown before "Implement" button
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ VALIDATION — api/user-register                                │
+│                                                                │
+│ ✗ 2 errors · ⚠ 3 warnings · ℹ 1 info                       │
+│                                                                │
+│ ✗ Errors (must fix before implementation):                    │
+│   • Node "check_duplicate" decision missing false branch     │
+│     → connect false branch to a target node                  │
+│     [Select node]                                             │
+│   • Error code "USER_EXISTS" not found in errors.yaml        │
+│     → add it to specs/shared/errors.yaml or use existing     │
+│     [Open errors.yaml]  [Show similar: DUPLICATE_ENTRY]      │
+│                                                                │
+│ ⚠ Warnings:                                                   │
+│   • Terminal "return_success" has no status code              │
+│     → add status: 201 to the terminal spec                   │
+│     [Select node]                                             │
+│   • Input field "name" has max_length but no error message   │
+│     → add error message for better user experience           │
+│     [Select node]                                             │
+│   • Process node "hash_password" has no description          │
+│     [Select node]                                             │
+│                                                                │
+│ ℹ Info:                                                       │
+│   • Terminal "return_error" has no response body defined      │
+│     [Select node]                                             │
+│                                                                │
+│ [Fix all with AI ✨]  [Dismiss warnings]                     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**System-level validation panel (Level 1):**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ SYSTEM VALIDATION                                              │
+│                                                                │
+│ ✗ 1 error · ⚠ 2 warnings                                    │
+│                                                                │
+│ Cross-Domain Wiring:                                          │
+│ ✗ Event "contract.analyzed" consumed by notification domain   │
+│   but no domain publishes it                                  │
+│   → analysis domain should publish this event                │
+│   [Go to analysis domain]                                     │
+│                                                                │
+│ ⚠ Event "contract.ingested" payload mismatch:                │
+│   Publisher (ingestion): { contract_id: string, source: str } │
+│   Consumer (analysis):   { document_id: string, origin: str } │
+│   → field names don't match — update one side                │
+│   [Go to publisher]  [Go to consumer]                        │
+│                                                                │
+│ ⚠ Portal ingestion → analysis exists but no reverse portal   │
+│   → add portal from analysis back to ingestion if needed     │
+│   [Add reverse portal]  [Dismiss]                            │
+│                                                                │
+│ Orchestration Wiring:                                         │
+│ ✓ All orchestrated agents exist and are reachable            │
+│ ✓ No circular orchestration dependencies                     │
+│                                                                │
+│ Schema Integrity:                                              │
+│ ✓ All referenced schemas exist                                │
+│ ✓ No inline/file schema divergence                           │
+│                                                                │
+│ [Fix all with AI ✨]                                          │
+└──────────────────────────────────────────────────────────────┘
+```
+
+#### "Fix All with AI" Action
+
+The "Fix all with AI ✨" button sends validation issues to the Design Assistant LLM with context:
+
+```
+The following validation issues were found in flow api/user-register:
+
+1. Error code "USER_EXISTS" not found in errors.yaml
+   Available error codes: VALIDATION_ERROR, NOT_FOUND, DUPLICATE_ENTRY, ...
+
+2. Terminal "return_success" has no status code
+   This is a successful response terminal for a POST endpoint.
+
+3. Input field "name" has max_length: 100 but no error message.
+
+For each issue, suggest a fix. Output as JSON:
+[{ "issue": 1, "fix_type": "update_spec", "node_id": "...", "field": "...", "value": "..." }]
+```
+
+The LLM suggests fixes, shown as ghost changes (same Apply/Discard pattern as other LLM features). The user reviews before accepting.
+
+#### Validation on Canvas (Real-Time Indicators)
+
+Validation runs continuously as the user designs. Invalid nodes show visual indicators directly on the canvas:
+
+```
+┌────────────────────┐     ┌────────────────────┐
+│ ✓ validate_input   │────▶│ ⚠ check_duplicate  │──── ?
+│   3 fields defined │     │   missing false     │
+│                    │     │   branch            │
+└────────────────────┘     └────────────────────┘
+     │ (invalid)
+     ▼
+┌────────────────────┐
+│ ✗ return_error     │
+│   no error_code    │
+│   referenced       │
+└────────────────────┘
+```
+
+- **✓ (green border):** Node passes all validation checks
+- **⚠ (amber border + dot):** Node has warnings
+- **✗ (red border + dot):** Node has errors
+- Hovering the indicator shows a tooltip with the issue(s)
+- Clicking the indicator selects the node and opens the validation panel filtered to that node
+
+#### Implementation Gate
+
+The "Implement" button in the Implementation Panel checks validation before proceeding:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ ┌─────────────┐  ┌──────────────┐  ┌────────────────────┐   │
+│ │ ✓ Validate  │→ │ Build Prompt │→ │ ▶ Run Claude Code  │   │
+│ └─────────────┘  └──────────────┘  └────────────────────┘   │
+│                                                                │
+│ Step 1: Validate                                              │
+│   Flow validation:     ✓ passed (0 errors, 1 warning)       │
+│   Domain validation:   ✓ passed                              │
+│   System validation:   ✓ passed                              │
+│   References:          ✓ all schemas + error codes exist     │
+│                                                                │
+│ Step 2: Build Prompt                                          │
+│   [Preview prompt]                                            │
+│                                                                │
+│ Step 3: Implement                                             │
+│   [▶ Run Claude Code]                                        │
+│                                                                │
+│ ⚠ 1 warning: Terminal "return_success" has no status code    │
+│   [Implement anyway]  [Fix first]                            │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Gate rules:**
+- **Errors present:** "Implement" button is disabled. Must fix all errors first.
+- **Warnings only:** "Implement" button shows "Implement anyway" with warning count. User can proceed.
+- **Clean (no issues):** "Implement" button is green and enabled.
+
+#### Batch Implementation Validation
+
+When implementing multiple flows from the queue, validation runs for ALL selected flows before any implementation starts:
+
+```
+Validating 5 selected flows...
+  ✓ api/user-register        — clean
+  ✓ api/user-login           — clean
+  ⚠ api/user-reset-password  — 2 warnings
+  ✗ api/get-contracts        — 1 error (missing schema: Contract)
+  ✓ notification/deadline-alert — clean
+
+Cannot start batch: 1 flow has errors.
+[Fix api/get-contracts]  [Skip and implement 4 clean flows]
+```
+
+#### When Validation Runs
+
+| Trigger | Scope | Behavior |
+|---------|-------|----------|
+| Node added/edited/connected | Flow-level | Immediate (debounced 500ms) — updates canvas indicators |
+| Flow saved | Flow-level + domain-level | Full validation, updates validation panel |
+| "Implement" clicked | All three levels | Blocks if errors exist |
+| Level 2 viewed | Domain-level | Background check, badge on domain map |
+| Level 1 viewed / project load | System-level | Background check, badge on system map |
+| Git pull completed | System-level | Re-check cross-domain wiring (specs may have changed) |
+| Batch implement selected | All three levels for all selected flows | Pre-flight check before queue starts |
+
+#### Validation Badges on Canvas
+
+Level 1 (System Map) — domain blocks show validation status:
+```
+┌──────────────────┐     ┌──────────────────┐
+│ ingestion         │     │ analysis          │
+│ 4 flows           │     │ 3 flows           │
+│ ✓ valid          │     │ ⚠ 2 warnings     │
+└──────────────────┘     └──────────────────┘
+```
+
+Level 2 (Domain Map) — flow blocks show validation status alongside test and sync badges:
+```
+┌──────────────────┐
+│ user-register     │
+│ ✓ valid          │    ← validation badge
+│ ✓ 14/14 tests   │    ← test badge
+│ ~ 85% synced    │    ← sync badge
+└──────────────────┘
+```
+
 ### Claude Code Integration
 
 The DDD Tool integrates with Claude Code CLI to turn specs into running code without leaving the application. Five components work together: an **Implementation Panel** with interactive terminal, a **Prompt Builder** that constructs optimal prompts from specs, **Stale Detection** that tracks spec-vs-code drift, a **Test Runner** that shows results linked to flows, and **CLAUDE.md Auto-Generation** that keeps Claude Code instructions in sync with the project.
@@ -6069,6 +6402,7 @@ Claude Code reads all of these sections and generates the corresponding infrastr
 - **First-Run Experience:** Guided setup wizard (connect LLM, detect Claude Code, create/open/sample project)
 - **Error Handling:** Defined recovery for file, Git, LLM, PTY, and canvas errors with auto-retry, fallback, and crash recovery
 - **Undo/Redo:** Per-flow command pattern with immutable snapshots (Cmd+Z / Cmd+Shift+Z), 100-level history
+- **Design Validation:** Flow-level (graph completeness, spec completeness, reference integrity), domain-level (duplicate detection, internal event matching), system-level (cross-domain event wiring, payload shape matching, portal integrity, orchestration cycle detection), real-time canvas indicators, implementation gate
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage
