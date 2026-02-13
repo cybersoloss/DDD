@@ -48,10 +48,10 @@ Start with Phase 2: Project Setup.
 mkdir my-project && cd my-project
 mkdir -p specs/domains specs/schemas specs/shared
 
-# 2. Copy templates
-cp ~/Downloads/architecture-template.yaml specs/architecture.yaml
-cp ~/Downloads/config-template.yaml specs/config.yaml
-cp ~/Downloads/errors-template.yaml specs/shared/errors.yaml
+# 2. Copy templates (from DDD repo)
+cp ~/code/DDD/templates/architecture-template.yaml specs/architecture.yaml
+cp ~/code/DDD/templates/config-template.yaml specs/config.yaml
+cp ~/code/DDD/templates/errors-template.yaml specs/shared/errors.yaml
 
 # 3. Create system.yaml
 cat > specs/system.yaml << 'EOF'
