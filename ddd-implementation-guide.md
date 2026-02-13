@@ -153,7 +153,10 @@ ddd-tool/
 │   │   │   ├── ImplementationQueue.tsx # Queue view for batch implementation
 │   │   │   ├── StaleBanner.tsx         # Stale detection warning banner
 │   │   │   ├── ReconciliationReport.tsx # Code→spec drift report with accept/remove/ignore
-│   │   │   └── SyncBadge.tsx           # Sync score badge for flow blocks
+│   │   │   ├── SyncBadge.tsx           # Sync score badge for flow blocks
+│   │   │   ├── TestGenerator.tsx       # Derived test spec viewer + generate test code
+│   │   │   ├── CoverageBadge.tsx       # Spec test coverage badge for flow blocks
+│   │   │   └── SpecComplianceTab.tsx   # Spec compliance results after test run
 │   │   ├── MemoryPanel/
 │   │   │   ├── MemoryPanel.tsx        # Main memory panel (sidebar toggle)
 │   │   │   ├── SummaryCard.tsx        # Project summary display
@@ -184,7 +187,8 @@ ddd-tool/
 │   │   ├── project.ts
 │   │   ├── llm.ts             # Chat messages, LLM config, ghost node types
 │   │   ├── memory.ts          # Project memory layer types
-│   │   └── implementation.ts  # Implementation panel, prompt builder, test runner types
+│   │   ├── implementation.ts  # Implementation panel, prompt builder, test runner types
+│   │   └── test-generator.ts  # Derived test cases, test paths, boundary tests, spec compliance
 │   ├── utils/
 │   │   ├── yaml.ts
 │   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
@@ -196,6 +200,7 @@ ddd-tool/
 │   │   ├── cicd-generator.ts       # Generate CI/CD pipeline from architecture.yaml
 │   │   ├── dockerfile-generator.ts # Generate Dockerfile + compose from deployment config
 │   │   ├── migration-tracker.ts    # Track schema hashes, detect changes, build migration prompts
+│   │   ├── test-case-deriver.ts   # Walk flow graphs, derive test paths + boundary tests
 │   │   ├── mermaid.ts
 │   │   └── validation.ts
 │   └── styles/
@@ -8699,6 +8704,963 @@ export function ProductionTab() {
 
 ---
 
+### Diagram-Derived Test Generation
+
+**File: `src/types/test-generator.ts`**
+```typescript
+/** A path through the flow graph from trigger to terminal */
+export interface TestPath {
+  path_id: string;
+  path_type: 'happy_path' | 'error_path' | 'edge_case' | 'agent_loop';
+  nodes: string[];                  // ordered node IDs traversed
+  description: string;              // human-readable description
+  expected_outcome: {
+    status?: number;                // HTTP status code (for HTTP flows)
+    error_code?: string;            // from errors.yaml
+    response_fields?: string[];     // expected fields in response body
+    message?: string;               // expected message/error text
+  };
+}
+
+/** A boundary test derived from validation rules */
+export interface BoundaryTest {
+  field: string;
+  test_type: 'valid' | 'invalid_missing' | 'invalid_format' | 'invalid_type'
+    | 'boundary_min_below' | 'boundary_min_exact' | 'boundary_max_exact' | 'boundary_max_above';
+  input_value: any;                 // the test value (or null for missing)
+  expected_success: boolean;
+  expected_error?: string;          // exact error message from spec
+  expected_status?: number;
+}
+
+/** A derived test case (path test or boundary test) */
+export interface DerivedTestCase {
+  id: string;
+  source: 'path' | 'boundary' | 'agent' | 'orchestration';
+  path?: TestPath;
+  boundary?: BoundaryTest;
+  description: string;
+  priority: 'critical' | 'important' | 'nice_to_have';
+}
+
+/** Complete test specification for a flow */
+export interface DerivedTestSpec {
+  flow_id: string;
+  generated_at: string;
+  paths: TestPath[];
+  boundary_tests: BoundaryTest[];
+  test_cases: DerivedTestCase[];
+  total_count: number;
+  coverage: {
+    paths_covered: number;
+    total_paths: number;
+    boundary_fields_covered: number;
+    total_fields: number;
+  };
+}
+
+/** Generated test code (actual code string) */
+export interface GeneratedTestCode {
+  flow_id: string;
+  framework: string;               // pytest, jest, go_test, etc.
+  code: string;                     // the generated test file content
+  test_count: number;
+  generated_at: string;
+}
+
+/** Spec compliance result for a single test case */
+export interface ComplianceResult {
+  test_id: string;
+  description: string;
+  compliant: boolean;
+  expected: { status?: number; message?: string; error_code?: string };
+  actual?: { status?: number; message?: string; error_code?: string };
+  diff?: string;                    // human-readable diff
+}
+
+/** Full spec compliance report */
+export interface SpecComplianceReport {
+  flow_id: string;
+  checked_at: string;
+  score: number;                    // 0-100
+  total: number;
+  compliant: number;
+  non_compliant: number;
+  results: ComplianceResult[];
+}
+
+/** Test generation state in the implementation store */
+export interface TestGenerationState {
+  derivedSpec: DerivedTestSpec | null;
+  generatedCode: GeneratedTestCode | null;
+  complianceReport: SpecComplianceReport | null;
+  isDeriving: boolean;
+  isGeneratingCode: boolean;
+  isCheckingCompliance: boolean;
+}
+```
+
+**File: `src/utils/test-case-deriver.ts`**
+```typescript
+import { DddNode, DddFlow } from '../types/flow';
+import { TestPath, BoundaryTest, DerivedTestCase, DerivedTestSpec } from '../types/test-generator';
+
+/**
+ * Walk a flow graph and enumerate all paths from trigger to terminal nodes.
+ * Uses DFS with path tracking to find every reachable terminal.
+ */
+export function deriveTestPaths(flow: DddFlow): TestPath[] {
+  const paths: TestPath[] = [];
+  const nodeMap = new Map(flow.nodes.map(n => [n.id, n]));
+
+  // Find trigger node
+  const trigger = flow.nodes.find(n => n.type === 'trigger');
+  if (!trigger) return paths;
+
+  // DFS to find all paths from trigger to terminal nodes
+  function dfs(nodeId: string, visited: string[], pathNodes: string[]) {
+    const node = nodeMap.get(nodeId);
+    if (!node) return;
+
+    const currentPath = [...pathNodes, nodeId];
+
+    // If terminal node, record this path
+    if (node.type === 'terminal') {
+      const pathType = determinePathType(currentPath, nodeMap);
+      paths.push({
+        path_id: `path_${paths.length + 1}`,
+        path_type: pathType,
+        nodes: currentPath,
+        description: describePathHumanReadable(currentPath, nodeMap),
+        expected_outcome: extractExpectedOutcome(node),
+      });
+      return;
+    }
+
+    // Prevent cycles
+    if (visited.includes(nodeId)) return;
+    const newVisited = [...visited, nodeId];
+
+    // Follow all connections from this node
+    const connections = node.connections || {};
+    for (const [branch, targetId] of Object.entries(connections)) {
+      if (typeof targetId === 'string') {
+        dfs(targetId, newVisited, currentPath);
+      }
+    }
+  }
+
+  // Start DFS from trigger's first connection
+  const triggerConnections = trigger.connections || {};
+  for (const targetId of Object.values(triggerConnections)) {
+    if (typeof targetId === 'string') {
+      dfs(targetId, [trigger.id], [trigger.id]);
+    }
+  }
+
+  return paths;
+}
+
+/**
+ * Determine if a path is happy_path, error_path, or edge_case
+ * based on the terminal node and intermediate decision branches taken.
+ */
+function determinePathType(
+  path: string[],
+  nodeMap: Map<string, DddNode>
+): TestPath['path_type'] {
+  const terminal = nodeMap.get(path[path.length - 1]);
+  if (!terminal) return 'edge_case';
+
+  const status = terminal.spec?.status;
+  if (status && status >= 200 && status < 300) return 'happy_path';
+  if (status && status >= 400) return 'error_path';
+
+  // Check if path goes through any error-producing decision branches
+  for (const nodeId of path) {
+    const node = nodeMap.get(nodeId);
+    if (node?.type === 'decision' && node.spec?.on_true?.error_code) {
+      // This path took the error branch of a decision
+      return 'error_path';
+    }
+  }
+
+  return 'happy_path';
+}
+
+/**
+ * Generate human-readable description of a path.
+ */
+function describePathHumanReadable(
+  path: string[],
+  nodeMap: Map<string, DddNode>
+): string {
+  return path
+    .map(id => {
+      const node = nodeMap.get(id);
+      return node ? `${node.id} (${node.type})` : id;
+    })
+    .join(' → ');
+}
+
+/**
+ * Extract expected outcome from a terminal node.
+ */
+function extractExpectedOutcome(node: DddNode) {
+  return {
+    status: node.spec?.status,
+    error_code: node.spec?.error_code,
+    response_fields: node.spec?.body ? Object.keys(node.spec.body) : undefined,
+    message: node.spec?.body?.message,
+  };
+}
+
+/**
+ * Derive boundary tests from all input nodes in a flow.
+ * For each field with validation rules, generates min/max/missing/format tests.
+ */
+export function deriveBoundaryTests(flow: DddFlow): BoundaryTest[] {
+  const tests: BoundaryTest[] = [];
+
+  const inputNodes = flow.nodes.filter(n => n.type === 'input');
+  for (const node of inputNodes) {
+    const fields = node.spec?.fields || {};
+    for (const [fieldName, rules] of Object.entries(fields)) {
+      const r = rules as any;
+
+      // Valid case
+      tests.push({
+        field: fieldName,
+        test_type: 'valid',
+        input_value: generateValidValue(r),
+        expected_success: true,
+      });
+
+      // Missing (if required)
+      if (r.required) {
+        tests.push({
+          field: fieldName,
+          test_type: 'invalid_missing',
+          input_value: null,
+          expected_success: false,
+          expected_error: r.error,
+          expected_status: 422,
+        });
+      }
+
+      // Format validation
+      if (r.format) {
+        tests.push({
+          field: fieldName,
+          test_type: 'invalid_format',
+          input_value: generateInvalidFormat(r.format),
+          expected_success: false,
+          expected_error: r.error,
+          expected_status: 422,
+        });
+      }
+
+      // Min length boundary
+      if (r.min_length !== undefined) {
+        // Below minimum
+        tests.push({
+          field: fieldName,
+          test_type: 'boundary_min_below',
+          input_value: 'x'.repeat(r.min_length - 1),
+          expected_success: false,
+          expected_error: r.error,
+          expected_status: 422,
+        });
+        // At exact minimum
+        tests.push({
+          field: fieldName,
+          test_type: 'boundary_min_exact',
+          input_value: 'x'.repeat(r.min_length),
+          expected_success: true,
+        });
+      }
+
+      // Max length boundary
+      if (r.max_length !== undefined) {
+        // At exact maximum
+        tests.push({
+          field: fieldName,
+          test_type: 'boundary_max_exact',
+          input_value: 'x'.repeat(r.max_length),
+          expected_success: true,
+        });
+        // Above maximum
+        tests.push({
+          field: fieldName,
+          test_type: 'boundary_max_above',
+          input_value: 'x'.repeat(r.max_length + 1),
+          expected_success: false,
+          expected_error: r.error,
+          expected_status: 422,
+        });
+      }
+    }
+  }
+
+  return tests;
+}
+
+/** Generate a valid value for a field based on its type and format */
+function generateValidValue(rules: any): any {
+  if (rules.format === 'email') return 'user@example.com';
+  if (rules.type === 'number' || rules.type === 'integer') return 42;
+  if (rules.type === 'boolean') return true;
+  if (rules.min_length) return 'x'.repeat(rules.min_length + 2);
+  return 'test_value';
+}
+
+/** Generate an invalid value for a given format */
+function generateInvalidFormat(format: string): any {
+  switch (format) {
+    case 'email': return 'not-an-email';
+    case 'url': return 'not-a-url';
+    case 'uuid': return 'not-a-uuid';
+    case 'date': return 'not-a-date';
+    default: return 'invalid';
+  }
+}
+
+/**
+ * Derive agent-specific test cases from an agent flow.
+ */
+export function deriveAgentTests(flow: DddFlow): DerivedTestCase[] {
+  const tests: DerivedTestCase[] = [];
+  if (flow.flow_type !== 'agent') return tests;
+
+  const agent = flow.nodes.find(n => n.type === 'agent_loop');
+  if (!agent) return tests;
+
+  // Tool success/failure for each tool
+  const tools = flow.nodes.filter(n => n.type === 'tool');
+  for (const tool of tools) {
+    tests.push({
+      id: `agent_tool_success_${tool.id}`,
+      source: 'agent',
+      description: `Agent calls ${tool.id} → returns success`,
+      priority: 'critical',
+    });
+    tests.push({
+      id: `agent_tool_failure_${tool.id}`,
+      source: 'agent',
+      description: `Agent calls ${tool.id} → tool returns error → agent handles gracefully`,
+      priority: 'important',
+    });
+  }
+
+  // Guardrail tests
+  const guardrails = flow.nodes.filter(n => n.type === 'guardrail');
+  for (const guard of guardrails) {
+    tests.push({
+      id: `agent_guardrail_block_${guard.id}`,
+      source: 'agent',
+      description: `Agent output violates ${guard.id} → output blocked, agent retries`,
+      priority: 'critical',
+    });
+  }
+
+  // Max iterations test
+  if (agent.spec?.max_iterations) {
+    tests.push({
+      id: 'agent_max_iterations',
+      source: 'agent',
+      description: `Agent reaches max_iterations (${agent.spec.max_iterations}) → returns partial/error`,
+      priority: 'important',
+    });
+  }
+
+  // Human gate tests
+  const humanGates = flow.nodes.filter(n => n.type === 'human_gate');
+  for (const gate of humanGates) {
+    tests.push({
+      id: `agent_human_gate_approve_${gate.id}`,
+      source: 'agent',
+      description: `Agent reaches ${gate.id} → user approves → continues`,
+      priority: 'critical',
+    });
+    tests.push({
+      id: `agent_human_gate_reject_${gate.id}`,
+      source: 'agent',
+      description: `Agent reaches ${gate.id} → user rejects → handles rejection`,
+      priority: 'important',
+    });
+  }
+
+  return tests;
+}
+
+/**
+ * Derive orchestration-specific test cases from an orchestration flow.
+ */
+export function deriveOrchestrationTests(flow: DddFlow): DerivedTestCase[] {
+  const tests: DerivedTestCase[] = [];
+  if (flow.flow_type !== 'orchestration') return tests;
+
+  const orchestrators = flow.nodes.filter(n => n.type === 'orchestrator');
+  const routers = flow.nodes.filter(n => n.type === 'smart_router');
+  const handoffs = flow.nodes.filter(n => n.type === 'handoff');
+
+  // Routing tests per router
+  for (const router of routers) {
+    const rules = router.spec?.rules || [];
+    for (const rule of rules) {
+      tests.push({
+        id: `routing_${router.id}_${rule.intent || rule.condition}`,
+        source: 'orchestration',
+        description: `Input matches "${rule.intent || rule.condition}" → routed to ${rule.target}`,
+        priority: 'critical',
+      });
+    }
+    // Fallback test
+    if (router.spec?.fallback) {
+      tests.push({
+        id: `routing_fallback_${router.id}`,
+        source: 'orchestration',
+        description: `Input matches no rule → fallback to ${router.spec.fallback}`,
+        priority: 'important',
+      });
+    }
+    // Circuit breaker test
+    if (router.spec?.circuit_breaker) {
+      tests.push({
+        id: `circuit_breaker_${router.id}`,
+        source: 'orchestration',
+        description: `Agent fails ${router.spec.circuit_breaker.failure_threshold} times → circuit opens → fallback`,
+        priority: 'important',
+      });
+    }
+  }
+
+  // Handoff tests
+  for (const handoff of handoffs) {
+    tests.push({
+      id: `handoff_${handoff.id}`,
+      source: 'orchestration',
+      description: `${handoff.spec?.mode || 'transfer'} handoff: context passed correctly to target agent`,
+      priority: 'critical',
+    });
+  }
+
+  // Supervisor override test
+  for (const orch of orchestrators) {
+    if (orch.spec?.strategy === 'supervisor') {
+      tests.push({
+        id: `supervisor_override_${orch.id}`,
+        source: 'orchestration',
+        description: `Supervisor detects stuck agent → intervenes → reassigns`,
+        priority: 'nice_to_have',
+      });
+    }
+  }
+
+  return tests;
+}
+
+/**
+ * Main entry: derive all test cases for a flow.
+ */
+export function deriveAllTests(flow: DddFlow): DerivedTestSpec {
+  const paths = deriveTestPaths(flow);
+  const boundaryTests = deriveBoundaryTests(flow);
+  const agentTests = deriveAgentTests(flow);
+  const orchestrationTests = deriveOrchestrationTests(flow);
+
+  // Convert paths to test cases
+  const pathCases: DerivedTestCase[] = paths.map((p, i) => ({
+    id: `path_${i + 1}`,
+    source: 'path' as const,
+    path: p,
+    description: p.description,
+    priority: p.path_type === 'happy_path' ? 'critical' as const : 'important' as const,
+  }));
+
+  // Convert boundary tests to test cases
+  const boundaryCases: DerivedTestCase[] = boundaryTests.map((b, i) => ({
+    id: `boundary_${i + 1}`,
+    source: 'boundary' as const,
+    boundary: b,
+    description: `${b.field}: ${b.test_type} → ${b.expected_success ? 'success' : 'error'}`,
+    priority: b.test_type === 'invalid_missing' ? 'critical' as const : 'important' as const,
+  }));
+
+  const allCases = [...pathCases, ...boundaryCases, ...agentTests, ...orchestrationTests];
+
+  const inputNodes = flow.nodes.filter(n => n.type === 'input');
+  const totalFields = inputNodes.reduce(
+    (sum, n) => sum + Object.keys(n.spec?.fields || {}).length, 0
+  );
+
+  return {
+    flow_id: flow.id,
+    generated_at: new Date().toISOString(),
+    paths,
+    boundary_tests: boundaryTests,
+    test_cases: allCases,
+    total_count: allCases.length,
+    coverage: {
+      paths_covered: paths.length,
+      total_paths: paths.length,
+      boundary_fields_covered: new Set(boundaryTests.map(b => b.field)).size,
+      total_fields: totalFields,
+    },
+  };
+}
+```
+
+**Store updates (`src/stores/implementation-store.ts` additions):**
+
+Add to the implementation store state:
+
+```typescript
+// Test generation state
+derivedSpec: DerivedTestSpec | null;
+generatedTestCode: GeneratedTestCode | null;
+complianceReport: SpecComplianceReport | null;
+isDeriving: boolean;
+isGeneratingCode: boolean;
+isCheckingCompliance: boolean;
+
+// Test generation actions
+deriveTests: (flowId: string) => void;
+generateTestCode: (flowId: string) => Promise<void>;
+checkSpecCompliance: (flowId: string) => Promise<void>;
+```
+
+Implementation:
+
+```typescript
+deriveTests: (flowId) => {
+  set({ isDeriving: true });
+  const flow = useFlowStore.getState().getFlow(flowId);
+  if (!flow) { set({ isDeriving: false }); return; }
+
+  const spec = deriveAllTests(flow);
+  set({ derivedSpec: spec, isDeriving: false });
+
+  // Persist to mapping
+  const mapping = get().mapping;
+  if (mapping.flows[flowId]) {
+    mapping.flows[flowId].test_generation = {
+      derived_test_count: spec.total_count,
+      paths_found: spec.paths.length,
+      boundary_tests: spec.boundary_tests.length,
+      last_generated_at: spec.generated_at,
+    };
+    get().saveMapping();
+  }
+},
+
+generateTestCode: async (flowId) => {
+  set({ isGeneratingCode: true });
+  const derivedSpec = get().derivedSpec;
+  if (!derivedSpec) { set({ isGeneratingCode: false }); return; }
+
+  const flow = useFlowStore.getState().getFlow(flowId);
+  const project = useProjectStore.getState();
+  const architecture = project.architecture;
+
+  // Build prompt for LLM to generate test code
+  const testFramework = architecture?.testing?.framework || 'pytest';
+  const prompt = buildTestCodePrompt(derivedSpec, flow, testFramework);
+
+  // Call Design Assistant LLM
+  const response = await callModel({
+    task: 'generate',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const code = extractCodeBlock(response.content);
+  set({
+    generatedTestCode: {
+      flow_id: flowId,
+      framework: testFramework,
+      code,
+      test_count: derivedSpec.total_count,
+      generated_at: new Date().toISOString(),
+    },
+    isGeneratingCode: false,
+  });
+},
+
+checkSpecCompliance: async (flowId) => {
+  set({ isCheckingCompliance: true });
+  const derivedSpec = get().derivedSpec;
+  const testResults = get().testResults;
+  if (!derivedSpec || !testResults) { set({ isCheckingCompliance: false }); return; }
+
+  const flow = useFlowStore.getState().getFlow(flowId);
+
+  // Build prompt comparing expected outcomes against test results
+  const prompt = buildCompliancePrompt(derivedSpec, testResults, flow);
+
+  const response = await callModel({
+    task: 'review',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const report = parseComplianceResponse(response.content, flowId);
+  set({ complianceReport: report, isCheckingCompliance: false });
+
+  // Persist to mapping
+  const mapping = get().mapping;
+  if (mapping.flows[flowId]) {
+    mapping.flows[flowId].spec_compliance = {
+      score: report.score,
+      compliant: report.compliant,
+      non_compliant: report.non_compliant,
+      last_checked_at: report.checked_at,
+      issues: report.results
+        .filter(r => !r.compliant)
+        .map(r => ({
+          description: r.description,
+          expected: r.expected,
+          actual: r.actual,
+          resolved: false,
+        })),
+    };
+    get().saveMapping();
+  }
+},
+```
+
+**Helper functions:**
+
+```typescript
+/** Build prompt for LLM to generate test code from derived spec */
+function buildTestCodePrompt(
+  spec: DerivedTestSpec,
+  flow: DddFlow,
+  framework: string
+): string {
+  return `Generate ${framework} test code for the following flow.
+
+## Flow Spec
+\`\`\`yaml
+${flowToYaml(flow)}
+\`\`\`
+
+## Derived Test Cases (${spec.total_count} total)
+
+### Paths (${spec.paths.length}):
+${spec.paths.map(p => `- ${p.path_id} (${p.path_type}): ${p.description}
+  Expected: status=${p.expected_outcome.status}, ${p.expected_outcome.error_code || 'success'}`).join('\n')}
+
+### Boundary Tests (${spec.boundary_tests.length}):
+${spec.boundary_tests.map(b => `- ${b.field} ${b.test_type}: input=${JSON.stringify(b.input_value)} → ${b.expected_success ? 'success' : `error: "${b.expected_error}"`}`).join('\n')}
+
+## Requirements
+- Use ${framework} with async test client
+- Test EXACT error messages from the spec (copy them verbatim)
+- Test EXACT status codes from the spec
+- Group tests by path (happy path, validation errors, business errors)
+- Include boundary tests for all validation fields
+- Use descriptive test names that reference the spec path
+- Do NOT add tests beyond what the spec defines`;
+}
+
+/** Build prompt for compliance checking */
+function buildCompliancePrompt(
+  spec: DerivedTestSpec,
+  testResults: TestSummary,
+  flow: DddFlow
+): string {
+  return `Compare these test results against the flow spec expectations.
+
+## Expected (from spec):
+${spec.test_cases.map(tc => `- ${tc.id}: ${tc.description}
+  Expected: ${JSON.stringify(tc.path?.expected_outcome || tc.boundary)}`).join('\n')}
+
+## Actual Test Results:
+${testResults.cases.map(tc => `- ${tc.name}: ${tc.passed ? 'PASS' : 'FAIL'}
+  ${tc.error || 'no error'}`).join('\n')}
+
+For each expected test case, determine if the actual result is compliant (matches the spec exactly) or non-compliant (differs in status code, error message, response shape, etc.).
+
+Output JSON array:
+[{ "test_id": "...", "description": "...", "compliant": true/false, "expected": {...}, "actual": {...}, "diff": "..." }]`;
+}
+
+/** Parse LLM compliance response into structured report */
+function parseComplianceResponse(content: string, flowId: string): SpecComplianceReport {
+  const results = JSON.parse(extractJsonBlock(content)) as ComplianceResult[];
+  const compliant = results.filter(r => r.compliant).length;
+  return {
+    flow_id: flowId,
+    checked_at: new Date().toISOString(),
+    score: Math.round((compliant / results.length) * 100),
+    total: results.length,
+    compliant,
+    non_compliant: results.length - compliant,
+    results,
+  };
+}
+```
+
+**Component: `src/components/ImplementationPanel/TestGenerator.tsx`**
+
+```tsx
+import { useImplementationStore } from '../../stores/implementation-store';
+
+export function TestGenerator({ flowId }: { flowId: string }) {
+  const {
+    derivedSpec, generatedTestCode, isDeriving, isGeneratingCode,
+    deriveTests, generateTestCode,
+  } = useImplementationStore();
+
+  return (
+    <div className="test-generator">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">Test Specification</h3>
+        <button
+          onClick={() => deriveTests(flowId)}
+          disabled={isDeriving}
+          className="btn btn-sm"
+        >
+          {isDeriving ? 'Analyzing flow...' : '✨ Derive tests'}
+        </button>
+      </div>
+
+      {derivedSpec && (
+        <>
+          <div className="stats mb-3 text-sm text-gray-600">
+            {derivedSpec.total_count} test cases from {derivedSpec.paths.length} paths
+            + {derivedSpec.boundary_tests.length} boundary tests
+          </div>
+
+          {/* Paths section */}
+          <div className="mb-4">
+            <h4 className="text-sm font-medium mb-2">Paths</h4>
+            {derivedSpec.paths.map(path => (
+              <div key={path.path_id} className="flex items-center gap-2 py-1 text-sm">
+                <span className={
+                  path.path_type === 'happy_path' ? 'text-green-600' :
+                  path.path_type === 'error_path' ? 'text-red-600' : 'text-yellow-600'
+                }>
+                  {path.path_type === 'happy_path' ? '✓' : path.path_type === 'error_path' ? '✗' : '~'}
+                </span>
+                <span>{path.description}</span>
+                <span className="text-gray-400 ml-auto">
+                  → {path.expected_outcome.status || '?'}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Boundary tests section */}
+          <div className="mb-4">
+            <h4 className="text-sm font-medium mb-2">Boundary Tests</h4>
+            {derivedSpec.boundary_tests.map((bt, i) => (
+              <div key={i} className="flex items-center gap-2 py-1 text-sm">
+                <span className={bt.expected_success ? 'text-green-600' : 'text-red-600'}>
+                  {bt.expected_success ? '✓' : '✗'}
+                </span>
+                <span>{bt.field}: {bt.test_type}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Generate code button */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => generateTestCode(flowId)}
+              disabled={isGeneratingCode}
+              className="btn btn-primary btn-sm"
+            >
+              {isGeneratingCode ? 'Generating...' : 'Generate test code'}
+            </button>
+          </div>
+
+          {/* Generated code preview */}
+          {generatedTestCode && (
+            <div className="mt-3">
+              <h4 className="text-sm font-medium mb-2">
+                Generated Test Code ({generatedTestCode.framework})
+              </h4>
+              <pre className="bg-gray-50 p-3 rounded text-xs overflow-auto max-h-64">
+                {generatedTestCode.code}
+              </pre>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => {
+                    // Include in prompt builder
+                    useImplementationStore.getState().includeTestsInPrompt(generatedTestCode.code);
+                  }}
+                  className="btn btn-sm"
+                >
+                  Include in prompt
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+```
+
+**Component: `src/components/ImplementationPanel/CoverageBadge.tsx`**
+
+```tsx
+interface CoverageBadgeProps {
+  specTestCount: number;   // tests derived from spec
+  actualTestCount: number; // tests actually passing
+  onClick?: () => void;
+}
+
+export function CoverageBadge({ specTestCount, actualTestCount, onClick }: CoverageBadgeProps) {
+  const ratio = actualTestCount / specTestCount;
+  const color = ratio >= 1 ? 'bg-green-100 text-green-800'
+    : ratio >= 0.7 ? 'bg-yellow-100 text-yellow-800'
+    : 'bg-red-100 text-red-800';
+  const icon = ratio >= 1 ? '📋' : '⚠';
+
+  return (
+    <button onClick={onClick} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${color}`}>
+      {icon} {actualTestCount}/{specTestCount} spec tests
+    </button>
+  );
+}
+```
+
+**Component: `src/components/ImplementationPanel/SpecComplianceTab.tsx`**
+
+```tsx
+import { useImplementationStore } from '../../stores/implementation-store';
+
+export function SpecComplianceTab({ flowId }: { flowId: string }) {
+  const {
+    complianceReport, isCheckingCompliance,
+    checkSpecCompliance,
+  } = useImplementationStore();
+
+  return (
+    <div className="spec-compliance">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold">Spec Compliance</h3>
+        <button
+          onClick={() => checkSpecCompliance(flowId)}
+          disabled={isCheckingCompliance}
+          className="btn btn-sm"
+        >
+          {isCheckingCompliance ? 'Checking...' : 'Check compliance'}
+        </button>
+      </div>
+
+      {complianceReport && (
+        <>
+          <div className="mb-3 text-lg font-bold">
+            Compliance: {complianceReport.compliant}/{complianceReport.total} ({complianceReport.score}%)
+          </div>
+
+          {/* Compliant items */}
+          <div className="mb-4">
+            <h4 className="text-sm font-medium text-green-700 mb-2">Compliant</h4>
+            {complianceReport.results.filter(r => r.compliant).map(r => (
+              <div key={r.test_id} className="flex items-center gap-2 py-1 text-sm">
+                <span className="text-green-600">✓</span>
+                <span>{r.description}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Non-compliant items */}
+          {complianceReport.non_compliant > 0 && (
+            <div className="mb-4">
+              <h4 className="text-sm font-medium text-red-700 mb-2">Non-compliant</h4>
+              {complianceReport.results.filter(r => !r.compliant).map(r => (
+                <div key={r.test_id} className="border border-red-200 rounded p-2 mb-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="text-red-600">⚠</span>
+                    <span className="font-medium">{r.description}</span>
+                  </div>
+                  {r.diff && (
+                    <div className="text-xs text-gray-600 mt-1">{r.diff}</div>
+                  )}
+                  <div className="text-xs mt-1">
+                    Expected: {JSON.stringify(r.expected)} | Actual: {JSON.stringify(r.actual)}
+                  </div>
+                  <button
+                    onClick={() => {
+                      // Build fix prompt targeting this specific issue
+                      useImplementationStore.getState().fixComplianceIssue(r);
+                    }}
+                    className="btn btn-xs btn-danger mt-1"
+                  >
+                    Fix via Claude Code
+                  </button>
+                </div>
+              ))}
+
+              <button
+                onClick={() => {
+                  const issues = complianceReport.results.filter(r => !r.compliant);
+                  useImplementationStore.getState().fixAllComplianceIssues(issues);
+                }}
+                className="btn btn-sm btn-danger mt-2"
+              >
+                Fix all non-compliant
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+```
+
+**Update `ImplementationPanel.tsx`:** Add TestGenerator and SpecComplianceTab as sub-tabs:
+
+```tsx
+// Inside ImplementationPanel, add tab for test generation
+const [activeSubTab, setActiveSubTab] = useState<
+  'prompt' | 'terminal' | 'tests' | 'reconciliation' | 'test-generator' | 'compliance'
+>('prompt');
+
+// In the tab bar:
+<button onClick={() => setActiveSubTab('test-generator')}>Test Spec</button>
+<button onClick={() => setActiveSubTab('compliance')}>Compliance</button>
+
+// In the tab content:
+{activeSubTab === 'test-generator' && <TestGenerator flowId={currentFlowId} />}
+{activeSubTab === 'compliance' && <SpecComplianceTab flowId={currentFlowId} />}
+```
+
+**Update `FlowBlock.tsx`:** Add CoverageBadge alongside test and sync badges:
+
+```tsx
+// After sync badge, add coverage badge
+{mapping?.test_generation && (
+  <CoverageBadge
+    specTestCount={mapping.test_generation.derived_test_count}
+    actualTestCount={mapping.test_results?.passed || 0}
+    onClick={() => openTestGenerator(flow.id)}
+  />
+)}
+```
+
+**Update Prompt Builder:** When `include_in_prompt` config is true, append generated tests:
+
+```typescript
+// In prompt-builder.ts, after building the main prompt:
+if (config.test_generation?.include_in_prompt && generatedTestCode) {
+  prompt += `\n\n## Pre-Generated Tests\n\n`;
+  prompt += `The following tests were derived from the flow specification.\n`;
+  prompt += `Implement the flow so that ALL these tests pass.\n`;
+  prompt += `Do NOT modify the test assertions — they reflect the exact spec requirements.\n\n`;
+  prompt += '```' + generatedTestCode.framework + '\n';
+  prompt += generatedTestCode.code;
+  prompt += '\n```';
+}
+```
+
+---
+
 ## Phase 4: Testing the MVP
 
 ### Manual Test Checklist
@@ -9027,6 +9989,29 @@ export function ProductionTab() {
     - [ ] Kubernetes manifests generated when k8s enabled (deployment, service, ingress, hpa)
     - [ ] Regenerates when deployment or tech stack config changes
 
+41. **Test Case Derivation**
+    - [ ] "Derive tests" button walks flow graph and enumerates all paths (trigger → terminal)
+    - [ ] Happy path, error path, and edge case paths correctly identified
+    - [ ] Boundary tests derived from input node validation rules (min/max/missing/format)
+    - [ ] Agent test cases derived: tool success/failure, guardrail block, max iterations, human gate approve/reject
+    - [ ] Orchestration test cases derived: routing per rule, fallback, circuit breaker, handoff, supervisor override
+    - [ ] Derived test spec shows path count, boundary count, and total test case count
+
+42. **Test Code Generation**
+    - [ ] "Generate test code" calls Design Assistant LLM with derived spec + flow YAML
+    - [ ] Generated code uses project's test framework (from architecture.yaml)
+    - [ ] Generated tests use exact error messages and status codes from spec
+    - [ ] "Include in prompt" appends generated tests to the Claude Code prompt
+    - [ ] Coverage badge appears on Level 2 flow blocks after generation
+
+43. **Spec Compliance Validation**
+    - [ ] "Check compliance" compares test results against derived spec expectations
+    - [ ] Compliance report shows compliant/non-compliant items with score percentage
+    - [ ] Non-compliant items show expected vs actual diff
+    - [ ] "Fix via Claude Code" generates targeted fix prompt for each non-compliant item
+    - [ ] "Fix all non-compliant" batches all issues into one prompt
+    - [ ] Compliance data persisted in mapping.yaml (score, issues, timestamps)
+
 ---
 
 ## Phase 5: Key Implementation Notes
@@ -9121,6 +10106,11 @@ export function ProductionTab() {
 40. **Don't** generate destructive migrations (DROP COLUMN) without user confirmation — add nullable columns, copy data, then drop
 41. **Do** include sensitive_fields in logging config — accidentally logging passwords or tokens is a security incident
 42. **Do** generate observability infrastructure before business logic — logging and health checks should exist from the first flow implementation
+43. **Do** derive tests deterministically from the graph (DFS path enumeration) — don't use the LLM for path analysis, only for test code generation
+44. **Don't** modify derived test assertions when including in Claude Code prompt — they are the executable spec, changing them defeats the purpose
+45. **Do** generate boundary tests for every validation field, not just required fields — min/max boundaries catch off-by-one errors that manual testing misses
+46. **Don't** run spec compliance check before tests pass — compliance compares expected vs actual, which is meaningless if tests are failing for other reasons
+47. **Do** persist derived test counts in mapping.yaml — the coverage badge needs this data without re-deriving on every load
 
 ---
 
@@ -9307,6 +10297,22 @@ npm run tauri dev
 - [ ] Kubernetes manifests generated when enabled (deployment, service, ingress, HPA)
 - [ ] Production tab in Sidebar shows all generated artifacts with Generate buttons
 - [ ] Schema changes notification shown in Production tab
+
+### Diagram-Derived Test Generation
+- [ ] "Derive tests" walks flow graph and enumerates all paths from trigger to terminal
+- [ ] Path types correctly classified (happy_path, error_path, edge_case)
+- [ ] Boundary tests derived from every input node field with validation rules
+- [ ] Agent tests derived (tool success/failure, guardrail, max iterations, human gate)
+- [ ] Orchestration tests derived (routing rules, fallback, circuit breaker, handoff)
+- [ ] Test code generation calls Design Assistant LLM with derived spec + flow YAML
+- [ ] Generated test code uses project's test framework from architecture.yaml
+- [ ] Generated tests reference exact error messages and status codes from spec
+- [ ] "Include in prompt" appends tests to Claude Code prompt with instructions
+- [ ] Coverage badge shown on Level 2 flow blocks (spec tests vs actual tests)
+- [ ] Spec compliance check compares test results against derived expectations
+- [ ] Non-compliant items show expected vs actual with "Fix via Claude Code" button
+- [ ] Compliance score and issues persisted in mapping.yaml
+- [ ] Test Spec and Compliance tabs accessible in Implementation Panel
 
 ---
 

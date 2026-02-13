@@ -4544,6 +4544,378 @@ flows:
         accepted_at: "2025-01-15T10:33:00Z"
 ```
 
+#### 8. Diagram-Derived Test Generation
+
+Flow diagrams already contain everything needed to derive comprehensive test cases: every path through the graph, every validation rule with boundaries, every error code, every decision branch, and every terminal state. The DDD Tool extracts this information and generates test specifications, test code, and spec compliance validation — all without the user writing a single test manually.
+
+**Three levels of test generation:**
+
+| Level | What it does | When it runs |
+|-------|-------------|--------------|
+| **Test Specification** | Walks the flow graph, enumerates all paths, derives test cases | On demand (right-click → "Generate tests") or when flow is saved |
+| **Test Code Generation** | Generates actual test code (pytest/jest/etc.) from derived test cases | Before implementation — included in the Claude Code prompt |
+| **Spec Compliance Validation** | After implementation, compares test results against what the spec says should happen | After tests run — shown in Implementation Panel |
+
+##### Level 1: Test Specification (Path Analysis)
+
+The DDD Tool treats every flow as a directed graph and walks it to find all possible paths from trigger to terminal nodes.
+
+**Path enumeration algorithm:**
+
+```
+Given: Flow graph G with trigger T and terminal nodes {T1, T2, ...}
+
+1. Find all paths from T to each terminal node
+2. For each decision node, enumerate both true/false branches
+3. For each validation node, enumerate valid/invalid branches
+4. Mark each path as: happy_path, error_path, edge_case, or agent_loop
+
+Output: List of TestPath objects, each with:
+  - path_id: unique identifier
+  - path_type: happy_path | error_path | edge_case | agent_loop
+  - nodes: ordered list of node IDs traversed
+  - description: human-readable description of what this path tests
+  - expected_outcome: what the terminal node produces
+```
+
+**Example — user-register flow:**
+
+```
+Flow graph:
+  trigger → validate_input → check_duplicate → create_user → return_success
+                ↓ (invalid)       ↓ (true)
+          return_validation   return_duplicate
+              _error              _error
+
+Derived paths:
+  Path 1 (happy_path): trigger → validate_input ✓ → check_duplicate (false) → create_user → return_success
+    Expected: 201, user object with id/email/name
+
+  Path 2 (error_path): trigger → validate_input ✗ → return_validation_error
+    Expected: 422, validation error for invalid field
+
+  Path 3 (error_path): trigger → validate_input ✓ → check_duplicate (true) → return_duplicate_error
+    Expected: 409, DUPLICATE_ENTRY error code
+```
+
+**Boundary test derivation:**
+
+For every `input` node with validation rules, the tool derives boundary test cases:
+
+```
+Field: email (type: string, format: email, required: true)
+  → valid: "user@example.com"
+  → invalid_missing: (omit field) → expects error "Please enter a valid email address"
+  → invalid_format: "not-an-email" → expects error "Please enter a valid email address"
+  → invalid_type: 12345 → expects type error
+
+Field: password (type: string, min_length: 8, required: true)
+  → valid: "password123"
+  → boundary_min: "1234567" (7 chars) → expects error "Password must be at least 8 characters"
+  → boundary_exact: "12345678" (8 chars) → expects success
+  → invalid_missing: (omit field) → expects error
+
+Field: name (type: string, min_length: 2, max_length: 100, required: true)
+  → valid: "Alice"
+  → boundary_min_below: "A" (1 char) → expects error
+  → boundary_min_exact: "Al" (2 chars) → expects success
+  → boundary_max_exact: "A" × 100 → expects success
+  → boundary_max_above: "A" × 101 → expects error
+```
+
+**Agent flow test derivation:**
+
+For agent flows, the tool derives test cases from the agent's tools, guardrails, memory, and loop behavior:
+
+```
+Agent: extract-obligations
+  Test 1 (tool_success): Agent calls extract_text tool → returns structured output
+  Test 2 (tool_failure): Agent calls extract_text tool → tool returns error → agent retries or falls back
+  Test 3 (guardrail_block): Agent generates output that violates guardrail → output is blocked, agent retries
+  Test 4 (max_iterations): Agent reaches max_iterations without completing → returns partial result or error
+  Test 5 (memory_persistence): Agent stores result in memory → subsequent call retrieves it
+  Test 6 (human_gate): Agent reaches human gate → pauses for approval → continues after approval
+  Test 7 (human_gate_reject): Agent reaches human gate → user rejects → agent handles rejection
+```
+
+**Orchestration flow test derivation:**
+
+For orchestration flows, test cases come from routing rules, handoff behavior, and supervision strategies:
+
+```
+Orchestrator: support-pipeline (supervisor strategy)
+  Test 1 (routing_intent_A): Input matches intent A → routed to Agent A → response returned
+  Test 2 (routing_intent_B): Input matches intent B → routed to Agent B → response returned
+  Test 3 (routing_fallback): Input matches no intent → fallback agent handles it
+  Test 4 (handoff_transfer): Agent A transfers to Agent B → context is passed → Agent B continues
+  Test 5 (handoff_consult): Agent A consults Agent B → gets response → Agent A continues with advice
+  Test 6 (circuit_breaker): Agent fails repeatedly → circuit breaker opens → fallback activates
+  Test 7 (supervisor_override): Supervisor detects stuck agent → intervenes → reassigns to different agent
+```
+
+**Test specification display:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ TEST SPECIFICATION — api/user-register                        │
+│                                                                │
+│ Derived: 14 test cases from 3 paths + 11 boundary tests      │
+│                                                                │
+│ Paths:                                                        │
+│   Path 1: Happy path — register new user           3 tests   │
+│     • valid registration → 201 + user object                 │
+│     • valid with min-length name → 201                       │
+│     • valid with max-length name → 201                       │
+│                                                                │
+│   Path 2: Validation errors                         8 tests   │
+│     • missing email → 422 + "Please enter a valid..."       │
+│     • invalid email format → 422 + "Please enter..."        │
+│     • missing password → 422 + "Password must be..."        │
+│     • short password (7 chars) → 422 + "Password must..."   │
+│     • exact min password (8 chars) → success (Path 1)        │
+│     • missing name → 422 + "Name must be..."                │
+│     • short name (1 char) → 422 + "Name must be..."         │
+│     • long name (101 chars) → 422 + "Name must be..."       │
+│                                                                │
+│   Path 3: Duplicate email                           1 test    │
+│     • register with existing email → 409 + DUPLICATE_ENTRY  │
+│                                                                │
+│   Boundary tests:                                    2 tests   │
+│     • name exact min (2 chars) → success                     │
+│     • name exact max (100 chars) → success                   │
+│                                                                │
+│ [Generate test code]  [Include in prompt]  [Export]          │
+└──────────────────────────────────────────────────────────────┘
+```
+
+##### Level 2: Test Code Generation
+
+The DDD Tool generates actual test code from the derived test specification. The generated code uses the project's testing framework (detected from `architecture.yaml`) and follows its test conventions.
+
+**How it works:**
+
+1. DDD Tool reads the test specification (Level 1) for the flow
+2. It detects the test framework from architecture.yaml (pytest, jest, go test, etc.)
+3. It generates test code using the Design Assistant LLM, providing:
+   - The test specification (paths + boundary tests)
+   - The flow spec YAML (for exact error messages, status codes, field names)
+   - The architecture.yaml testing section (for conventions, fixtures, patterns)
+4. Generated tests are shown as a preview — user can edit before including in prompt
+
+**Generated test code example (pytest):**
+
+```python
+# Auto-generated by DDD Tool from spec: api/user-register
+# 14 test cases derived from 3 paths + 11 boundary tests
+
+import pytest
+from httpx import AsyncClient
+
+class TestUserRegisterHappyPath:
+    """Path 1: trigger → validate_input ✓ → check_duplicate (false) → create_user → return_success"""
+
+    async def test_register_success(self, client: AsyncClient):
+        response = await client.post("/auth/register", json={
+            "email": "user@example.com",
+            "password": "password123",
+            "name": "Alice"
+        })
+        assert response.status_code == 201
+        data = response.json()
+        assert data["message"] == "User registered successfully"
+        assert "id" in data["user"]
+        assert data["user"]["email"] == "user@example.com"
+        assert data["user"]["name"] == "Alice"
+
+    async def test_register_min_length_name(self, client: AsyncClient):
+        response = await client.post("/auth/register", json={
+            "email": "user2@example.com",
+            "password": "password123",
+            "name": "Al"  # exact min_length boundary
+        })
+        assert response.status_code == 201
+
+class TestUserRegisterValidation:
+    """Path 2: trigger → validate_input ✗ → return_validation_error"""
+
+    async def test_missing_email(self, client: AsyncClient):
+        response = await client.post("/auth/register", json={
+            "password": "password123",
+            "name": "Alice"
+        })
+        assert response.status_code == 422
+        # Exact error message from spec
+        assert "Please enter a valid email address" in response.text
+
+    async def test_short_password(self, client: AsyncClient):
+        response = await client.post("/auth/register", json={
+            "email": "user@example.com",
+            "password": "1234567",  # 7 chars, min is 8
+            "name": "Alice"
+        })
+        assert response.status_code == 422
+        assert "Password must be at least 8 characters" in response.text
+
+    # ... more validation tests
+
+class TestUserRegisterDuplicate:
+    """Path 3: trigger → validate_input ✓ → check_duplicate (true) → return_duplicate_error"""
+
+    async def test_duplicate_email(self, client: AsyncClient, existing_user):
+        response = await client.post("/auth/register", json={
+            "email": existing_user.email,
+            "password": "password123",
+            "name": "Bob"
+        })
+        assert response.status_code == 409
+        assert response.json()["error_code"] == "DUPLICATE_ENTRY"
+        assert "A user with this email already exists" in response.text
+```
+
+**Including generated tests in the Claude Code prompt:**
+
+When the user clicks "Include in prompt" or starts implementation, the generated test code is appended to the Claude Code prompt:
+
+```markdown
+## Pre-Generated Tests
+
+The following tests were derived from the flow specification.
+Implement the flow so that ALL these tests pass.
+Do NOT modify the test assertions — they reflect the exact spec requirements.
+
+```python
+{generated test code}
+`` `
+```
+
+This ensures Claude Code implements to match the spec exactly — the tests become executable spec requirements.
+
+**Coverage badges on Level 2:**
+
+After test generation, flow blocks show a spec coverage badge:
+
+```
+┌──────────────────────�
+│ user-register        │
+│ ✓ 14/14 tests       │    ← test badge (from test runner)
+│ ~ 85% synced        │    ← sync badge (from reconciliation)
+│ 📋 14 spec tests    │    ← spec test badge (from test generator)
+└──────────────────────┘
+```
+
+The spec test badge shows how many test cases were derived from the diagram. If actual tests (from the test runner) cover fewer cases than the spec tests, the badge turns amber to indicate untested spec paths.
+
+##### Level 3: Spec Compliance Validation
+
+After implementation and test execution, the DDD Tool compares actual test results against what the flow spec says should happen. This catches subtle mismatches where tests pass but the behavior doesn't match the spec exactly.
+
+**How it works:**
+
+1. Tests run (from the Test Runner, section 4)
+2. DDD Tool reads the test output and the derived test specification
+3. The Design Assistant LLM compares:
+   - Expected outcomes from the spec (status codes, error messages, response shapes)
+   - Actual test results (pass/fail, response bodies, error messages)
+4. Produces a spec compliance report
+
+**Spec compliance report:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ SPEC COMPLIANCE — api/user-register                           │
+│                                                                │
+│ Compliance: 12/14 (86%)                                       │
+│                                                                │
+│ ✓ Compliant:                                                  │
+│   • POST /auth/register returns 201 on success               │
+│   • Response includes id, email, name fields                 │
+│   • Missing email → 422 + correct message                    │
+│   • Invalid email → 422 + correct message                    │
+│   • Short password → 422 + correct message                   │
+│   • Duplicate email → 409 + DUPLICATE_ENTRY                  │
+│   • ... 6 more                                                │
+│                                                                │
+│ ⚠ Non-compliant:                                              │
+│   • Spec says status 422 for short name, code returns 400    │
+│     Expected: 422  Actual: 400                                │
+│     [Fix via Claude Code]                                     │
+│   • Spec says max name 100 chars, code allows 255            │
+│     Expected: error at 101 chars  Actual: accepts 255        │
+│     [Fix via Claude Code]                                     │
+│                                                                │
+│ [Fix all non-compliant]  [Dismiss]                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**"Fix via Claude Code" action:** Generates a targeted prompt:
+
+```markdown
+The following spec compliance issue was found in the user-register flow:
+
+**Issue:** Spec requires status 422 for names shorter than 2 characters,
+but the implementation returns status 400.
+
+**Spec says:**
+  Field: name, min_length: 2, error: "Name must be between 2 and 100 characters"
+  Expected HTTP status: 422 (from errors.yaml VALIDATION_ERROR mapping)
+
+**Code location:** src/domains/api/schemas.py (likely validation config)
+
+Fix the implementation to return 422 instead of 400 for this validation error.
+```
+
+**Compliance history:**
+
+Each compliance check is timestamped and stored in `.ddd/mapping.yaml`:
+
+```yaml
+flows:
+  api/user-register:
+    # ... existing fields ...
+    test_generation:
+      derived_test_count: 14
+      paths_found: 3
+      boundary_tests: 11
+      last_generated_at: "2025-01-15T10:25:00Z"
+    spec_compliance:
+      score: 86
+      compliant: 12
+      non_compliant: 2
+      last_checked_at: "2025-01-15T10:35:00Z"
+      issues:
+        - field: name
+          expected_status: 422
+          actual_status: 400
+          resolved: false
+```
+
+##### Test Generation Configuration
+
+```yaml
+# .ddd/config.yaml — test generation settings
+test_generation:
+  auto_derive: true                # Auto-derive test spec when flow is saved
+  include_in_prompt: true          # Include generated tests in Claude Code prompt
+  compliance_check: true           # Run compliance check after tests pass
+
+  boundary_tests:
+    enabled: true                  # Generate boundary tests from validation rules
+    include_type_errors: true      # Test wrong types (string where int expected)
+    include_null_tests: true       # Test null/missing for required fields
+
+  agent_tests:
+    tool_failure: true             # Test tool failure scenarios
+    guardrail_violation: true      # Test guardrail blocking
+    max_iterations: true           # Test iteration limits
+    memory_persistence: false      # Skip memory tests (complex setup)
+
+  orchestration_tests:
+    routing: true                  # Test routing rules
+    handoff: true                  # Test handoff behavior
+    circuit_breaker: true          # Test circuit breaker
+    supervisor: false              # Skip supervisor tests (complex setup)
+```
+
 ---
 
 # Part 8: Workflows
@@ -5292,6 +5664,7 @@ Claude Code reads all of these sections and generates the corresponding infrastr
 - **Observability Config:** Structured logging, OpenTelemetry tracing, Prometheus metrics, health checks — all defined in architecture.yaml and auto-generated
 - **Security Layer:** Rate limiting, CORS, security headers, input sanitization, audit logging — defined in architecture.yaml and auto-generated
 - **Deployment/IaC Generation:** Auto-generate Dockerfile, docker-compose, Kubernetes manifests from architecture.yaml deployment config
+- **Diagram-Derived Test Generation:** Auto-derive test cases from flow paths + validation boundaries, generate test code (pytest/jest), spec compliance validation after implementation
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage
