@@ -3630,26 +3630,319 @@ context:
     # ... from schemas/*.yaml
 ```
 
-#### LLM Provider Configuration
+#### Multi-Model Architecture
 
-Users configure their LLM provider in the DDD Tool settings. Multiple providers supported.
+DDD supports multiple LLM providers and models simultaneously. Different tasks route to different models — fast/cheap models for quick suggestions, powerful models for complex flow generation. Users can switch models on the fly from the UI.
+
+##### Model Registry
+
+All configured models live in a **model registry**. Each entry defines a provider, model ID, capabilities, and cost tier.
 
 ```yaml
 # .ddd/config.yaml
 llm:
-  provider: anthropic          # anthropic | openai | ollama | custom
-  model: claude-sonnet-4-5-20250929
-  api_key_env: ANTHROPIC_API_KEY  # Read from environment variable (never stored in config)
+  # Active model for chat (user can switch via UI)
+  active_model: claude-sonnet
 
-  # Optional overrides
-  max_tokens: 4096
-  temperature: 0.3             # Lower for spec generation (precision)
+  # Model registry — all available models
+  models:
+    claude-sonnet:
+      provider: anthropic
+      model_id: claude-sonnet-4-5-20250929
+      api_key_env: ANTHROPIC_API_KEY
+      label: "Claude Sonnet"               # Display name in UI
+      tier: standard                       # fast | standard | powerful
+      max_tokens: 4096
+      temperature: 0.3
+      cost_per_1k_input: 0.003             # USD per 1K input tokens
+      cost_per_1k_output: 0.015            # USD per 1K output tokens
 
-  # Fallback for offline use
-  fallback:
-    provider: ollama
-    model: llama3.1
-    base_url: http://localhost:11434
+    claude-opus:
+      provider: anthropic
+      model_id: claude-opus-4-6
+      api_key_env: ANTHROPIC_API_KEY
+      label: "Claude Opus"
+      tier: powerful
+      max_tokens: 4096
+      temperature: 0.3
+      cost_per_1k_input: 0.015
+      cost_per_1k_output: 0.075
+
+    claude-haiku:
+      provider: anthropic
+      model_id: claude-haiku-4-5-20251001
+      api_key_env: ANTHROPIC_API_KEY
+      label: "Claude Haiku"
+      tier: fast
+      max_tokens: 2048
+      temperature: 0.2
+      cost_per_1k_input: 0.0008
+      cost_per_1k_output: 0.004
+
+    gpt-4o:
+      provider: openai
+      model_id: gpt-4o
+      api_key_env: OPENAI_API_KEY
+      label: "GPT-4o"
+      tier: standard
+      max_tokens: 4096
+      temperature: 0.3
+      cost_per_1k_input: 0.0025
+      cost_per_1k_output: 0.01
+
+    gpt-4o-mini:
+      provider: openai
+      model_id: gpt-4o-mini
+      api_key_env: OPENAI_API_KEY
+      label: "GPT-4o Mini"
+      tier: fast
+      max_tokens: 2048
+      temperature: 0.2
+      cost_per_1k_input: 0.00015
+      cost_per_1k_output: 0.0006
+
+    llama-local:
+      provider: ollama
+      model_id: llama3.1
+      base_url: http://localhost:11434
+      label: "Llama 3.1 (Local)"
+      tier: standard
+      max_tokens: 4096
+      temperature: 0.3
+      cost_per_1k_input: 0                 # Free (local)
+      cost_per_1k_output: 0
+
+    deepseek-r1:
+      provider: openai_compatible
+      model_id: deepseek-reasoner
+      base_url: https://api.deepseek.com/v1
+      api_key_env: DEEPSEEK_API_KEY
+      label: "DeepSeek R1"
+      tier: powerful
+      max_tokens: 8192
+      temperature: 0.3
+      cost_per_1k_input: 0.00055
+      cost_per_1k_output: 0.0022
+
+    # Any OpenAI-compatible endpoint works:
+    # Azure OpenAI, Together AI, Groq, Fireworks, Mistral, etc.
+    custom-endpoint:
+      provider: openai_compatible
+      model_id: your-model-id
+      base_url: https://your-endpoint.com/v1
+      api_key_env: CUSTOM_API_KEY
+      label: "Custom Model"
+      tier: standard
+      max_tokens: 4096
+      temperature: 0.3
+      cost_per_1k_input: 0
+      cost_per_1k_output: 0
+
+  # Task-to-model routing — which model handles which task
+  task_routing:
+    # Inline assist (quick, frequent) → fast model
+    suggest_spec: claude-haiku
+    complete_spec: claude-haiku
+    explain_node: claude-haiku
+    label_connection: claude-haiku
+    add_error_handling: claude-haiku
+
+    # Flow generation (complex) → powerful model
+    generate_flow: claude-sonnet
+    generate_domain: claude-sonnet
+    generate_from_description: claude-sonnet
+    import_from_description: claude-sonnet
+
+    # Review / architecture (needs deep reasoning) → powerful model
+    review_flow: claude-sonnet
+    review_architecture: claude-opus
+    suggest_wiring: claude-sonnet
+    suggest_flows: claude-sonnet
+    suggest_domains: claude-sonnet
+
+    # Project summary generation → powerful model
+    generate_summary: claude-opus
+
+    # Chat (uses active_model by default) → user's choice
+    chat: _active                          # Special value: uses active_model
+
+    # Test case generation → standard model
+    generate_test_cases: claude-sonnet
+
+  # Fallback chain — if primary model fails, try next
+  fallback_chain:
+    - claude-sonnet                        # Try first
+    - gpt-4o                               # Then try
+    - llama-local                          # Last resort (offline)
+
+  # Cost tracking
+  cost_tracking:
+    enabled: true
+    reset_period: monthly                  # daily | weekly | monthly
+    budget_warning: 10.00                  # USD — show warning at this threshold
+    budget_limit: 50.00                    # USD — block requests above this (0 = unlimited)
+```
+
+##### Provider Types
+
+| Provider | `provider` value | Auth | Notes |
+|----------|------------------|------|-------|
+| **Anthropic** | `anthropic` | API key via env var | Claude models |
+| **OpenAI** | `openai` | API key via env var | GPT models |
+| **Ollama** | `ollama` | None (local) | Any model pulled locally, offline capable |
+| **OpenAI-Compatible** | `openai_compatible` | API key via env var | Azure OpenAI, Together AI, Groq, Fireworks, DeepSeek, Mistral, or any OpenAI-compatible endpoint |
+
+The `openai_compatible` provider works with any endpoint that follows the OpenAI `/v1/chat/completions` API format. This covers most hosted LLM services.
+
+##### Task-to-Model Routing
+
+Every LLM action in DDD has a **task type**. The task router looks up which model handles that task type from `task_routing` config. This lets users optimize for cost vs. quality per action.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ TASK-TO-MODEL ROUTING                                            │
+│                                                                   │
+│  User Action            Task Type            Routed Model        │
+│  ─────────────          ──────────           ──────────          │
+│  Right-click →          suggest_spec    ──→  claude-haiku (fast) │
+│  "Suggest spec"                                                   │
+│                                                                   │
+│  Right-click →          generate_flow   ──→  claude-sonnet       │
+│  "Generate flow…"                            (standard)          │
+│                                                                   │
+│  Right-click →          review_          ──→  claude-opus         │
+│  "Review architecture"  architecture         (powerful)          │
+│                                                                   │
+│  Chat panel →           chat            ──→  active_model        │
+│  free-form message                           (user's choice)     │
+│                                                                   │
+│  Memory →               generate_       ──→  claude-opus         │
+│  regenerate summary     summary              (powerful)          │
+│                                                                   │
+│         If model fails → try fallback_chain                      │
+│         claude-sonnet → gpt-4o → llama-local                     │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Model tiers guide routing defaults:**
+
+| Tier | Use for | Token budget | Examples |
+|------|---------|-------------|----------|
+| **fast** | Inline assists, explanations, labels, completions | ~500-1,000 | Haiku, GPT-4o Mini |
+| **standard** | Flow generation, suggestions, chat, test cases | ~2,000-4,000 | Sonnet, GPT-4o, Llama 3.1 |
+| **powerful** | Architecture review, project summary, complex reasoning | ~4,000-8,000 | Opus, DeepSeek R1 |
+
+##### Model Picker UI
+
+A dropdown in the Chat Panel header and a status bar indicator for quickly switching the active model.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ ✨ Design Assistant          [Claude Sonnet ▾]          [✕]     │
+│                               ┌──────────────────────────┐      │
+│ Context: ingestion /          │ ● Claude Sonnet   $0.003 │      │
+│ webhook-ingestion             │ ● Claude Opus     $0.015 │      │
+│                               │ ● Claude Haiku    $0.001 │      │
+│                               │ ─────────────────────── │      │
+│                               │ ● GPT-4o          $0.003 │      │
+│                               │ ● GPT-4o Mini     $0.000 │      │
+│                               │ ─────────────────────── │      │
+│                               │ ● Llama 3.1 (Local) Free│      │
+│                               │ ● DeepSeek R1     $0.001 │      │
+│                               │ ─────────────────────── │      │
+│                               │ ⚙ Manage models…        │      │
+│                               └──────────────────────────┘      │
+│                                                                   │
+│ ...chat messages...                                              │
+│                                                                   │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ This session: 12.4K tokens · $0.04    [Month: $3.82/$50]  │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Model picker features:**
+- Dropdown shows all registered models with cost-per-1K indicator
+- Green dot = connected, red dot = unavailable
+- "Manage models…" opens settings to add/remove/configure models
+- Switching model applies immediately to the chat thread
+- Inline assist uses the routed model (not the active model), but user can override per-action via right-click → submenu
+
+**Status bar (bottom of app):**
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ 🟢 Claude Sonnet │ Session: 12.4K tok · $0.04 │ Month: $3.82/$50.00 │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+##### Cost Tracking
+
+Every LLM request tracks input/output tokens and calculates cost based on the model's configured rates. Costs are accumulated per session and per billing period.
+
+```yaml
+# .ddd/memory/usage.yaml — auto-maintained
+usage:
+  current_period:
+    start: "2025-01-01"
+    end: "2025-01-31"
+    total_cost: 3.82
+    total_input_tokens: 245000
+    total_output_tokens: 89000
+    requests: 142
+    by_model:
+      claude-sonnet:
+        requests: 45
+        input_tokens: 120000
+        output_tokens: 52000
+        cost: 2.14
+      claude-haiku:
+        requests: 89
+        input_tokens: 110000
+        output_tokens: 32000
+        cost: 0.22
+      claude-opus:
+        requests: 8
+        input_tokens: 15000
+        output_tokens: 5000
+        cost: 1.46
+    by_task:
+      suggest_spec: { requests: 52, cost: 0.12 }
+      generate_flow: { requests: 18, cost: 1.05 }
+      chat: { requests: 32, cost: 1.44 }
+      review_flow: { requests: 12, cost: 0.48 }
+      generate_summary: { requests: 3, cost: 0.73 }
+
+  history:
+    - period: "2024-12-01/2024-12-31"
+      total_cost: 5.21
+      requests: 198
+```
+
+**Budget enforcement:**
+- At `budget_warning` threshold → yellow banner: "You've used $10 of your $50 monthly budget"
+- At `budget_limit` threshold → requests blocked with option to increase limit or switch to free local model
+- Budget = 0 means unlimited
+
+##### Inline Assist Model Override
+
+When right-clicking for inline assist, the context menu shows which model will handle the action. Users can override via a submenu.
+
+```
+┌──────────────────────────────────────┐
+│ ✨ Suggest spec        (Haiku)       │
+│ ✨ Complete spec       (Haiku)       │
+│ ✨ Explain this node   (Haiku)       │
+│ ✨ Add error handling  (Haiku)       │
+│ ✨ Generate test cases (Sonnet)      │
+│ ──────────────────────────────────── │
+│ ▶ Use different model…               │
+│   ┌────────────────────────────┐     │
+│   │ ● Claude Sonnet            │     │
+│   │ ● Claude Opus              │     │
+│   │ ● GPT-4o                   │     │
+│   └────────────────────────────┘     │
+└──────────────────────────────────────┘
 ```
 
 #### Ghost Preview (Apply/Discard Pattern)
@@ -3856,6 +4149,7 @@ Public marketplace:
 - YAML export (traditional, agent, and orchestration flow formats)
 - **LLM Design Assistant:** Chat Panel + Inline Assist (context menu) for flow generation, spec auto-fill, review, and suggestions
 - **Ghost Preview:** LLM-generated nodes appear as ghost nodes (dashed borders) with Apply/Discard before committing
+- **Multi-Model Architecture:** Model registry with multiple providers (Anthropic, OpenAI, Ollama, any OpenAI-compatible), task-to-model routing, model picker UI, cost tracking
 - **LLM Context Builder:** Automatically assembles project context (system, domain, flow, schemas, error codes) for every LLM request
 - **Project Memory:** 5-layer persistent memory (project summary, spec index, decision log, cross-flow map, implementation status) with context budgeting
 - **Memory Panel:** UI for viewing project summary, implementation status, design decisions, and flow dependencies

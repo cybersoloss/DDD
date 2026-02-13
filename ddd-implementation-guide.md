@@ -138,6 +138,8 @@ ddd-tool/
 │   │   │   ├── ChatInput.tsx          # Input box with submit + context indicator
 │   │   │   ├── GhostPreview.tsx       # Ghost nodes overlay + Apply/Discard bar
 │   │   │   ├── InlineAssist.tsx       # Context menu with ✨ actions
+│   │   │   ├── ModelPicker.tsx        # Model dropdown selector in chat header
+│   │   │   ├── UsageBar.tsx           # Bottom status bar (model + cost tracking)
 │   │   │   └── FlowPreview.tsx        # Mini flow diagram in chat for generated flows
 │   │   ├── MemoryPanel/
 │   │   │   ├── MemoryPanel.tsx        # Main memory panel (sidebar toggle)
@@ -3208,21 +3210,88 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 
 **File: `src/types/llm.ts`**
 ```typescript
-// --- LLM Provider Configuration ---
+// --- Multi-Model Architecture ---
 
-export type LLMProvider = 'anthropic' | 'openai' | 'ollama' | 'custom';
+export type LLMProvider = 'anthropic' | 'openai' | 'ollama' | 'openai_compatible';
+export type ModelTier = 'fast' | 'standard' | 'powerful';
 
-export interface LLMConfig {
+export interface ModelRegistryEntry {
+  id: string;                    // Registry key (e.g., 'claude-sonnet')
   provider: LLMProvider;
-  model: string;
-  apiKeyEnv: string;           // Environment variable name (never store key directly)
+  modelId: string;               // Provider model ID (e.g., 'claude-sonnet-4-5-20250929')
+  apiKeyEnv?: string;            // Env var for API key (not needed for Ollama)
+  baseUrl?: string;              // For ollama / openai_compatible endpoints
+  label: string;                 // Display name in UI
+  tier: ModelTier;
   maxTokens: number;
   temperature: number;
-  fallback?: {
-    provider: LLMProvider;
-    model: string;
-    baseUrl?: string;          // For Ollama / custom endpoints
-  };
+  costPer1kInput: number;        // USD per 1K input tokens (0 for local)
+  costPer1kOutput: number;       // USD per 1K output tokens
+  available?: boolean;           // Runtime: is this model reachable?
+}
+
+export type TaskType =
+  // Inline assist
+  | 'suggest_spec' | 'complete_spec' | 'explain_node' | 'add_error_handling'
+  | 'generate_test_cases' | 'label_connection' | 'add_node_between'
+  // Flow/domain/system generation
+  | 'generate_flow' | 'generate_domain' | 'generate_from_description'
+  | 'import_from_description'
+  // Review
+  | 'review_flow' | 'review_architecture' | 'suggest_wiring'
+  | 'suggest_flows' | 'suggest_events' | 'suggest_domains'
+  // Memory
+  | 'generate_summary'
+  // Chat
+  | 'chat';
+
+export interface TaskRouting {
+  [task: string]: string;        // TaskType → model registry ID ('_active' = user's choice)
+}
+
+export interface CostTracking {
+  enabled: boolean;
+  resetPeriod: 'daily' | 'weekly' | 'monthly';
+  budgetWarning: number;         // USD threshold for warning
+  budgetLimit: number;           // USD threshold for blocking (0 = unlimited)
+}
+
+export interface LLMConfig {
+  activeModel: string;           // Current model registry ID for chat
+  models: Record<string, ModelRegistryEntry>;
+  taskRouting: TaskRouting;
+  fallbackChain: string[];       // Ordered list of model IDs to try
+  costTracking: CostTracking;
+}
+
+// --- Cost / Usage Tracking ---
+
+export interface UsagePeriod {
+  start: string;                 // ISO date
+  end: string;
+  totalCost: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  requests: number;
+  byModel: Record<string, ModelUsage>;
+  byTask: Record<string, TaskUsage>;
+}
+
+export interface ModelUsage {
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+}
+
+export interface TaskUsage {
+  requests: number;
+  cost: number;
+}
+
+export interface UsageData {
+  currentPeriod: UsagePeriod;
+  history: UsagePeriod[];
 }
 
 // --- Chat Messages ---
@@ -3234,6 +3303,9 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   timestamp: number;
+  modelId?: string;              // Which model generated this (for assistant messages)
+  inputTokens?: number;          // Token usage for this message
+  outputTokens?: number;
   // For assistant messages that generate nodes/flows
   generatedYaml?: string;
   previewState?: 'pending' | 'applied' | 'discarded';
@@ -3352,6 +3424,11 @@ interface LLMState {
   // Config
   config: LLMConfig;
 
+  // Usage tracking
+  usage: UsageData | null;
+  sessionTokens: number;
+  sessionCost: number;
+
   // Chat panel
   chatOpen: boolean;
   activeThread: ChatThread | null;
@@ -3361,11 +3438,20 @@ interface LLMState {
   // Ghost preview
   ghostPreview: GhostPreview | null;
 
+  // Actions — Model Management
+  setActiveModel: (modelId: string) => void;
+  resolveModelForTask: (taskType: TaskType) => ModelRegistryEntry;
+  addModel: (model: ModelRegistryEntry) => void;
+  removeModel: (modelId: string) => void;
+  updateModel: (modelId: string, updates: Partial<ModelRegistryEntry>) => void;
+  setTaskRouting: (task: TaskType, modelId: string) => void;
+  checkModelAvailability: () => Promise<void>;
+
   // Actions — Chat
   toggleChat: () => void;
   openChat: () => void;
   closeChat: () => void;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, modelOverride?: string) => Promise<void>;
   switchThread: (threadId: string) => void;
   startThreadForFlow: (flowId: string, domainId: string) => void;
 
@@ -3375,37 +3461,206 @@ interface LLMState {
   editGhostInChat: () => void;
 
   // Actions — Inline Assist
-  executeInlineAssist: (request: InlineAssistRequest) => Promise<string>;
+  executeInlineAssist: (request: InlineAssistRequest, modelOverride?: string) => Promise<string>;
+
+  // Actions — Usage
+  trackUsage: (modelId: string, taskType: TaskType, inputTokens: number, outputTokens: number) => void;
+  loadUsage: (projectPath: string) => Promise<void>;
+  isOverBudget: () => boolean;
+  isNearBudget: () => boolean;
 
   // Actions — Config
   updateConfig: (config: Partial<LLMConfig>) => void;
 }
 
-export const useLLMStore = create<LLMState>((set, get) => ({
-  config: {
+const DEFAULT_MODELS: Record<string, ModelRegistryEntry> = {
+  'claude-sonnet': {
+    id: 'claude-sonnet',
     provider: 'anthropic',
-    model: 'claude-sonnet-4-5-20250929',
+    modelId: 'claude-sonnet-4-5-20250929',
     apiKeyEnv: 'ANTHROPIC_API_KEY',
+    label: 'Claude Sonnet',
+    tier: 'standard',
     maxTokens: 4096,
     temperature: 0.3,
+    costPer1kInput: 0.003,
+    costPer1kOutput: 0.015,
+  },
+  'claude-haiku': {
+    id: 'claude-haiku',
+    provider: 'anthropic',
+    modelId: 'claude-haiku-4-5-20251001',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+    label: 'Claude Haiku',
+    tier: 'fast',
+    maxTokens: 2048,
+    temperature: 0.2,
+    costPer1kInput: 0.0008,
+    costPer1kOutput: 0.004,
+  },
+  'claude-opus': {
+    id: 'claude-opus',
+    provider: 'anthropic',
+    modelId: 'claude-opus-4-6',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+    label: 'Claude Opus',
+    tier: 'powerful',
+    maxTokens: 4096,
+    temperature: 0.3,
+    costPer1kInput: 0.015,
+    costPer1kOutput: 0.075,
+  },
+};
+
+const DEFAULT_TASK_ROUTING: TaskRouting = {
+  // Fast model for inline assists
+  suggest_spec: 'claude-haiku',
+  complete_spec: 'claude-haiku',
+  explain_node: 'claude-haiku',
+  label_connection: 'claude-haiku',
+  add_error_handling: 'claude-haiku',
+  add_node_between: 'claude-haiku',
+  // Standard model for generation
+  generate_flow: 'claude-sonnet',
+  generate_domain: 'claude-sonnet',
+  generate_from_description: 'claude-sonnet',
+  import_from_description: 'claude-sonnet',
+  generate_test_cases: 'claude-sonnet',
+  suggest_wiring: 'claude-sonnet',
+  suggest_flows: 'claude-sonnet',
+  suggest_events: 'claude-sonnet',
+  suggest_domains: 'claude-sonnet',
+  // Powerful model for review / summary
+  review_flow: 'claude-sonnet',
+  review_architecture: 'claude-opus',
+  generate_summary: 'claude-opus',
+  // Chat uses active model
+  chat: '_active',
+};
+
+export const useLLMStore = create<LLMState>((set, get) => ({
+  config: {
+    activeModel: 'claude-sonnet',
+    models: DEFAULT_MODELS,
+    taskRouting: DEFAULT_TASK_ROUTING,
+    fallbackChain: ['claude-sonnet', 'claude-haiku'],
+    costTracking: {
+      enabled: true,
+      resetPeriod: 'monthly',
+      budgetWarning: 10.0,
+      budgetLimit: 50.0,
+    },
   },
 
+  usage: null,
+  sessionTokens: 0,
+  sessionCost: 0,
   chatOpen: false,
   activeThread: null,
   threads: [],
   isStreaming: false,
   ghostPreview: null,
 
+  // --- Model Management ---
+
+  setActiveModel: (modelId: string) => {
+    set(s => ({ config: { ...s.config, activeModel: modelId } }));
+  },
+
+  resolveModelForTask: (taskType: TaskType): ModelRegistryEntry => {
+    const { config } = get();
+    const routedId = config.taskRouting[taskType] ?? config.activeModel;
+    const modelId = routedId === '_active' ? config.activeModel : routedId;
+    const model = config.models[modelId];
+    if (!model) {
+      // Fallback to first available model
+      return Object.values(config.models)[0];
+    }
+    return model;
+  },
+
+  addModel: (model: ModelRegistryEntry) => {
+    set(s => ({
+      config: {
+        ...s.config,
+        models: { ...s.config.models, [model.id]: model },
+      },
+    }));
+  },
+
+  removeModel: (modelId: string) => {
+    set(s => {
+      const { [modelId]: _, ...rest } = s.config.models;
+      return { config: { ...s.config, models: rest } };
+    });
+  },
+
+  updateModel: (modelId: string, updates: Partial<ModelRegistryEntry>) => {
+    set(s => ({
+      config: {
+        ...s.config,
+        models: {
+          ...s.config.models,
+          [modelId]: { ...s.config.models[modelId], ...updates },
+        },
+      },
+    }));
+  },
+
+  setTaskRouting: (task: TaskType, modelId: string) => {
+    set(s => ({
+      config: {
+        ...s.config,
+        taskRouting: { ...s.config.taskRouting, [task]: modelId },
+      },
+    }));
+  },
+
+  checkModelAvailability: async () => {
+    const { config } = get();
+    const results = await Promise.allSettled(
+      Object.values(config.models).map(async (model) => {
+        try {
+          await invoke('llm_health_check', { model });
+          return { id: model.id, available: true };
+        } catch {
+          return { id: model.id, available: false };
+        }
+      })
+    );
+
+    const updates: Record<string, ModelRegistryEntry> = { ...config.models };
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        const { id, available } = result.value;
+        updates[id] = { ...updates[id], available };
+      }
+    }
+    set(s => ({ config: { ...s.config, models: updates } }));
+  },
+
+  // --- Chat ---
+
   toggleChat: () => set(s => ({ chatOpen: !s.chatOpen })),
   openChat: () => set({ chatOpen: true }),
   closeChat: () => set({ chatOpen: false }),
 
-  sendMessage: async (content: string) => {
+  sendMessage: async (content: string, modelOverride?: string) => {
     const state = get();
     const thread = state.activeThread;
     if (!thread) return;
 
-    // Add user message
+    // Budget check
+    if (state.isOverBudget()) {
+      // Add system message about budget
+      return;
+    }
+
+    // Resolve which model to use
+    const model = modelOverride
+      ? state.config.models[modelOverride]
+      : state.resolveModelForTask('chat');
+
     const userMsg: ChatMessage = {
       id: nanoid(),
       role: 'user',
@@ -3419,63 +3674,71 @@ export const useLLMStore = create<LLMState>((set, get) => ({
       updatedAt: Date.now(),
     };
 
-    set({
-      activeThread: updatedThread,
-      isStreaming: true,
-    });
+    set({ activeThread: updatedThread, isStreaming: true });
 
-    // Build context from current project state
     const context = buildLLMContext();
 
-    // Call Tauri backend
-    try {
-      const response: string = await invoke('llm_chat', {
-        messages: updatedThread.messages.map(m => ({
-          role: m.role,
-          content: m.content,
-        })),
-        context,
-        config: state.config,
-      });
+    // Try model with fallback chain
+    let response: { content: string; inputTokens: number; outputTokens: number } | null = null;
+    let usedModelId = model.id;
 
-      const assistantMsg: ChatMessage = {
-        id: nanoid(),
-        role: 'assistant',
-        content: response,
-        timestamp: Date.now(),
-      };
+    const modelsToTry = [model.id, ...state.config.fallbackChain.filter(id => id !== model.id)];
 
-      // Check if response contains YAML (flow/node generation)
-      const yamlMatch = response.match(/```yaml\n([\s\S]*?)```/);
-      if (yamlMatch) {
-        assistantMsg.generatedYaml = yamlMatch[1];
-        assistantMsg.previewState = 'pending';
+    for (const modelId of modelsToTry) {
+      const tryModel = state.config.models[modelId];
+      if (!tryModel) continue;
+
+      try {
+        response = await invoke('llm_chat', {
+          messages: updatedThread.messages.map(m => ({ role: m.role, content: m.content })),
+          context,
+          model: tryModel,
+        });
+        usedModelId = modelId;
+        break;
+      } catch (err) {
+        console.warn(`Model ${modelId} failed, trying next...`, err);
       }
+    }
 
-      const finalThread = {
-        ...updatedThread,
-        messages: [...updatedThread.messages, assistantMsg],
-        updatedAt: Date.now(),
-      };
-
-      set({
-        activeThread: finalThread,
-        isStreaming: false,
-        threads: state.threads.map(t =>
-          t.id === finalThread.id ? finalThread : t
-        ),
-      });
-
-      // If YAML was generated, parse and create ghost preview
-      if (assistantMsg.generatedYaml) {
-        const preview = parseYamlToGhostPreview(
-          assistantMsg.id,
-          assistantMsg.generatedYaml
-        );
-        set({ ghostPreview: preview });
-      }
-    } catch (error) {
+    if (!response) {
       set({ isStreaming: false });
+      return;
+    }
+
+    // Track usage
+    state.trackUsage(usedModelId, 'chat', response.inputTokens, response.outputTokens);
+
+    const assistantMsg: ChatMessage = {
+      id: nanoid(),
+      role: 'assistant',
+      content: response.content,
+      timestamp: Date.now(),
+      modelId: usedModelId,
+      inputTokens: response.inputTokens,
+      outputTokens: response.outputTokens,
+    };
+
+    const yamlMatch = response.content.match(/```yaml\n([\s\S]*?)```/);
+    if (yamlMatch) {
+      assistantMsg.generatedYaml = yamlMatch[1];
+      assistantMsg.previewState = 'pending';
+    }
+
+    const finalThread = {
+      ...updatedThread,
+      messages: [...updatedThread.messages, assistantMsg],
+      updatedAt: Date.now(),
+    };
+
+    set({
+      activeThread: finalThread,
+      isStreaming: false,
+      threads: state.threads.map(t => t.id === finalThread.id ? finalThread : t),
+    });
+
+    if (assistantMsg.generatedYaml) {
+      set({ ghostPreview: parseYamlToGhostPreview(assistantMsg.id, assistantMsg.generatedYaml) });
     }
   },
 
@@ -3507,26 +3770,20 @@ export const useLLMStore = create<LLMState>((set, get) => ({
     }));
   },
 
+  // --- Ghost Preview ---
+
   applyGhostPreview: () => {
     const preview = get().ghostPreview;
     if (!preview) return;
 
-    // Convert ghost nodes to real nodes via flow-store
-    // (implementation delegates to flow-store.addNodes)
     set({ ghostPreview: { ...preview, state: 'applied' } });
 
-    // Update the message's previewState
     const thread = get().activeThread;
     if (thread) {
       const updatedMessages = thread.messages.map(m =>
-        m.id === preview.sourceMessageId
-          ? { ...m, previewState: 'applied' as const }
-          : m
+        m.id === preview.sourceMessageId ? { ...m, previewState: 'applied' as const } : m
       );
-      set({
-        activeThread: { ...thread, messages: updatedMessages },
-        ghostPreview: null,
-      });
+      set({ activeThread: { ...thread, messages: updatedMessages }, ghostPreview: null });
     }
   },
 
@@ -3537,14 +3794,9 @@ export const useLLMStore = create<LLMState>((set, get) => ({
     const thread = get().activeThread;
     if (thread) {
       const updatedMessages = thread.messages.map(m =>
-        m.id === preview.sourceMessageId
-          ? { ...m, previewState: 'discarded' as const }
-          : m
+        m.id === preview.sourceMessageId ? { ...m, previewState: 'discarded' as const } : m
       );
-      set({
-        activeThread: { ...thread, messages: updatedMessages },
-        ghostPreview: null,
-      });
+      set({ activeThread: { ...thread, messages: updatedMessages }, ghostPreview: null });
     }
   },
 
@@ -3552,21 +3804,94 @@ export const useLLMStore = create<LLMState>((set, get) => ({
     const preview = get().ghostPreview;
     if (!preview) return;
     set({ ghostPreview: null, chatOpen: true });
-    // Focus the chat input — the user can type refinements
   },
 
-  executeInlineAssist: async (request: InlineAssistRequest): Promise<string> => {
+  // --- Inline Assist ---
+
+  executeInlineAssist: async (request: InlineAssistRequest, modelOverride?: string): Promise<string> => {
+    const state = get();
+
+    // Resolve model: override → task routing → fallback
+    const model = modelOverride
+      ? state.config.models[modelOverride]
+      : state.resolveModelForTask(request.action as TaskType);
+
     const context = buildLLMContext();
-    const config = get().config;
 
-    const response: string = await invoke('llm_inline_assist', {
-      action: request.action,
-      target: request.target,
-      context,
-      config,
-    });
+    const response: { content: string; inputTokens: number; outputTokens: number } =
+      await invoke('llm_inline_assist', {
+        action: request.action,
+        target: request.target,
+        context,
+        model,
+      });
 
-    return response;
+    // Track usage
+    state.trackUsage(model.id, request.action as TaskType, response.inputTokens, response.outputTokens);
+
+    return response.content;
+  },
+
+  // --- Usage Tracking ---
+
+  trackUsage: (modelId: string, taskType: TaskType, inputTokens: number, outputTokens: number) => {
+    const model = get().config.models[modelId];
+    if (!model) return;
+
+    const cost = (inputTokens / 1000) * model.costPer1kInput +
+                 (outputTokens / 1000) * model.costPer1kOutput;
+
+    set(s => ({
+      sessionTokens: s.sessionTokens + inputTokens + outputTokens,
+      sessionCost: s.sessionCost + cost,
+      usage: s.usage ? {
+        ...s.usage,
+        currentPeriod: {
+          ...s.usage.currentPeriod,
+          totalCost: s.usage.currentPeriod.totalCost + cost,
+          totalInputTokens: s.usage.currentPeriod.totalInputTokens + inputTokens,
+          totalOutputTokens: s.usage.currentPeriod.totalOutputTokens + outputTokens,
+          requests: s.usage.currentPeriod.requests + 1,
+          byModel: {
+            ...s.usage.currentPeriod.byModel,
+            [modelId]: {
+              requests: (s.usage.currentPeriod.byModel[modelId]?.requests ?? 0) + 1,
+              inputTokens: (s.usage.currentPeriod.byModel[modelId]?.inputTokens ?? 0) + inputTokens,
+              outputTokens: (s.usage.currentPeriod.byModel[modelId]?.outputTokens ?? 0) + outputTokens,
+              cost: (s.usage.currentPeriod.byModel[modelId]?.cost ?? 0) + cost,
+            },
+          },
+          byTask: {
+            ...s.usage.currentPeriod.byTask,
+            [taskType]: {
+              requests: (s.usage.currentPeriod.byTask[taskType]?.requests ?? 0) + 1,
+              cost: (s.usage.currentPeriod.byTask[taskType]?.cost ?? 0) + cost,
+            },
+          },
+        },
+      } : null,
+    }));
+  },
+
+  loadUsage: async (projectPath: string) => {
+    try {
+      const usage = await invoke<UsageData>('load_usage', { projectPath });
+      set({ usage });
+    } catch {
+      // Initialize empty usage
+    }
+  },
+
+  isOverBudget: () => {
+    const { usage, config } = get();
+    if (!config.costTracking.enabled || config.costTracking.budgetLimit === 0) return false;
+    return (usage?.currentPeriod.totalCost ?? 0) >= config.costTracking.budgetLimit;
+  },
+
+  isNearBudget: () => {
+    const { usage, config } = get();
+    if (!config.costTracking.enabled) return false;
+    return (usage?.currentPeriod.totalCost ?? 0) >= config.costTracking.budgetWarning;
   },
 
   updateConfig: (partial: Partial<LLMConfig>) => {
@@ -3662,21 +3987,16 @@ export function buildLLMContext(): LLMContext {
 use serde::{Deserialize, Serialize};
 use tauri::command;
 
-#[derive(Deserialize)]
-pub struct LLMConfig {
-    provider: String,     // "anthropic" | "openai" | "ollama" | "custom"
-    model: String,
-    api_key_env: String,
+/// A single model from the registry — sent from the frontend per-request
+#[derive(Deserialize, Clone)]
+pub struct ModelEntry {
+    id: String,
+    provider: String,            // "anthropic" | "openai" | "ollama" | "openai_compatible"
+    model_id: String,            // Provider-specific model ID
+    api_key_env: Option<String>, // Env var name (None for Ollama)
+    base_url: Option<String>,    // For ollama / openai_compatible
     max_tokens: u32,
     temperature: f32,
-    fallback: Option<FallbackConfig>,
-}
-
-#[derive(Deserialize)]
-pub struct FallbackConfig {
-    provider: String,
-    model: String,
-    base_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -3686,57 +4006,34 @@ pub struct ChatMsg {
 }
 
 #[derive(Serialize)]
-pub struct LLMResponse {
+pub struct LLMResult {
     content: String,
+    input_tokens: u32,
+    output_tokens: u32,
 }
 
-/// Main chat endpoint — sends messages + context to LLM provider
+/// Main chat endpoint — the frontend resolves which model to use and passes it directly
 #[command]
 pub async fn llm_chat(
     messages: Vec<ChatMsg>,
     context: serde_json::Value,
-    config: LLMConfig,
-) -> Result<String, String> {
-    let api_key = std::env::var(&config.api_key_env)
-        .map_err(|_| format!("Environment variable {} not set", config.api_key_env))?;
-
+    model: ModelEntry,
+) -> Result<LLMResult, String> {
+    let api_key = resolve_api_key(&model)?;
     let system_prompt = build_system_prompt(&context);
 
-    let response = match config.provider.as_str() {
-        "anthropic" => call_anthropic(&api_key, &config.model, &system_prompt, &messages, config.max_tokens, config.temperature).await,
-        "openai" => call_openai(&api_key, &config.model, &system_prompt, &messages, config.max_tokens, config.temperature).await,
-        "ollama" => call_ollama(&config.model, &system_prompt, &messages, config.fallback.as_ref().and_then(|f| f.base_url.as_deref())).await,
-        _ => Err("Unsupported provider".to_string()),
-    };
-
-    match response {
-        Ok(content) => Ok(content),
-        Err(e) => {
-            // Try fallback if configured
-            if let Some(fallback) = &config.fallback {
-                let fb_result = match fallback.provider.as_str() {
-                    "ollama" => call_ollama(&fallback.model, &system_prompt, &messages, fallback.base_url.as_deref()).await,
-                    _ => Err("Unsupported fallback provider".to_string()),
-                };
-                fb_result
-            } else {
-                Err(e)
-            }
-        }
-    }
+    call_model(&model, &api_key, &system_prompt, &messages).await
 }
 
-/// Inline assist endpoint — targeted action on a specific element
+/// Inline assist endpoint
 #[command]
 pub async fn llm_inline_assist(
     action: String,
     target: serde_json::Value,
     context: serde_json::Value,
-    config: LLMConfig,
-) -> Result<String, String> {
-    let api_key = std::env::var(&config.api_key_env)
-        .map_err(|_| format!("Environment variable {} not set", config.api_key_env))?;
-
+    model: ModelEntry,
+) -> Result<LLMResult, String> {
+    let api_key = resolve_api_key(&model)?;
     let system_prompt = build_inline_assist_prompt(&action, &target, &context);
 
     let messages = vec![ChatMsg {
@@ -3744,10 +4041,47 @@ pub async fn llm_inline_assist(
         content: format_inline_assist_user_message(&action, &target),
     }];
 
-    match config.provider.as_str() {
-        "anthropic" => call_anthropic(&api_key, &config.model, &system_prompt, &messages, config.max_tokens, config.temperature).await,
-        "openai" => call_openai(&api_key, &config.model, &system_prompt, &messages, config.max_tokens, config.temperature).await,
-        _ => Err("Unsupported provider".to_string()),
+    call_model(&model, &api_key, &system_prompt, &messages).await
+}
+
+/// Health check — test if a model endpoint is reachable
+#[command]
+pub async fn llm_health_check(model: ModelEntry) -> Result<bool, String> {
+    let api_key = resolve_api_key(&model).unwrap_or_default();
+
+    let messages = vec![ChatMsg {
+        role: "user".to_string(),
+        content: "ping".to_string(),
+    }];
+
+    match call_model(&model, &api_key, "Respond with 'pong'.", &messages).await {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Resolve API key from environment variable
+fn resolve_api_key(model: &ModelEntry) -> Result<String, String> {
+    match &model.api_key_env {
+        Some(env_var) => std::env::var(env_var)
+            .map_err(|_| format!("Environment variable {} not set", env_var)),
+        None => Ok(String::new()), // Ollama doesn't need an API key
+    }
+}
+
+/// Unified model caller — routes to the correct provider
+async fn call_model(
+    model: &ModelEntry,
+    api_key: &str,
+    system_prompt: &str,
+    messages: &[ChatMsg],
+) -> Result<LLMResult, String> {
+    match model.provider.as_str() {
+        "anthropic" => call_anthropic(api_key, &model.model_id, system_prompt, messages, model.max_tokens, model.temperature).await,
+        "openai" => call_openai(api_key, &model.model_id, system_prompt, messages, model.max_tokens, model.temperature, None).await,
+        "ollama" => call_ollama(&model.model_id, system_prompt, messages, model.base_url.as_deref()).await,
+        "openai_compatible" => call_openai(api_key, &model.model_id, system_prompt, messages, model.max_tokens, model.temperature, model.base_url.as_deref()).await,
+        _ => Err(format!("Unsupported provider: {}", model.provider)),
     }
 }
 
@@ -3818,7 +4152,7 @@ fn format_inline_assist_user_message(action: &str, target: &serde_json::Value) -
     format!("Execute inline assist action '{}' on target: {}", action, target)
 }
 
-// Provider implementations (simplified — real implementation uses reqwest)
+// Provider implementations — all return LLMResult with token counts
 
 async fn call_anthropic(
     api_key: &str,
@@ -3827,14 +4161,11 @@ async fn call_anthropic(
     messages: &[ChatMsg],
     max_tokens: u32,
     temperature: f32,
-) -> Result<String, String> {
+) -> Result<LLMResult, String> {
     let client = reqwest::Client::new();
 
     let api_messages: Vec<serde_json::Value> = messages.iter().map(|m| {
-        serde_json::json!({
-            "role": m.role,
-            "content": m.content
-        })
+        serde_json::json!({ "role": m.role, "content": m.content })
     }).collect();
 
     let body = serde_json::json!({
@@ -3850,16 +4181,19 @@ async fn call_anthropic(
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
         .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .send().await.map_err(|e| e.to_string())?;
 
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
 
-    json["content"][0]["text"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Failed to parse LLM response".to_string())
+    let content = json["content"][0]["text"].as_str()
+        .ok_or_else(|| "Failed to parse Anthropic response".to_string())?
+        .to_string();
+
+    Ok(LLMResult {
+        content,
+        input_tokens: json["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
+        output_tokens: json["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
+    })
 }
 
 async fn call_openai(
@@ -3869,19 +4203,17 @@ async fn call_openai(
     messages: &[ChatMsg],
     max_tokens: u32,
     temperature: f32,
-) -> Result<String, String> {
+    base_url: Option<&str>,        // None = OpenAI, Some = Azure/Together/Groq/etc.
+) -> Result<LLMResult, String> {
     let client = reqwest::Client::new();
+    let url = format!("{}/chat/completions",
+        base_url.unwrap_or("https://api.openai.com/v1"));
 
     let mut api_messages = vec![serde_json::json!({
-        "role": "system",
-        "content": system_prompt
+        "role": "system", "content": system_prompt
     })];
-
     for m in messages {
-        api_messages.push(serde_json::json!({
-            "role": m.role,
-            "content": m.content
-        }));
+        api_messages.push(serde_json::json!({ "role": m.role, "content": m.content }));
     }
 
     let body = serde_json::json!({
@@ -3891,20 +4223,23 @@ async fn call_openai(
         "messages": api_messages
     });
 
-    let response = client.post("https://api.openai.com/v1/chat/completions")
+    let response = client.post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("content-type", "application/json")
         .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .send().await.map_err(|e| e.to_string())?;
 
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
 
-    json["choices"][0]["message"]["content"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Failed to parse LLM response".to_string())
+    let content = json["choices"][0]["message"]["content"].as_str()
+        .ok_or_else(|| "Failed to parse OpenAI response".to_string())?
+        .to_string();
+
+    Ok(LLMResult {
+        content,
+        input_tokens: json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+        output_tokens: json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+    })
 }
 
 async fn call_ollama(
@@ -3912,20 +4247,15 @@ async fn call_ollama(
     system_prompt: &str,
     messages: &[ChatMsg],
     base_url: Option<&str>,
-) -> Result<String, String> {
+) -> Result<LLMResult, String> {
     let client = reqwest::Client::new();
     let url = format!("{}/api/chat", base_url.unwrap_or("http://localhost:11434"));
 
     let mut api_messages = vec![serde_json::json!({
-        "role": "system",
-        "content": system_prompt
+        "role": "system", "content": system_prompt
     })];
-
     for m in messages {
-        api_messages.push(serde_json::json!({
-            "role": m.role,
-            "content": m.content
-        }));
+        api_messages.push(serde_json::json!({ "role": m.role, "content": m.content }));
     }
 
     let body = serde_json::json!({
@@ -3936,16 +4266,19 @@ async fn call_ollama(
 
     let response = client.post(&url)
         .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .send().await.map_err(|e| e.to_string())?;
 
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
 
-    json["message"]["content"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Failed to parse Ollama response".to_string())
+    let content = json["message"]["content"].as_str()
+        .ok_or_else(|| "Failed to parse Ollama response".to_string())?
+        .to_string();
+
+    Ok(LLMResult {
+        content,
+        input_tokens: json["prompt_eval_count"].as_u64().unwrap_or(0) as u32,
+        output_tokens: json["eval_count"].as_u64().unwrap_or(0) as u32,
+    })
 }
 ```
 
@@ -3961,6 +4294,7 @@ import { X, MessageSquare, Sparkles } from 'lucide-react';
 export function ChatPanel() {
   const {
     chatOpen, activeThread, isStreaming,
+    sessionTokens, sessionCost,
     closeChat, sendMessage,
   } = useLLMStore();
 
@@ -3974,22 +4308,30 @@ export function ChatPanel() {
 
   return (
     <div className="w-96 border-l border-gray-200 bg-white flex flex-col h-full">
-      {/* Header */}
+      {/* Header with Model Picker */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-purple-500" />
           <span className="font-medium text-sm">Design Assistant</span>
         </div>
-        <button onClick={closeChat} className="text-gray-400 hover:text-gray-600">
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          <ModelPicker />
+          <button onClick={closeChat} className="text-gray-400 hover:text-gray-600">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Context indicator */}
-      <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 border-b">
-        {activeThread?.flowId
-          ? `Context: ${activeThread.domainId} / ${activeThread.flowId}`
-          : 'Context: Project-level'}
+      <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 border-b flex justify-between">
+        <span>
+          {activeThread?.flowId
+            ? `Context: ${activeThread.domainId} / ${activeThread.flowId}`
+            : 'Context: Project-level'}
+        </span>
+        <span className="text-gray-400">
+          {sessionTokens > 0 && `${(sessionTokens / 1000).toFixed(1)}K tok · $${sessionCost.toFixed(2)}`}
+        </span>
       </div>
 
       {/* Messages */}
@@ -4374,6 +4716,176 @@ export function InlineAssist({ x, y, target, onClose }: Props) {
 }
 ```
 
+**File: `src/components/LLMAssistant/ModelPicker.tsx`**
+```tsx
+import { useState, useRef, useEffect } from 'react';
+import { useLLMStore } from '../../stores/llm-store';
+import { ChevronDown, Circle, Settings } from 'lucide-react';
+
+export function ModelPicker() {
+  const { config, setActiveModel, isNearBudget, usage } = useLLMStore();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const activeModel = config.models[config.activeModel];
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Group models by provider
+  const grouped = Object.values(config.models).reduce((acc, model) => {
+    const group = model.provider === 'ollama' ? 'Local' :
+                  model.provider === 'anthropic' ? 'Anthropic' :
+                  model.provider === 'openai' ? 'OpenAI' : 'Other';
+    if (!acc[group]) acc[group] = [];
+    acc[group].push(model);
+    return acc;
+  }, {} as Record<string, typeof Object.values<any>>);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 px-2 py-1 text-xs border border-gray-200 rounded-md hover:bg-gray-50"
+      >
+        <Circle
+          className={`w-2 h-2 ${activeModel?.available !== false ? 'fill-green-500 text-green-500' : 'fill-red-400 text-red-400'}`}
+        />
+        <span className="max-w-[120px] truncate">{activeModel?.label ?? 'Select model'}</span>
+        <ChevronDown className="w-3 h-3 text-gray-400" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1">
+          {Object.entries(grouped).map(([group, models]) => (
+            <div key={group}>
+              <div className="px-3 py-1.5 text-xs font-medium text-gray-400 uppercase tracking-wide">
+                {group}
+              </div>
+              {(models as any[]).map((model: any) => (
+                <button
+                  key={model.id}
+                  onClick={() => { setActiveModel(model.id); setOpen(false); }}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-purple-50 ${
+                    model.id === config.activeModel ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Circle
+                      className={`w-2 h-2 ${model.available !== false ? 'fill-green-500 text-green-500' : 'fill-red-400 text-red-400'}`}
+                    />
+                    <span>{model.label}</span>
+                  </div>
+                  <span className="text-xs text-gray-400">
+                    {model.costPer1kInput === 0 ? 'Free' : `$${model.costPer1kInput}`}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ))}
+
+          <div className="border-t border-gray-100 mt-1">
+            <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50">
+              <Settings className="w-3.5 h-3.5" />
+              Manage models…
+            </button>
+          </div>
+
+          {/* Budget indicator */}
+          {usage && config.costTracking.enabled && (
+            <div className={`border-t px-3 py-2 text-xs ${
+              isNearBudget() ? 'text-amber-600 bg-amber-50' : 'text-gray-400'
+            }`}>
+              Month: ${usage.currentPeriod.totalCost.toFixed(2)}
+              {config.costTracking.budgetLimit > 0 && ` / $${config.costTracking.budgetLimit.toFixed(2)}`}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**File: `src/components/LLMAssistant/UsageBar.tsx`**
+```tsx
+import { useLLMStore } from '../../stores/llm-store';
+import { Circle } from 'lucide-react';
+
+/**
+ * Status bar at the bottom of the app showing active model + usage.
+ */
+export function UsageBar() {
+  const { config, usage, sessionTokens, sessionCost, isNearBudget, isOverBudget } = useLLMStore();
+
+  const activeModel = config.models[config.activeModel];
+
+  return (
+    <div className="h-6 border-t border-gray-200 bg-gray-50 px-4 flex items-center justify-between text-xs text-gray-500">
+      {/* Active model */}
+      <div className="flex items-center gap-2">
+        <Circle
+          className={`w-2 h-2 ${activeModel?.available !== false ? 'fill-green-500 text-green-500' : 'fill-red-400 text-red-400'}`}
+        />
+        <span>{activeModel?.label ?? 'No model'}</span>
+      </div>
+
+      {/* Session + period usage */}
+      <div className="flex items-center gap-4">
+        {sessionTokens > 0 && (
+          <span>Session: {(sessionTokens / 1000).toFixed(1)}K tok · ${sessionCost.toFixed(2)}</span>
+        )}
+
+        {usage && config.costTracking.enabled && (
+          <span className={
+            isOverBudget() ? 'text-red-600 font-medium' :
+            isNearBudget() ? 'text-amber-600' : ''
+          }>
+            Month: ${usage.currentPeriod.totalCost.toFixed(2)}
+            {config.costTracking.budgetLimit > 0 && `/$${config.costTracking.budgetLimit.toFixed(2)}`}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+**Update the InlineAssist context menu to show routed model and allow override:**
+
+Add to `src/components/LLMAssistant/InlineAssist.tsx` — update the action menu items:
+```tsx
+// Inside InlineAssist component, update the action rendering:
+const { resolveModelForTask } = useLLMStore();
+
+// In the menu render:
+actions.map(a => {
+  const routedModel = resolveModelForTask(a.action as TaskType);
+  return (
+    <button
+      key={a.action}
+      onClick={() => handleAction(a)}
+      disabled={!!loading}
+      className="w-full text-left px-4 py-2 text-sm hover:bg-purple-50 disabled:opacity-50 flex items-center justify-between"
+    >
+      <span className="flex items-center gap-2">
+        {loading === a.action ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500" />
+        ) : null}
+        {a.label}
+      </span>
+      <span className="text-xs text-gray-400">{routedModel.label}</span>
+    </button>
+  );
+})
+```
+
 **Keyboard shortcuts — add to `src/App.tsx`:**
 ```typescript
 // Inside App component useEffect for keyboard shortcuts
@@ -4425,7 +4937,7 @@ useEffect(() => {
 }, []);
 ```
 
-**App layout update — ChatPanel and MemoryPanel sit alongside SpecPanel:**
+**App layout update — ChatPanel, MemoryPanel, and UsageBar:**
 ```tsx
 // In App.tsx render
 function App() {
@@ -4434,27 +4946,32 @@ function App() {
   const { memoryPanelOpen } = useMemoryStore();
 
   return (
-    <div className="flex h-screen">
-      {/* Left sidebar */}
-      <Sidebar />
+    <div className="flex flex-col h-screen">
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left sidebar */}
+        <Sidebar />
 
-      {/* Main canvas area */}
-      <div className="flex-1 flex flex-col">
-        <Breadcrumb />
-        <div className="flex-1 relative">
-          {current.level === 'system' && <SystemMap />}
-          {current.level === 'domain' && <DomainMap />}
-          {current.level === 'flow' && <Canvas />}
+        {/* Main canvas area */}
+        <div className="flex-1 flex flex-col">
+          <Breadcrumb />
+          <div className="flex-1 relative">
+            {current.level === 'system' && <SystemMap />}
+            {current.level === 'domain' && <DomainMap />}
+            {current.level === 'flow' && <Canvas />}
 
-          {/* Ghost preview bar (floats above canvas) */}
-          <GhostPreview />
+            {/* Ghost preview bar (floats above canvas) */}
+            <GhostPreview />
+          </div>
         </div>
+
+        {/* Right panels — Spec Panel, Chat Panel, and/or Memory Panel */}
+        <SpecPanel />
+        {chatOpen && <ChatPanel />}
+        {memoryPanelOpen && <MemoryPanel />}
       </div>
 
-      {/* Right panels — Spec Panel, Chat Panel, and/or Memory Panel */}
-      <SpecPanel />
-      {chatOpen && <ChatPanel />}
-      {memoryPanelOpen && <MemoryPanel />}
+      {/* Bottom status bar — active model + usage tracking */}
+      <UsageBar />
     </div>
   );
 }
@@ -5679,11 +6196,26 @@ sendMessage: async (content: string) => {
     - [ ] Error codes from project included
     - [ ] Schemas from project included
 
-19. **LLM Provider Config**
-    - [ ] Can configure provider (Anthropic / OpenAI / Ollama)
-    - [ ] API key read from environment variable (not stored in config)
-    - [ ] Fallback provider works when primary fails
-    - [ ] Ollama works for offline use
+19. **Multi-Model Architecture**
+    - [ ] Model registry shows all configured models with availability indicators
+    - [ ] Model picker dropdown in chat header shows all models grouped by provider
+    - [ ] Switching active model applies to subsequent chat messages
+    - [ ] Task routing routes inline assist actions to configured models (fast for suggest, powerful for review)
+    - [ ] Inline assist context menu shows which model will handle each action
+    - [ ] Inline assist model can be overridden via "Use different model…" submenu
+    - [ ] Fallback chain tries next model when primary fails
+    - [ ] OpenAI-compatible endpoint works (custom base_url)
+    - [ ] Ollama works for offline use (no API key required)
+    - [ ] API keys read from environment variables (never stored in config)
+    - [ ] Health check detects which models are reachable (green/red dots)
+
+20. **Cost Tracking**
+    - [ ] Usage bar at bottom of app shows active model + session cost
+    - [ ] Monthly usage tracked per model and per task type
+    - [ ] Budget warning banner appears at configured threshold
+    - [ ] Budget limit blocks requests with option to switch to free model
+    - [ ] Usage data persisted to .ddd/memory/usage.yaml
+    - [ ] Chat messages show which model generated them
 
 20. **Project Memory — Summary (Layer 1)**
     - [ ] Project summary generated on first load (LLM call)
@@ -5790,11 +6322,14 @@ sendMessage: async (content: string) => {
 15. **Don't** auto-apply LLM suggestions — always show ghost preview first
 16. **Do** scope chat threads per flow — switching flows should switch threads
 17. **Do** include full project context in every LLM request (system, domain, flow, schemas, error codes)
-18. **Do** support provider fallback (e.g., Anthropic → Ollama for offline use)
-19. **Do** refresh memory layers when specs change (project load + save)
-20. **Do** keep context budget under ~5,500 tokens — summarize, don't dump raw YAML
-21. **Don't** gitignore `decisions.md` — design decisions are team knowledge
-22. **Do** include connected flows from Flow Map in LLM context so it knows about upstream/downstream impact
+18. **Do** support fallback chain across models (e.g., Sonnet → GPT-4o → Llama local)
+19. **Do** route fast tasks (suggest_spec, explain) to cheap/fast models and complex tasks (review, generate) to powerful models
+20. **Don't** hard-code any provider — use the unified `call_model` dispatcher that routes by provider type
+21. **Do** return token counts from every LLM call for accurate cost tracking
+22. **Do** refresh memory layers when specs change (project load + save)
+23. **Do** keep context budget under ~5,500 tokens — summarize, don't dump raw YAML
+24. **Don't** gitignore `decisions.md` — design decisions are team knowledge
+25. **Do** include connected flows from Flow Map in LLM context so it knows about upstream/downstream impact
 
 ---
 
@@ -5900,7 +6435,12 @@ npm run tauri dev
 - [ ] Canvas-level: Generate flow, Review flow, Suggest wiring, Import from description
 - [ ] Domain-level (L2): Suggest flows, Suggest events, Generate domain
 - [ ] System-level (L1): Suggest domains, Review architecture, Generate from description
-- [ ] Provider fallback works (Anthropic → Ollama for offline)
+- [ ] Model registry supports Anthropic, OpenAI, Ollama, and any OpenAI-compatible endpoint
+- [ ] Task-to-model routing sends fast tasks to cheap models and complex tasks to powerful models
+- [ ] Model picker in chat header switches active model instantly
+- [ ] Fallback chain tries next model when primary fails
+- [ ] Cost tracking shows per-session and per-period usage with budget warnings
+- [ ] Usage bar visible at bottom of app with active model indicator
 - [ ] Chat threads scoped per flow, switchable
 - [ ] API key read from env var, never stored in config files
 
