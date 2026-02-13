@@ -304,7 +304,7 @@ Levels 1 and 2 are **derived views** — their content comes from spec files. Us
 
 ## Node Types
 
-### Flow-Level Nodes (Level 3)
+### Flow-Level Nodes (Level 3) — Traditional Flows
 
 | Type | Icon | Purpose |
 |------|------|---------|
@@ -319,6 +319,18 @@ Levels 1 and 2 are **derived views** — their content comes from spec files. Us
 | Loop | ↺ | Iteration |
 | Parallel | ═ | Concurrent execution |
 | Sub-flow | ▢ | Call another flow (navigable link) |
+
+### Agent Nodes (Level 3) — Agent Flows
+
+| Type | Icon | Purpose |
+|------|------|---------|
+| LLM Call | ◆ | Call an LLM with prompt template, model config, structured output |
+| Agent Loop | ↻ | Reason → select tool → execute → observe → repeat until done |
+| Tool | 🔧 | Tool definition available to an agent (name, description, params) |
+| Memory | ◈ | Vector store read/write, conversation history, context window |
+| Guardrail | ⛨ | Input/output content filter, PII detection, topic restriction |
+| Human Gate | ✋ | Pause flow, notify human, await approval, timeout/escalation |
+| Router | ◇◇ | Semantic routing — LLM classifies intent, routes to sub-agents |
 
 ### Navigation Nodes (Level 2)
 
@@ -341,6 +353,747 @@ Levels 1 and 2 are **derived views** — their content comes from spec files. Us
 2. **Direct Call (Sync):** Sub-flow node with input/output mapping — shown as ▢ node on Level 3
 3. **Shared Data Models:** `$ref:/schemas/SchemaName` references
 4. **API Contracts:** Internal APIs connecting domains
+5. **Agent Delegation:** Router or Agent Loop hands off to sub-agent flows
+
+---
+
+## Agent Infrastructure
+
+### Flow Types
+
+DDD supports two flow types, each with different canvas behavior:
+
+| Flow Type | `type:` value | Canvas Behavior |
+|-----------|---------------|-----------------|
+| **Traditional** | `traditional` (default) | Fixed node-to-node paths, deterministic execution |
+| **Agent** | `agent` | Dynamic tool selection, iterative reasoning loops, non-deterministic paths |
+
+When a flow has `type: agent`, the Level 3 canvas shows an **agent-centric layout** — the Agent Loop is the central element, with tools, guardrails, and memory arranged around it.
+
+### Agent Flow Canvas Layout
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ FLOW: support-agent (type: agent)                                │
+│                                                                   │
+│   ⛨ Input                                                       │
+│   Guardrail                                                       │
+│      │                                                            │
+│      ▼                                                            │
+│   ┌─────────────────────────────────────────────┐                │
+│   │            ↻ AGENT LOOP                      │                │
+│   │                                              │                │
+│   │  System Prompt: "You are a helpful..."       │                │
+│   │  Model: claude-sonnet-4-5-20250929                    │                │
+│   │  Max Iterations: 10                          │                │
+│   │                                              │                │
+│   │  ┌─────────────────────────────────┐         │                │
+│   │  │  Reason → Select → Execute →    │         │                │
+│   │  │  Observe → Repeat               │         │                │
+│   │  └─────────────────────────────────┘         │                │
+│   │                                              │                │
+│   │  Available Tools:                            │                │
+│   │  ┌──────────┐ ┌──────────┐ ┌──────────┐    │                │
+│   │  │🔧 search │ │🔧 create │ │🔧 escalate│    │                │
+│   │  │   -kb    │ │  -ticket │ │          │    │                │
+│   │  └──────────┘ └──────────┘ └──────────┘    │                │
+│   │                                              │                │
+│   │  Memory:                                     │                │
+│   │  ◈ conversation (8000 tokens)               │                │
+│   └─────────────────────────────────────────────┘                │
+│      │                                                            │
+│      ▼                                                            │
+│   ⛨ Output          ✋ Human Gate                                │
+│   Guardrail          (if escalation needed)                       │
+│      │                    │                                       │
+│      ▼                    ▼                                       │
+│   ⬭ Response         ⬭ Escalated                                │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Agent Node Specifications
+
+#### LLM Call Node (◆)
+
+A single LLM invocation with a prompt template. Used in traditional flows when you need an LLM step without a full agent loop.
+
+```yaml
+- id: classify_intent
+  type: llm_call
+  spec:
+    model: claude-haiku-4-5-20251001
+    system_prompt: "Classify the user's intent into one of these categories."
+    prompt_template: |
+      User message: {{$.user_message}}
+
+      Categories: billing, technical, general, escalation
+
+      Respond with JSON: {"intent": "<category>", "confidence": <0-1>}
+    temperature: 0.0
+    max_tokens: 100
+    structured_output:
+      type: object
+      properties:
+        intent:
+          type: string
+          enum: [billing, technical, general, escalation]
+        confidence:
+          type: number
+    retry:
+      max_attempts: 2
+      fallback_model: claude-sonnet-4-5-20250929
+  connections:
+    success: route_by_intent
+    failure: return_error
+```
+
+#### Agent Loop Node (↻)
+
+The core agent pattern — iterative reasoning with dynamic tool selection. This is the central node in agent flows.
+
+```yaml
+- id: support_agent_loop
+  type: agent_loop
+  spec:
+    model: claude-sonnet-4-5-20250929
+    system_prompt: |
+      You are a customer support agent for Obligo.
+      You help users with contract questions, obligation tracking,
+      and account management.
+
+      Guidelines:
+      - Always search the knowledge base before answering
+      - If you can't resolve the issue, create a ticket
+      - Escalate to human if the customer is frustrated
+
+    max_iterations: 10
+    stop_conditions:
+      - tool_called: respond_to_user    # Stop when agent calls this tool
+      - tool_called: escalate_to_human
+      - max_iterations_reached: true
+
+    tools:
+      - $ref: "#/tools/search_kb"
+      - $ref: "#/tools/create_ticket"
+      - $ref: "#/tools/get_account"
+      - $ref: "#/tools/respond_to_user"
+      - $ref: "#/tools/escalate_to_human"
+
+    memory:
+      type: conversation
+      max_tokens: 8000
+      include_tool_results: true
+
+    scratchpad: true               # Agent can write internal notes
+
+    on_max_iterations:
+      action: escalate             # What to do if loop doesn't converge
+      connection: escalation_gate
+
+  connections:
+    respond_to_user: output_guardrail
+    escalate_to_human: escalation_gate
+    error: return_error
+```
+
+#### Tool Node (🔧)
+
+Defines a tool available to an agent. Tools are not hard-wired into the flow — the agent selects them dynamically.
+
+```yaml
+tools:
+  - id: search_kb
+    type: tool
+    spec:
+      name: search_kb
+      description: "Search the knowledge base for articles matching a query"
+      parameters:
+        query:
+          type: string
+          required: true
+          description: "Search query"
+        limit:
+          type: integer
+          default: 5
+          description: "Max results to return"
+      implementation:
+        type: service_call          # How the tool is actually executed
+        service: knowledge_base
+        method: search
+      returns:
+        type: array
+        items:
+          type: object
+          properties:
+            title: { type: string }
+            content: { type: string }
+            relevance: { type: number }
+
+  - id: create_ticket
+    type: tool
+    spec:
+      name: create_ticket
+      description: "Create a support ticket for issues that need follow-up"
+      parameters:
+        subject:
+          type: string
+          required: true
+        description:
+          type: string
+          required: true
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+          default: medium
+      implementation:
+        type: data_store
+        operation: create
+        model: SupportTicket
+      requires_confirmation: false   # Set true for destructive actions
+
+  - id: escalate_to_human
+    type: tool
+    spec:
+      name: escalate_to_human
+      description: "Escalate to a human agent. Use when the customer is frustrated or the issue is too complex."
+      parameters:
+        reason:
+          type: string
+          required: true
+        urgency:
+          type: string
+          enum: [normal, high, critical]
+      implementation:
+        type: event
+        event: support.escalated
+      is_terminal: true              # Calling this tool ends the agent loop
+
+  - id: respond_to_user
+    type: tool
+    spec:
+      name: respond_to_user
+      description: "Send a response to the user. Call this when you have a complete answer."
+      parameters:
+        message:
+          type: string
+          required: true
+      is_terminal: true              # Calling this tool ends the agent loop
+```
+
+#### Memory Node (◈)
+
+Manages agent memory — conversation history, vector store, or shared context.
+
+```yaml
+- id: agent_memory
+  type: memory
+  spec:
+    stores:
+      - name: conversation
+        type: conversation_history
+        max_tokens: 8000
+        strategy: sliding_window     # sliding_window | summarize | truncate
+        include_system: true
+        include_tool_results: true
+
+      - name: knowledge
+        type: vector_store
+        provider: pgvector           # pgvector | pinecone | qdrant | chromadb
+        embedding_model: text-embedding-3-small
+        similarity_metric: cosine
+        top_k: 5
+        min_similarity: 0.7
+
+      - name: user_context
+        type: key_value
+        storage: redis
+        ttl: 3600
+        fields:
+          - user_id
+          - account_tier
+          - recent_tickets
+```
+
+#### Guardrail Node (⛨)
+
+Content filtering and validation for LLM inputs/outputs.
+
+```yaml
+- id: input_guardrail
+  type: guardrail
+  spec:
+    position: input                  # input | output
+    checks:
+      - type: content_filter
+        block_categories:
+          - hate_speech
+          - self_harm
+          - illegal_activity
+        action: block
+        message: "I'm unable to help with that request."
+
+      - type: pii_detection
+        detect: [email, phone, ssn, credit_card]
+        action: mask                 # mask | block | log
+        mask_format: "***"
+
+      - type: topic_restriction
+        allowed_topics:
+          - contracts
+          - obligations
+          - account_management
+          - billing
+        action: redirect
+        message: "I can only help with Obligo-related questions."
+
+      - type: prompt_injection
+        enabled: true
+        action: block
+        message: "I detected an unusual request pattern."
+
+    on_block:
+      connection: return_blocked_response
+
+  connections:
+    pass: agent_loop
+    block: return_blocked_response
+```
+
+```yaml
+- id: output_guardrail
+  type: guardrail
+  spec:
+    position: output
+    checks:
+      - type: content_filter
+        block_categories: [hate_speech]
+        action: block
+
+      - type: factuality
+        enabled: true
+        sources: [knowledge_base]     # Cross-check against these
+        action: warn                  # warn | block
+
+      - type: tone
+        required: professional
+        action: rewrite              # Ask LLM to rewrite if tone is off
+
+      - type: no_hallucinated_urls
+        action: block
+
+      - type: schema_validation
+        schema:
+          type: object
+          required: [message]
+          properties:
+            message: { type: string, max_length: 2000 }
+
+    on_block:
+      connection: return_fallback_response
+
+  connections:
+    pass: return_response
+    block: return_fallback_response
+```
+
+#### Human Gate Node (✋)
+
+Pauses execution and waits for human approval.
+
+```yaml
+- id: escalation_gate
+  type: human_gate
+  spec:
+    notification:
+      channels:
+        - type: slack
+          channel: "#support-escalations"
+          message_template: |
+            🚨 Escalation from agent
+            Customer: {{$.user_id}}
+            Reason: {{$.escalation_reason}}
+            Conversation: {{$.conversation_summary}}
+        - type: email
+          to: "support-leads@obligo.io"
+
+    approval_options:
+      - id: approve
+        label: "Take Over"
+        description: "Human agent takes over the conversation"
+      - id: reject
+        label: "Send Back to AI"
+        description: "Return to AI agent with instructions"
+        requires_input: true         # Human can add instructions
+      - id: resolve
+        label: "Resolve"
+        description: "Mark as resolved with a response"
+        requires_input: true
+
+    timeout:
+      duration: 300                  # 5 minutes
+      action: auto_escalate          # auto_escalate | auto_approve | return_error
+      fallback_connection: timeout_response
+
+    context_for_human:               # What the human sees
+      - conversation_history
+      - customer_account
+      - agent_reasoning
+
+  connections:
+    approve: human_takeover
+    reject: agent_loop               # Send back with human instructions
+    resolve: return_resolved
+    timeout: timeout_response
+```
+
+#### Router Node (◇◇)
+
+Semantic routing — uses an LLM to classify and route to different sub-agents or flows.
+
+```yaml
+- id: intent_router
+  type: router
+  spec:
+    model: claude-haiku-4-5-20251001
+    routing_prompt: |
+      Classify the user's message into one of these categories:
+      - billing: Payment, invoices, subscription questions
+      - technical: Contract analysis, obligation tracking, integrations
+      - general: Account settings, feature questions, how-to
+      - escalation: Angry customer, legal threats, data deletion requests
+
+    routes:
+      - id: billing
+        description: "Billing and payment questions"
+        connection: billing_agent
+      - id: technical
+        description: "Technical support"
+        connection: technical_agent
+      - id: general
+        description: "General inquiries"
+        connection: general_agent
+      - id: escalation
+        description: "Requires immediate human attention"
+        connection: escalation_gate
+
+    fallback_route: general          # If classification fails
+    confidence_threshold: 0.7        # Below this → fallback
+
+  connections:
+    billing: billing_agent_flow
+    technical: technical_agent_flow
+    general: general_agent_flow
+    escalation: escalation_gate
+```
+
+### Complete Agent Flow Example
+
+```yaml
+# specs/domains/support/flows/customer-support-agent.yaml
+
+flow:
+  id: customer-support-agent
+  name: Customer Support Agent
+  type: agent                        # ← Agent flow type
+  domain: support
+  description: AI-powered customer support with human escalation
+
+trigger:
+  type: http
+  method: POST
+  path: /api/v1/support/chat
+  auth: required
+
+agent_config:
+  model: claude-sonnet-4-5-20250929
+  system_prompt: |
+    You are a customer support agent for Obligo, a cyber liability
+    management platform. You help users with contract questions,
+    obligation tracking, and account management.
+
+    Guidelines:
+    - Always greet the customer by name
+    - Search the knowledge base before answering questions
+    - If you can't resolve in 3 tool calls, offer to create a ticket
+    - Escalate to human if customer expresses frustration
+    - Never make up information about contracts or obligations
+
+  max_iterations: 10
+  temperature: 0.3
+
+memory:
+  - name: conversation
+    type: conversation_history
+    max_tokens: 8000
+    strategy: sliding_window
+  - name: user_context
+    type: key_value
+    load_on_start:
+      - user_profile
+      - recent_tickets
+      - account_tier
+
+tools:
+  - id: search_kb
+    name: search_kb
+    description: "Search knowledge base for help articles"
+    parameters:
+      query: { type: string, required: true }
+    implementation:
+      type: service_call
+      service: knowledge_base
+      method: semantic_search
+
+  - id: get_contracts
+    name: get_contracts
+    description: "Get user's contracts and their status"
+    parameters:
+      status_filter: { type: string, enum: [all, active, expiring] }
+    implementation:
+      type: data_store
+      operation: list
+      model: Contract
+      filter: "tenant_id = $.tenant_id"
+
+  - id: get_obligations
+    name: get_obligations
+    description: "Get obligations for a specific contract"
+    parameters:
+      contract_id: { type: string, required: true }
+    implementation:
+      type: data_store
+      operation: list
+      model: Obligation
+      filter: "contract_id = $.contract_id"
+
+  - id: create_ticket
+    name: create_ticket
+    description: "Create a support ticket for follow-up"
+    parameters:
+      subject: { type: string, required: true }
+      description: { type: string, required: true }
+      priority: { type: string, enum: [low, medium, high], default: medium }
+    implementation:
+      type: data_store
+      operation: create
+      model: SupportTicket
+    requires_confirmation: false
+
+  - id: respond_to_user
+    name: respond_to_user
+    description: "Send final response to the user"
+    parameters:
+      message: { type: string, required: true }
+    is_terminal: true
+
+  - id: escalate_to_human
+    name: escalate_to_human
+    description: "Escalate to human agent when AI cannot resolve"
+    parameters:
+      reason: { type: string, required: true }
+      urgency: { type: string, enum: [normal, high, critical] }
+    is_terminal: true
+    implementation:
+      type: event
+      event: support.escalated
+
+guardrails:
+  input:
+    - type: content_filter
+      block_categories: [hate_speech, illegal_activity]
+      action: block
+    - type: pii_detection
+      detect: [ssn, credit_card]
+      action: mask
+    - type: prompt_injection
+      enabled: true
+      action: block
+
+  output:
+    - type: tone
+      required: professional
+      action: rewrite
+    - type: no_hallucinated_urls
+      action: block
+    - type: schema_validation
+      schema:
+        type: object
+        required: [message]
+        properties:
+          message: { type: string, max_length: 2000 }
+
+nodes:
+  - id: input_guard
+    type: guardrail
+    spec:
+      position: input
+      checks: $ref: "#/guardrails/input"
+    connections:
+      pass: agent_loop
+      block: blocked_response
+
+  - id: agent_loop
+    type: agent_loop
+    spec:
+      config: $ref: "#/agent_config"
+      tools: $ref: "#/tools"
+      memory: $ref: "#/memory"
+    connections:
+      respond_to_user: output_guard
+      escalate_to_human: escalation_gate
+      error: error_response
+
+  - id: output_guard
+    type: guardrail
+    spec:
+      position: output
+      checks: $ref: "#/guardrails/output"
+    connections:
+      pass: return_response
+      block: fallback_response
+
+  - id: escalation_gate
+    type: human_gate
+    spec:
+      notification:
+        channels:
+          - type: slack
+            channel: "#support-escalations"
+      timeout:
+        duration: 300
+        action: auto_escalate
+    connections:
+      approve: human_takeover
+      reject: agent_loop
+      resolve: return_resolved
+      timeout: timeout_response
+
+  - id: return_response
+    type: terminal
+    spec:
+      status: 200
+      body:
+        message: "$.agent_response"
+        conversation_id: "$.conversation_id"
+
+  - id: blocked_response
+    type: terminal
+    spec:
+      status: 400
+      body:
+        error: "Your message could not be processed"
+        code: CONTENT_BLOCKED
+
+  - id: error_response
+    type: terminal
+    spec:
+      status: 500
+      body:
+        error: "An error occurred. Please try again."
+        code: AGENT_ERROR
+
+metadata:
+  created_by: murat
+  created_at: 2025-02-13
+  completeness: 100
+```
+
+### Multi-Agent Orchestration
+
+For complex systems, multiple agents can be composed:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ DOMAIN MAP: support                                              │
+│                                                                   │
+│   ┌──────────────────┐                                           │
+│   │ customer-support  │ ← Main agent (type: agent)               │
+│   │ agent (Router)    │                                           │
+│   └──┬───────┬────┬──┘                                           │
+│      │       │    │                                               │
+│      ▼       ▼    ▼                                               │
+│   ┌──────┐ ┌──────┐ ┌──────┐                                    │
+│   │billing│ │tech  │ │general│  ← Sub-agents (type: agent)       │
+│   │agent  │ │agent │ │agent  │                                    │
+│   └──┬───┘ └──┬───┘ └──────┘                                    │
+│      │        │                                                   │
+│      │        ▼                                                   │
+│      │     ╔════════════╗                                        │
+│      │     ║ ➜ analysis ║  ← Portal (sub-agent delegates)       │
+│      │     ╚════════════╝                                        │
+│      ▼                                                            │
+│   ╔════════════╗                                                 │
+│   ║ ➜ billing  ║  ← Portal to billing domain                    │
+│   ╚════════════╝                                                 │
+│                                                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Agent delegation patterns:
+
+| Pattern | Description | Spec Mechanism |
+|---------|-------------|----------------|
+| **Router → Sub-agents** | Classify intent, delegate to specialist | Router node with connections to sub-agent flows |
+| **Agent → Agent** | One agent calls another as a tool | Tool with `implementation.type: sub_flow` |
+| **Agent → Human → Agent** | Escalate, get instructions, continue | Human Gate node with reject → back to agent loop |
+| **Parallel Agents** | Multiple agents work simultaneously | Parallel node containing agent sub-flows |
+| **Pipeline** | Chain agents: extract → analyze → summarize | Flows connected via events or sub-flow nodes |
+
+```yaml
+# Tool that delegates to another agent
+- id: analyze_contract
+  type: tool
+  spec:
+    name: analyze_contract
+    description: "Delegate contract analysis to the analysis agent"
+    parameters:
+      contract_id: { type: string, required: true }
+      analysis_type: { type: string, enum: [obligations, risks, terms] }
+    implementation:
+      type: sub_flow               # Calls another agent flow
+      flow_id: contract-analysis-agent
+      domain: analysis
+      async: false                 # Wait for result (sync) or fire-and-forget (async)
+```
+
+### Agent Error Codes
+
+```yaml
+# Add to specs/shared/errors.yaml
+agent:
+  AGENT_ERROR:
+    http_status: 500
+    message_template: "Agent encountered an error"
+    log_level: ERROR
+
+  AGENT_MAX_ITERATIONS:
+    http_status: 500
+    message_template: "Agent did not converge within {max_iterations} iterations"
+    log_level: WARNING
+
+  AGENT_TOOL_ERROR:
+    http_status: 500
+    message_template: "Agent tool '{tool_name}' failed: {reason}"
+    log_level: ERROR
+
+  CONTENT_BLOCKED:
+    http_status: 400
+    message_template: "Content blocked by guardrail: {guardrail}"
+
+  GUARDRAIL_FAILED:
+    http_status: 422
+    message_template: "Output did not pass guardrail check: {check}"
+
+  ESCALATION_TIMEOUT:
+    http_status: 504
+    message_template: "Human escalation timed out after {timeout} seconds"
+
+  ROUTING_FAILED:
+    http_status: 500
+    message_template: "Intent router could not classify request"
+    log_level: WARNING
+```
 
 ---
 
@@ -363,13 +1116,14 @@ specs/
 ├── shared/
 │   ├── auth.yaml            # Authentication/authorization spec
 │   ├── middleware.yaml      # Middleware stack spec
-│   ├── errors.yaml          # Error codes and response format
+│   ├── errors.yaml          # Error codes and response format (incl. agent errors)
 │   └── api.yaml             # API conventions (pagination, filtering)
 └── domains/
     └── {domain}/
         ├── domain.yaml      # Domain info, flows, events, L2 layout positions
         └── flows/
-            └── {flow}.yaml
+            ├── {flow}.yaml          # Traditional flow (type: traditional)
+            └── {agent-flow}.yaml    # Agent flow (type: agent) — includes tools, memory, guardrails
 ```
 
 ## System Config
@@ -1602,11 +2356,13 @@ Public marketplace:
 **Included:**
 - Multi-level canvas (System Map → Domain Map → Flow Sheet)
 - Breadcrumb navigation between levels
-- Canvas + 5 basic node types (Level 3)
+- Canvas + 5 basic node types for traditional flows (Level 3)
+- Agent flow support: Agent Loop, Tool, LLM Call, Memory, Guardrail, Human Gate, Router nodes
+- Agent-centric canvas layout for agent flows
 - Auto-generated System Map and Domain Map (Levels 1-2)
 - Portal nodes for cross-domain navigation
-- Spec panel (basic fields)
-- YAML export
+- Spec panel (basic fields + agent-specific panels)
+- YAML export (both traditional and agent flow formats)
 - Mermaid preview
 - LLM prompt generation
 - Single user, local storage
@@ -1618,6 +2374,7 @@ Public marketplace:
 - Git integration in UI
 - Reverse engineering
 - Community library
+- Live agent testing/debugging (run agent from within DDD Tool)
 
 ## Potential Extensions
 
@@ -1688,11 +2445,17 @@ obligo/
 │       │       ├── list-contracts.yaml
 │       │       ├── get-contract.yaml
 │       │       └── update-obligation.yaml
-│       └── notification/
+│       ├── notification/
+│       │   ├── domain.yaml      # Flows, events, L2 layout
+│       │   └── flows/
+│       │       ├── send-email.yaml
+│       │       └── send-slack.yaml
+│       └── support/
 │           ├── domain.yaml      # Flows, events, L2 layout
 │           └── flows/
-│               ├── send-email.yaml
-│               └── send-slack.yaml
+│               ├── customer-support-agent.yaml    # type: agent
+│               ├── billing-agent.yaml             # type: agent
+│               └── technical-agent.yaml           # type: agent
 │
 ├── src/                      # ═══ GENERATED CODE ═══
 │   ├── main.py               # FastAPI app entry point

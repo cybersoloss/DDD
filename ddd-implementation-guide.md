@@ -87,23 +87,36 @@ ddd-tool/
 │   │   │   ├── FlowBlock.tsx        # Clickable flow block
 │   │   │   └── PortalNode.tsx       # Cross-domain navigation node
 │   │   ├── Canvas/
-│   │   │   ├── Canvas.tsx           # Level 3: flow sheet (node editing)
+│   │   │   ├── Canvas.tsx           # Level 3: flow sheet (routes to traditional or agent)
+│   │   │   ├── AgentCanvas.tsx      # Agent flow layout (agent loop + tools + guardrails)
 │   │   │   ├── Node.tsx
 │   │   │   ├── Connection.tsx
-│   │   │   └── nodes/
-│   │   │       ├── TriggerNode.tsx
-│   │   │       ├── InputNode.tsx
-│   │   │       ├── ProcessNode.tsx
-│   │   │       ├── DecisionNode.tsx
-│   │   │       ├── TerminalNode.tsx
-│   │   │       └── SubFlowNode.tsx  # Navigable link to another flow sheet
+│   │   │   ├── nodes/              # Traditional flow nodes
+│   │   │   │   ├── TriggerNode.tsx
+│   │   │   │   ├── InputNode.tsx
+│   │   │   │   ├── ProcessNode.tsx
+│   │   │   │   ├── DecisionNode.tsx
+│   │   │   │   ├── TerminalNode.tsx
+│   │   │   │   └── SubFlowNode.tsx
+│   │   │   └── agent-nodes/        # Agent flow nodes
+│   │   │       ├── AgentLoopBlock.tsx
+│   │   │       ├── GuardrailBlock.tsx
+│   │   │       ├── HumanGateBlock.tsx
+│   │   │       ├── ToolPalette.tsx
+│   │   │       └── MemoryBlock.tsx
 │   │   ├── SpecPanel/
 │   │   │   ├── SpecPanel.tsx
 │   │   │   ├── TriggerSpec.tsx
 │   │   │   ├── InputSpec.tsx
 │   │   │   ├── ProcessSpec.tsx
 │   │   │   ├── DecisionSpec.tsx
-│   │   │   └── TerminalSpec.tsx
+│   │   │   ├── TerminalSpec.tsx
+│   │   │   ├── AgentLoopSpec.tsx    # Agent loop config editor
+│   │   │   ├── ToolSpec.tsx         # Tool definition editor
+│   │   │   ├── GuardrailSpec.tsx    # Guardrail checks editor
+│   │   │   ├── HumanGateSpec.tsx    # Human gate config editor
+│   │   │   ├── RouterSpec.tsx       # Router config editor
+│   │   │   └── LLMCallSpec.tsx      # LLM call config editor
 │   │   ├── Sidebar/
 │   │   │   ├── FlowList.tsx
 │   │   │   ├── NodePalette.tsx
@@ -334,19 +347,167 @@ export interface TerminalNode extends BaseNode {
 }
 
 export type FlowNode = TriggerNode | InputNode | ProcessNode | DecisionNode | TerminalNode;
+
+// ─── Agent Node Types ───
+
+export type AgentNodeType = 'llm_call' | 'agent_loop' | 'tool' | 'memory' | 'guardrail' | 'human_gate' | 'router';
+
+export interface LLMCallNode extends BaseNode {
+  type: 'llm_call';
+  spec: {
+    model: string;
+    system_prompt: string;
+    prompt_template: string;
+    temperature?: number;
+    max_tokens?: number;
+    structured_output?: Record<string, any>;
+    retry?: {
+      max_attempts: number;
+      fallback_model?: string;
+    };
+  };
+}
+
+export interface ToolDefinition {
+  id: string;
+  name: string;
+  description: string;
+  parameters: Record<string, {
+    type: string;
+    required?: boolean;
+    description?: string;
+    enum?: string[];
+    default?: any;
+  }>;
+  implementation: {
+    type: 'service_call' | 'data_store' | 'event' | 'sub_flow';
+    [key: string]: any;
+  };
+  is_terminal?: boolean;
+  requires_confirmation?: boolean;
+}
+
+export interface AgentLoopNode extends BaseNode {
+  type: 'agent_loop';
+  spec: {
+    model: string;
+    system_prompt: string;
+    max_iterations: number;
+    temperature?: number;
+    stop_conditions: Array<{
+      tool_called?: string;
+      max_iterations_reached?: boolean;
+    }>;
+    tools: string[];              // refs to tool IDs
+    memory?: {
+      type: 'conversation' | 'vector_store' | 'key_value';
+      max_tokens?: number;
+      strategy?: 'sliding_window' | 'summarize' | 'truncate';
+    };
+    scratchpad?: boolean;
+    on_max_iterations?: {
+      action: 'escalate' | 'respond' | 'error';
+      connection?: string;
+    };
+  };
+}
+
+export interface ToolNode extends BaseNode {
+  type: 'tool';
+  spec: ToolDefinition;
+}
+
+export interface MemoryNode extends BaseNode {
+  type: 'memory';
+  spec: {
+    stores: Array<{
+      name: string;
+      type: 'conversation_history' | 'vector_store' | 'key_value';
+      max_tokens?: number;
+      strategy?: string;
+      provider?: string;
+      embedding_model?: string;
+      top_k?: number;
+      min_similarity?: number;
+      ttl?: number;
+      fields?: string[];
+    }>;
+  };
+}
+
+export interface GuardrailNode extends BaseNode {
+  type: 'guardrail';
+  spec: {
+    position: 'input' | 'output';
+    checks: Array<{
+      type: 'content_filter' | 'pii_detection' | 'topic_restriction' | 'prompt_injection' | 'tone' | 'factuality' | 'schema_validation' | 'no_hallucinated_urls';
+      action: 'block' | 'mask' | 'warn' | 'rewrite' | 'redirect' | 'log';
+      [key: string]: any;
+    }>;
+    on_block?: {
+      connection: string;
+    };
+  };
+}
+
+export interface HumanGateNode extends BaseNode {
+  type: 'human_gate';
+  spec: {
+    notification: {
+      channels: Array<{
+        type: 'slack' | 'email' | 'webhook';
+        [key: string]: any;
+      }>;
+    };
+    approval_options: Array<{
+      id: string;
+      label: string;
+      description: string;
+      requires_input?: boolean;
+    }>;
+    timeout: {
+      duration: number;
+      action: 'auto_escalate' | 'auto_approve' | 'return_error';
+      fallback_connection?: string;
+    };
+    context_for_human?: string[];
+  };
+}
+
+export interface RouterNode extends BaseNode {
+  type: 'router';
+  spec: {
+    model: string;
+    routing_prompt: string;
+    routes: Array<{
+      id: string;
+      description: string;
+      connection: string;
+    }>;
+    fallback_route: string;
+    confidence_threshold?: number;
+  };
+}
+
+export type AgentNode = LLMCallNode | AgentLoopNode | ToolNode | MemoryNode | GuardrailNode | HumanGateNode | RouterNode;
+
+export type AnyNode = FlowNode | AgentNode;
 ```
 
 **File: `src/types/flow.ts`**
 ```typescript
-import { FlowNode } from './node';
+import { FlowNode, AgentNode, AnyNode, ToolDefinition } from './node';
+
+export type FlowType = 'traditional' | 'agent';
 
 export interface Flow {
   id: string;
   name: string;
+  type: FlowType;
   description?: string;
   domain: string;
   trigger: FlowNode;  // First node, must be trigger type
-  nodes: FlowNode[];
+  nodes: AnyNode[];   // Traditional or agent nodes
   metadata: {
     createdAt: string;
     updatedAt: string;
@@ -355,15 +516,49 @@ export interface Flow {
   };
 }
 
+// Agent-specific flow config (only present when type === 'agent')
+export interface AgentFlowConfig {
+  model: string;
+  system_prompt: string;
+  max_iterations: number;
+  temperature?: number;
+  memory: Array<{
+    name: string;
+    type: 'conversation_history' | 'vector_store' | 'key_value';
+    max_tokens?: number;
+    strategy?: string;
+    [key: string]: any;
+  }>;
+  tools: ToolDefinition[];
+  guardrails: {
+    input: Array<Record<string, any>>;
+    output: Array<Record<string, any>>;
+  };
+}
+
+export interface AgentFlow extends Flow {
+  type: 'agent';
+  agent_config: AgentFlowConfig;
+}
+
+export function isAgentFlow(flow: Flow): flow is AgentFlow {
+  return flow.type === 'agent';
+}
+
 export interface FlowFile {
   flow: {
     id: string;
     name: string;
+    type?: FlowType;
     description?: string;
     domain: string;
   };
-  trigger: any;  // Trigger spec
-  nodes: any[];  // Node specs
+  agent_config?: any;  // Agent-specific config
+  trigger: any;        // Trigger spec
+  nodes: any[];        // Node specs
+  tools?: any[];       // Tool definitions (agent flows only)
+  memory?: any[];      // Memory config (agent flows only)
+  guardrails?: any;    // Guardrail config (agent flows only)
   metadata: any;
 }
 ```
@@ -1592,6 +1787,427 @@ function getValidationTypesForFieldType(fieldType: string): string[] {
 }
 ```
 
+### Week 1.5: Agent Flow Support
+
+#### Agent Canvas Layout
+
+When a flow has `type: 'agent'`, the Canvas renders an **agent-centric layout** instead of the traditional node graph. The App.tsx routing already handles this based on the flow's type.
+
+**File: `src/components/Canvas/Canvas.tsx`** (update to support both flow types)
+```typescript
+// In Canvas.tsx, add flow type detection:
+import { isAgentFlow } from '../../types/flow';
+import { AgentCanvas } from './AgentCanvas';
+
+export function Canvas({ domainId, flowId }: CanvasProps) {
+  const { currentFlow } = useFlowStore();
+
+  if (!currentFlow) return <EmptyCanvas />;
+
+  // Route to agent-specific canvas if it's an agent flow
+  if (isAgentFlow(currentFlow)) {
+    return <AgentCanvas flow={currentFlow} />;
+  }
+
+  // ... existing traditional canvas code
+}
+```
+
+**File: `src/components/Canvas/AgentCanvas.tsx`**
+```typescript
+import React from 'react';
+import { AgentFlow } from '../../types/flow';
+import { useFlowStore } from '../../stores/flow-store';
+import { AgentLoopBlock } from './agent-nodes/AgentLoopBlock';
+import { ToolPalette } from './agent-nodes/ToolPalette';
+import { GuardrailBlock } from './agent-nodes/GuardrailBlock';
+import { MemoryBlock } from './agent-nodes/MemoryBlock';
+import { HumanGateBlock } from './agent-nodes/HumanGateBlock';
+import { Connection } from './Connection';
+
+interface AgentCanvasProps {
+  flow: AgentFlow;
+}
+
+export function AgentCanvas({ flow }: AgentCanvasProps) {
+  const { selectedNodeId, selectNode } = useFlowStore();
+  const config = flow.agent_config;
+
+  // Find nodes by type
+  const agentLoop = flow.nodes.find(n => n.type === 'agent_loop');
+  const guardrails = flow.nodes.filter(n => n.type === 'guardrail');
+  const humanGates = flow.nodes.filter(n => n.type === 'human_gate');
+  const terminals = flow.nodes.filter(n => n.type === 'terminal');
+
+  const inputGuardrail = guardrails.find(n => n.spec.position === 'input');
+  const outputGuardrail = guardrails.find(n => n.spec.position === 'output');
+
+  return (
+    <div className="agent-canvas relative w-full h-full overflow-auto p-8">
+      {/* Vertical flow layout */}
+      <div className="flex flex-col items-center gap-6">
+
+        {/* Input Guardrail */}
+        {inputGuardrail && (
+          <GuardrailBlock
+            node={inputGuardrail}
+            isSelected={selectedNodeId === inputGuardrail.id}
+            onSelect={() => selectNode(inputGuardrail.id)}
+          />
+        )}
+
+        {/* Agent Loop — the main block */}
+        {agentLoop && (
+          <AgentLoopBlock
+            node={agentLoop}
+            tools={config.tools}
+            memory={config.memory}
+            isSelected={selectedNodeId === agentLoop.id}
+            onSelect={() => selectNode(agentLoop.id)}
+          />
+        )}
+
+        {/* Output paths */}
+        <div className="flex gap-8">
+          {/* Output Guardrail → Response */}
+          {outputGuardrail && (
+            <div className="flex flex-col items-center gap-4">
+              <GuardrailBlock
+                node={outputGuardrail}
+                isSelected={selectedNodeId === outputGuardrail.id}
+                onSelect={() => selectNode(outputGuardrail.id)}
+              />
+              {terminals.filter(t => t.id === 'return_response').map(t => (
+                <div key={t.id} className="terminal-node bg-green-900 border border-green-500 rounded-lg px-4 py-2 text-green-300 text-sm cursor-pointer"
+                     onClick={() => selectNode(t.id)}>
+                  ⬭ {t.id}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Human Gate → Escalation */}
+          {humanGates.map(gate => (
+            <div key={gate.id} className="flex flex-col items-center gap-4">
+              <HumanGateBlock
+                node={gate}
+                isSelected={selectedNodeId === gate.id}
+                onSelect={() => selectNode(gate.id)}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/Canvas/agent-nodes/AgentLoopBlock.tsx`**
+```typescript
+import React from 'react';
+import { AgentLoopNode, ToolDefinition } from '../../../types/node';
+import { RotateCw, Wrench, Brain } from 'lucide-react';
+
+interface AgentLoopBlockProps {
+  node: AgentLoopNode;
+  tools: ToolDefinition[];
+  memory: Array<Record<string, any>>;
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+export function AgentLoopBlock({ node, tools, memory, isSelected, onSelect }: AgentLoopBlockProps) {
+  return (
+    <div
+      className={`
+        agent-loop-block border-2 rounded-xl p-6 min-w-[400px] cursor-pointer
+        ${isSelected ? 'border-blue-400 bg-gray-800' : 'border-gray-600 bg-gray-900'}
+      `}
+      onClick={onSelect}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-4">
+        <RotateCw size={20} className="text-blue-400" />
+        <span className="font-semibold text-white text-lg">Agent Loop</span>
+        <span className="text-gray-500 text-sm ml-auto">max {node.spec.max_iterations} iterations</span>
+      </div>
+
+      {/* Model + Prompt preview */}
+      <div className="mb-4 text-sm">
+        <div className="text-gray-400">Model: <span className="text-white">{node.spec.model}</span></div>
+        <div className="text-gray-400 mt-1">
+          System Prompt:
+          <p className="text-gray-300 mt-1 line-clamp-3 italic">
+            {node.spec.system_prompt.slice(0, 150)}...
+          </p>
+        </div>
+      </div>
+
+      {/* Loop visualization */}
+      <div className="border border-gray-700 rounded-lg p-3 mb-4 bg-gray-950">
+        <div className="text-xs text-gray-500 mb-2">Reasoning Cycle</div>
+        <div className="flex items-center gap-2 text-sm text-gray-300">
+          <span>Reason</span> <span className="text-gray-600">→</span>
+          <span>Select Tool</span> <span className="text-gray-600">→</span>
+          <span>Execute</span> <span className="text-gray-600">→</span>
+          <span>Observe</span> <span className="text-gray-600">→</span>
+          <span className="text-blue-400">Repeat</span>
+        </div>
+      </div>
+
+      {/* Tools */}
+      <div className="mb-4">
+        <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+          <Wrench size={12} /> Available Tools ({tools.length})
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {tools.map(tool => (
+            <div
+              key={tool.id}
+              className={`
+                px-3 py-1 rounded-md text-xs border cursor-pointer
+                ${tool.is_terminal
+                  ? 'border-orange-600 text-orange-300 bg-orange-950'
+                  : 'border-gray-600 text-gray-300 bg-gray-800'
+                }
+              `}
+              title={tool.description}
+            >
+              🔧 {tool.name}
+              {tool.is_terminal && <span className="ml-1 text-orange-500">⏹</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Memory */}
+      {memory.length > 0 && (
+        <div>
+          <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+            <Brain size={12} /> Memory
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {memory.map((mem, i) => (
+              <div key={i} className="px-3 py-1 rounded-md text-xs border border-purple-700 text-purple-300 bg-purple-950">
+                ◈ {mem.name} ({mem.type})
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+**File: `src/components/Canvas/agent-nodes/GuardrailBlock.tsx`**
+```typescript
+import React from 'react';
+import { GuardrailNode } from '../../../types/node';
+import { Shield } from 'lucide-react';
+
+interface GuardrailBlockProps {
+  node: GuardrailNode;
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+export function GuardrailBlock({ node, isSelected, onSelect }: GuardrailBlockProps) {
+  const checkCount = node.spec.checks.length;
+  const isInput = node.spec.position === 'input';
+
+  return (
+    <div
+      className={`
+        guardrail-block border-2 rounded-lg px-4 py-3 cursor-pointer min-w-[200px]
+        ${isSelected ? 'border-yellow-400' : 'border-yellow-700'}
+        ${isInput ? 'bg-yellow-950' : 'bg-yellow-950'}
+      `}
+      onClick={onSelect}
+    >
+      <div className="flex items-center gap-2">
+        <Shield size={16} className="text-yellow-400" />
+        <span className="text-yellow-300 font-medium text-sm">
+          {isInput ? 'Input' : 'Output'} Guardrail
+        </span>
+      </div>
+      <div className="text-xs text-yellow-600 mt-1">
+        {checkCount} check{checkCount !== 1 ? 's' : ''}:
+        {node.spec.checks.map(c => c.type).join(', ')}
+      </div>
+    </div>
+  );
+}
+```
+
+**File: `src/components/Canvas/agent-nodes/HumanGateBlock.tsx`**
+```typescript
+import React from 'react';
+import { HumanGateNode } from '../../../types/node';
+import { Hand } from 'lucide-react';
+
+interface HumanGateBlockProps {
+  node: HumanGateNode;
+  isSelected: boolean;
+  onSelect: () => void;
+}
+
+export function HumanGateBlock({ node, isSelected, onSelect }: HumanGateBlockProps) {
+  return (
+    <div
+      className={`
+        human-gate-block border-2 rounded-lg px-4 py-3 cursor-pointer min-w-[200px]
+        ${isSelected ? 'border-red-400' : 'border-red-700'}
+        bg-red-950
+      `}
+      onClick={onSelect}
+    >
+      <div className="flex items-center gap-2">
+        <Hand size={16} className="text-red-400" />
+        <span className="text-red-300 font-medium text-sm">Human Gate</span>
+      </div>
+      <div className="text-xs text-red-600 mt-1">
+        Timeout: {node.spec.timeout.duration}s → {node.spec.timeout.action}
+      </div>
+      <div className="flex gap-1 mt-2">
+        {node.spec.approval_options.map(opt => (
+          <span key={opt.id} className="px-2 py-0.5 bg-red-900 border border-red-800 rounded text-xs text-red-300">
+            {opt.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+#### Agent Spec Panel Components
+
+The SpecPanel detects the selected node type and renders the appropriate editor.
+
+**File: `src/components/SpecPanel/SpecPanel.tsx`** (updated for agent nodes)
+```typescript
+// Add agent spec panels to the existing SpecPanel:
+import { AgentLoopSpec } from './AgentLoopSpec';
+import { ToolSpec } from './ToolSpec';
+import { GuardrailSpec } from './GuardrailSpec';
+import { HumanGateSpec } from './HumanGateSpec';
+import { RouterSpec } from './RouterSpec';
+import { LLMCallSpec } from './LLMCallSpec';
+
+// In the render:
+{selectedNode.type === 'agent_loop' && (
+  <AgentLoopSpec spec={selectedNode.spec} onChange={handleSpecChange} />
+)}
+{selectedNode.type === 'guardrail' && (
+  <GuardrailSpec spec={selectedNode.spec} onChange={handleSpecChange} />
+)}
+{selectedNode.type === 'human_gate' && (
+  <HumanGateSpec spec={selectedNode.spec} onChange={handleSpecChange} />
+)}
+{selectedNode.type === 'router' && (
+  <RouterSpec spec={selectedNode.spec} onChange={handleSpecChange} />
+)}
+{selectedNode.type === 'llm_call' && (
+  <LLMCallSpec spec={selectedNode.spec} onChange={handleSpecChange} />
+)}
+```
+
+**File: `src/components/SpecPanel/AgentLoopSpec.tsx`**
+```typescript
+import React from 'react';
+import { AgentLoopNode } from '../../types/node';
+
+interface AgentLoopSpecProps {
+  spec: AgentLoopNode['spec'];
+  onChange: (spec: AgentLoopNode['spec']) => void;
+}
+
+export function AgentLoopSpec({ spec, onChange }: AgentLoopSpecProps) {
+  return (
+    <div className="agent-loop-spec space-y-4">
+      <div className="spec-section">
+        <h4>Model</h4>
+        <select
+          value={spec.model}
+          onChange={(e) => onChange({ ...spec, model: e.target.value })}
+          className="select-field"
+        >
+          <option value="claude-opus-4-6">Claude Opus 4.6</option>
+          <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+          <option value="gpt-4o">GPT-4o</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+
+      <div className="spec-section">
+        <h4>System Prompt</h4>
+        <textarea
+          value={spec.system_prompt}
+          onChange={(e) => onChange({ ...spec, system_prompt: e.target.value })}
+          className="textarea-field"
+          rows={8}
+        />
+      </div>
+
+      <div className="spec-section">
+        <h4>Max Iterations</h4>
+        <input
+          type="number"
+          value={spec.max_iterations}
+          onChange={(e) => onChange({ ...spec, max_iterations: parseInt(e.target.value) })}
+          className="input-field"
+          min={1}
+          max={50}
+        />
+      </div>
+
+      <div className="spec-section">
+        <h4>Temperature</h4>
+        <input
+          type="range"
+          value={spec.temperature || 0.3}
+          onChange={(e) => onChange({ ...spec, temperature: parseFloat(e.target.value) })}
+          min={0}
+          max={1}
+          step={0.1}
+          className="range-field"
+        />
+        <span className="text-xs text-gray-400">{spec.temperature || 0.3}</span>
+      </div>
+
+      <div className="spec-section">
+        <h4>Stop Conditions</h4>
+        {spec.stop_conditions.map((cond, i) => (
+          <div key={i} className="flex gap-2 items-center text-sm">
+            {cond.tool_called && <span>Tool called: <code>{cond.tool_called}</code></span>}
+            {cond.max_iterations_reached && <span>Max iterations reached</span>}
+          </div>
+        ))}
+      </div>
+
+      <div className="spec-section">
+        <h4>On Max Iterations</h4>
+        <select
+          value={spec.on_max_iterations?.action || 'error'}
+          onChange={(e) => onChange({
+            ...spec,
+            on_max_iterations: { ...spec.on_max_iterations, action: e.target.value as any }
+          })}
+          className="select-field"
+        >
+          <option value="escalate">Escalate to human</option>
+          <option value="respond">Send best response</option>
+          <option value="error">Return error</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+```
+
 ### Week 2: File Operations & Git
 
 #### Day 8-9: Tauri File Commands
@@ -1858,17 +2474,31 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
    - [ ] Breadcrumb updates to show new flow
    - [ ] Backspace returns to previous flow
 
-9. **Save flow**
-   - [ ] Click Save
-   - [ ] YAML file created
-   - [ ] File content matches flow
+9. **Agent flow canvas**
+   - [ ] Create new agent flow (type: agent)
+   - [ ] Agent canvas renders vertical layout (not traditional graph)
+   - [ ] Agent Loop block shows model, system prompt, reasoning cycle
+   - [ ] Tools displayed inside Agent Loop block as palette
+   - [ ] Terminal tools have stop indicator
+   - [ ] Input guardrail shows above Agent Loop
+   - [ ] Output guardrail shows below Agent Loop
+   - [ ] Human Gate shows as separate escalation path
+   - [ ] Selecting Agent Loop → spec panel shows agent config editor
+   - [ ] Can edit model, system prompt, max iterations, temperature
+   - [ ] Can add/remove/edit tools
+   - [ ] Can add/remove guardrail checks
 
-10. **Load flow**
-    - [ ] Open existing YAML
-    - [ ] Canvas shows correct nodes
-    - [ ] Spec panel shows correct data
+10. **Save flow**
+    - [ ] Click Save on traditional flow → correct YAML
+    - [ ] Click Save on agent flow → YAML includes agent_config, tools, memory, guardrails
+    - [ ] File content matches flow
 
-11. **Git status**
+11. **Load flow**
+    - [ ] Load traditional YAML → traditional canvas
+    - [ ] Load agent YAML → agent canvas
+    - [ ] Spec panel shows correct data for both types
+
+12. **Git status**
     - [ ] Panel shows current branch
     - [ ] Changed files listed
     - [ ] Stage/commit works
@@ -1902,17 +2532,26 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
    - Batch position updates
    - Debounce auto-save
 
+5. **Agent vs Traditional Flows**
+   - Detect flow type from YAML (`type: agent` vs `type: traditional` or absent)
+   - Route to `AgentCanvas` or traditional `Canvas` based on flow type
+   - Agent flows use a vertical layout (guardrail → loop → outputs), not free-form node graph
+   - Tools live inside the agent loop spec, not as separate canvas nodes
+   - Agent spec panels are distinct from traditional spec panels
+
 ### Common Pitfalls
 
 1. **Don't** build code generation in MVP
 2. **Don't** build MCP server
 3. **Don't** build reverse engineering
 4. **Don't** make L1/L2 editable beyond repositioning — they are derived views
-5. **Do** focus on visual editing → YAML output
-6. **Do** build multi-level navigation early — it's the core UX
-7. **Do** parse domain.yaml files on project load to populate L1/L2
-8. **Do** make sure Git integration works
-9. **Do** validate YAML output format
+5. **Don't** try to run/test agents within the DDD Tool in MVP — just design them
+6. **Do** focus on visual editing → YAML output
+7. **Do** build multi-level navigation early — it's the core UX
+8. **Do** parse domain.yaml files on project load to populate L1/L2
+9. **Do** support both flow types in the same canvas routing
+10. **Do** make sure Git integration works
+11. **Do** validate YAML output format (both traditional and agent)
 
 ---
 
@@ -1953,16 +2592,30 @@ npm run tauri dev
 - [ ] Backspace/Esc navigates one level up
 - [ ] Block positions on L1/L2 are draggable and persisted
 
-### Flow Sheet (L3)
-- [ ] Can create a new flow with name and domain
+### Traditional Flow Sheet (L3)
+- [ ] Can create a new traditional flow with name and domain
 - [ ] Can add 5 node types to canvas
 - [ ] Can edit node specs in right panel
 - [ ] Can connect nodes together
 - [ ] Sub-flow nodes navigate to referenced flow sheet on double-click
 
+### Agent Flow Sheet (L3)
+- [ ] Can create a new agent flow (type: agent)
+- [ ] Agent canvas shows agent-centric layout (not traditional node graph)
+- [ ] Agent Loop block displays model, system prompt, reasoning cycle
+- [ ] Tools rendered as palette within Agent Loop block
+- [ ] Terminal tools marked with stop indicator
+- [ ] Input/output guardrails shown above/below agent loop
+- [ ] Human Gate shown as escalation path
+- [ ] Spec panel shows agent-specific editors (model, prompt, tools, etc.)
+- [ ] Can add/remove/edit tools in the tool palette
+- [ ] Can configure guardrail checks
+- [ ] Can configure human gate options and timeout
+- [ ] Agent flow YAML includes agent_config, tools, memory, guardrails sections
+
 ### File Operations
-- [ ] Can save flow as YAML file
-- [ ] Can load flow from YAML file
+- [ ] Can save flow as YAML file (both traditional and agent formats)
+- [ ] Can load flow from YAML file (detects type automatically)
 - [ ] Can see Git status
 - [ ] Can stage and commit changes
 - [ ] YAML format matches specification
@@ -1980,6 +2633,9 @@ npm run tauri dev
 6. Add minimap showing position within hierarchy
 7. Add expert agents
 8. Add templates/library
+9. Add live agent testing/debugging (run agent from within DDD Tool)
+10. Add Router node visual (multi-output classification)
+11. Add Memory node visual (vector store / conversation config)
 
 ---
 
