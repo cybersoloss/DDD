@@ -2983,6 +2983,30 @@ The validator checks:
 - Contextual tooltips
 - Cmd+K command palette
 - Context-aware: shows domain info on Level 2, flow spec on Level 3
+- **Custom Fields:** All node specs are extensible — beyond the typed fields (e.g. event, source, description for Trigger), users can add arbitrary key-value custom fields. These appear in a collapsible "Custom Fields" section below the typed fields. AI suggestions that include non-standard fields (e.g. ip_address, session_id, payload_schema) are preserved when applied and visible/editable in this section. Custom fields are persisted to YAML alongside typed fields.
+
+### Copy to Clipboard
+
+All read-only output areas across the tool include a **Copy** button for one-click clipboard copying. This is implemented via a shared `CopyButton` component (`src/components/shared/CopyButton.tsx`) that uses the browser Clipboard API.
+
+**Integration points:**
+
+| Panel | What's copied |
+|-------|--------------|
+| **TerminalOutput** (Implementation) | Running/completed Claude Code output (ANSI-stripped) |
+| **DoneView** (Implementation) | Completed implementation output |
+| **FailedView** (Implementation) | Failed implementation error output |
+| **PromptPreview** (Implementation) | Generated implementation prompt text |
+| **TestResults** (Implementation) | Individual test error messages |
+| **ChatMessage** (LLM Assistant) | YAML code suggestions in assistant messages |
+| **ExecutionTimeline** (Agent Testing) | Step input/output JSON |
+| **GeneratorPreview** (Generators) | Generated code (OpenAPI, Dockerfile, etc.) |
+
+**Behavior:**
+- Small "Copy" label with copy icon, positioned in the header or top-right corner of each output area
+- On click: copies full text content to system clipboard
+- Visual feedback: label changes to "Copied" with a checkmark for 2 seconds
+- Non-intrusive: uses muted text color, only highlights on hover
 
 ### Git Panel
 - Branch selector
@@ -4111,7 +4135,10 @@ Step 3: Domains
 
 **"Import from Git" flow:**
 - User enters a Git URL → DDD Tool clones into selected location
+- Optional Personal Access Token field for private repositories (injected into HTTPS URL as `https://<token>@host/repo`)
+- Uses system `git` binary (inherits macOS Keychain, SSH agent, credential helpers)
 - Same detection as "Open Existing" after clone
+- If `ddd-project.json` not found: auto-creates one with empty domains (allows opening any cloned project)
 
 **Recent Projects:**
 - Stored in app-level config: `~/.ddd-tool/recent-projects.json`
@@ -4804,11 +4831,11 @@ A toggleable right-side panel (`Cmd+I` / `Ctrl+I`) with three sections: prompt p
 
 | State | What the panel shows |
 |-------|---------------------|
-| **Idle** | "Select a flow and click Implement" + implementation queue |
-| **Prompt ready** | Prompt preview + [Run] button |
-| **Running** | Terminal with live Claude Code output |
-| **Done** | Summary (files created/modified) + test results |
-| **Failed** | Error output + [Retry] [Edit prompt] buttons |
+| **Idle** | "Ready to implement" message + Claude Code command box |
+| **Prompt ready** | Prompt preview with Edit/Preview tabs + [Run Implementation] button + Claude Code command box |
+| **Running** | Terminal output with live streaming |
+| **Done** | Output summary + [Run Tests] + [Fix Runtime Error] + Claude Code command boxes (`/ddd-implement`, `/ddd-sync`) + [Implement Another Flow] |
+| **Failed** | Error output + [Edit Prompt] [Fix Error] [Retry] buttons |
 
 **Entry points — how to start implementation:**
 
@@ -4818,6 +4845,23 @@ A toggleable right-side panel (`Cmd+I` / `Ctrl+I`) with three sections: prompt p
 | Right-click flow block → "Implement" | Domain Map (L2) | Opens Implementation Panel for that flow |
 | Click "Update code" on stale warning | Stale notification | Opens Implementation Panel with targeted update prompt |
 | Click "▶ Implement selected" | Implementation Queue | Processes selected flows sequentially |
+| Copy command from ClaudeCommandBox | Any panel state | User pastes `/ddd-implement` command into Claude Code terminal |
+
+**ClaudeCommandBox:** A reusable UI component that auto-generates the correct Claude Code slash command based on the current navigation scope. Shows a copyable command in a bordered box with Terminal icon:
+
+| Navigation Level | Generated Command |
+|-----------------|------------------|
+| Flow (L3) | `/ddd-implement {domainId}/{flowId}` |
+| Domain (L2) | `/ddd-implement {domainId}` |
+| System (L1) | `/ddd-implement --all` |
+| Override | Any custom command (e.g. `/ddd-sync`) |
+
+**Fix Runtime Error:** After implementation completes (Done state), users can report runtime errors encountered while testing. Clicking "Fix Runtime Error" reveals a text area to paste the error message. Submitting builds a targeted fix prompt that:
+- References the original flow and domain
+- Wraps the error in a code block
+- Instructs Claude to fix existing code (not rewrite from scratch)
+- Runs tests after fixing
+- Sets up local defaults for missing infrastructure
 
 #### 2. Prompt Builder
 
@@ -5119,6 +5163,57 @@ The Implementation Panel includes a queue view showing all flows and their statu
 ```
 
 **Batch implementation:** User selects multiple flows, clicks "Implement selected." The tool processes them sequentially — builds prompt, runs Claude Code, runs tests, updates status, moves to next. The user can monitor progress and intervene at any step.
+
+#### 6. Cowork Workflow — DDD Tool ↔ Claude Code Terminal
+
+The DDD Tool and Claude Code work together through a design-implement-sync loop. Rather than embedding a full terminal in DDD, the recommended workflow uses Claude Code's own terminal with custom slash commands:
+
+```
+┌─────────────┐    save specs     ┌──────────────┐
+│   DDD Tool   │ ──────────────► │  YAML files   │
+│  (design)    │                  │  on disk      │
+└─────────────┘                  └──────┬───────┘
+       ▲                                │
+       │  /ddd-sync                     │  /ddd-implement
+       │  (reconcile)                   │  (generate code)
+       │                                ▼
+┌─────────────┐                  ┌──────────────┐
+│   DDD Tool   │ ◄────────────── │  Claude Code  │
+│  (reload)    │   mapping.yaml  │  Terminal     │
+└─────────────┘                  └──────────────┘
+```
+
+**The workflow:**
+
+1. **Design** in DDD Tool — create/edit flows, add nodes, set specs
+2. **Save** — specs are written to `specs/` as YAML
+3. **Copy command** from ClaudeCommandBox in DDD → paste into Claude Code terminal
+4. **Implement** — Claude Code reads specs, generates code, runs tests
+5. **Fix interactively** — fix runtime errors, test failures in Claude Code
+6. **Sync** — run `/ddd-sync` to update `.ddd/mapping.yaml`
+7. **Reload** in DDD Tool to see updated implementation status
+
+**Custom Claude Code commands** (installed at `~/.claude/commands/`):
+
+| Command | Scope | Example |
+|---------|-------|---------|
+| `/ddd-implement --all` | Whole project | Implements all domains and flows |
+| `/ddd-implement {domain}` | Single domain | `/ddd-implement users` |
+| `/ddd-implement {domain}/{flow}` | Single flow | `/ddd-implement users/user-registration` |
+| `/ddd-implement` | Interactive | Lists flows with status, asks what to implement |
+| `/ddd-sync` | Sync mapping | Updates `.ddd/mapping.yaml` with implementation state |
+| `/ddd-sync --discover` | Discover | Also finds untracked code and suggests new flow specs |
+| `/ddd-sync --fix-drift` | Fix drift | Re-implements flows where specs have drifted |
+
+The `/ddd-implement` command:
+1. Finds `ddd-project.json` in the project
+2. Resolves scope from the argument
+3. Reads flow specs (`specs/domains/{domain}/flows/{flow}.yaml`)
+4. Checks `.ddd/mapping.yaml` for existing implementation (skip if up-to-date, update if changed)
+5. Implements following the node graph (trigger → terminals)
+6. Writes tests covering happy path, decision branches, error states, validation
+7. Runs tests and fixes until passing
+8. Updates `.ddd/mapping.yaml` with spec hash, timestamp, and file list
 
 #### Configuration
 

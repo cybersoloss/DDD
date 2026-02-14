@@ -191,7 +191,8 @@ ddd-tool/
 │   │       ├── Button.tsx
 │   │       ├── Input.tsx
 │   │       ├── Select.tsx
-│   │       └── Modal.tsx
+│   │       ├── Modal.tsx
+│   │       └── CopyButton.tsx          # Reusable copy-to-clipboard button for output areas
 │   ├── stores/
 │   │   ├── sheet-store.ts     # Active sheet, navigation history, breadcrumbs
 │   │   ├── flow-store.ts      # Current flow state (Level 3)
@@ -472,6 +473,14 @@ export interface TerminalNode extends BaseNode {
 }
 
 export type FlowNode = TriggerNode | InputNode | ProcessNode | DecisionNode | TerminalNode;
+
+// ─── Custom Fields ───
+// All node spec interfaces support extensibility via index signatures:
+//   [key: string]: unknown;
+// This allows AI suggestions and user-defined fields beyond the typed schema.
+// The Spec Panel renders these in a collapsible "Custom Fields" section below
+// the typed fields, with add/edit/delete capabilities.
+// Custom fields are persisted to YAML and survive round-trips.
 
 // ─── Agent Node Types ───
 
@@ -4158,6 +4167,22 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
     
     Ok(commit_oid.to_string())
 }
+
+/// Clone a repository using the system git binary.
+/// Uses system git to inherit all authentication (macOS Keychain, SSH agent, credential helpers).
+#[tauri::command]
+pub fn git_clone(url: String, path: String) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .args(["clone", &url, &path])
+        .output()
+        .map_err(|e| format!("Failed to run git: {}. Is git installed?", e))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Clone failed: {}", stderr.trim()))
+    }
+}
 ```
 
 #### Day 15-17: LLM Design Assistant
@@ -7013,6 +7038,36 @@ sendMessage: async (content: string) => {
 
 ### Claude Code Integration
 
+#### Cowork Workflow — DDD Tool ↔ Claude Code Terminal
+
+The recommended workflow uses Claude Code's own terminal with custom slash commands rather than embedding a full terminal:
+
+1. **Design** in DDD Tool — create/edit flows, add nodes, set specs
+2. **Save** — specs are written to `specs/` as YAML
+3. **Copy command** from `ClaudeCommandBox` in DDD → paste into Claude Code terminal
+4. **Implement** — Claude Code reads specs, generates code, runs tests (`/ddd-implement`)
+5. **Fix interactively** — fix runtime errors, test failures directly in Claude Code
+6. **Sync** — run `/ddd-sync` to update `.ddd/mapping.yaml`
+7. **Reload** in DDD Tool to see updated implementation status
+
+**Custom Claude Code commands** (installed at `~/.claude/commands/`):
+
+- `/ddd-implement --all` — Implement all domains and flows
+- `/ddd-implement {domain}` — Implement all flows in one domain
+- `/ddd-implement {domain}/{flow}` — Implement a single flow
+- `/ddd-implement` — Interactive: lists flows with status, asks what to implement
+- `/ddd-sync` — Update `.ddd/mapping.yaml` with current implementation state
+- `/ddd-sync --discover` — Also find untracked code and suggest new flow specs
+- `/ddd-sync --fix-drift` — Re-implement flows where specs have drifted
+
+**Shell execution notes:**
+- Tauri-spawned processes don't inherit user's shell profile — must source `~/.zprofile` and `~/.zshrc`
+- Prompt is written to `.ddd/.impl-prompt.md` and piped to claude via `sh -c`
+- `--print` flag for non-interactive output (buffers until completion)
+- `--dangerously-skip-permissions` for auto-accepting file writes during implementation
+
+---
+
 **File: `src/types/implementation.ts`**
 ```typescript
 /** Panel states */
@@ -7257,7 +7312,15 @@ export const useImplementationStore = create<ImplementationState>((set, get) => 
     set({ panelState: 'running' });
 
     try {
-      // Spawn PTY with claude CLI
+      // Write prompt to temp file, pipe to claude via shell
+      // Uses sh -c with profile sourcing to inherit user's PATH (e.g. /opt/homebrew/bin/claude)
+      // --print flag for non-interactive output, --dangerously-skip-permissions for auto-accepting file writes
+      const promptPath = `${projectPath}/.ddd/.impl-prompt.md`;
+      await invoke('write_file', { path: promptPath, contents: prompt.content });
+      const shellScript = `. ~/.zprofile 2>/dev/null; . ~/.zshrc 2>/dev/null; cat "${promptPath}" | claude --print --dangerously-skip-permissions 2>&1`;
+      const command = Command.create('sh', ['-c', shellScript], { cwd: projectPath });
+
+      // Alternative: Spawn PTY with claude CLI (original approach)
       const sessionId = await invoke<string>('pty_spawn', {
         command: get().config?.claude_code.command ?? 'claude',
         args: [prompt.content],
@@ -8464,6 +8527,185 @@ export function TerminalEmbed({ sessionId }: Props) {
   );
 }
 ```
+
+**File: `src/components/shared/CopyButton.tsx`**
+
+Reusable copy-to-clipboard button used across all output text areas (terminal output, prompt preview, test errors, chat YAML blocks, agent test I/O, generator preview). Uses the browser Clipboard API with visual feedback.
+
+```tsx
+import { useState, useCallback } from 'react';
+import { Copy, Check } from 'lucide-react';
+
+interface Props {
+  text: string;        // Content to copy
+  className?: string;  // Additional CSS classes for positioning
+}
+
+export function CopyButton({ text, className = '' }: Props) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API may fail in some contexts
+    }
+  }, [text]);
+
+  return (
+    <button
+      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors ${
+        copied
+          ? 'text-success'
+          : 'text-text-muted hover:text-text-primary hover:bg-bg-hover'
+      } ${className}`}
+      onClick={handleCopy}
+      title="Copy to clipboard"
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
+```
+
+**Usage patterns:**
+
+1. **In a header bar** (TerminalOutput, PromptPreview): place alongside other actions
+   ```tsx
+   <CopyButton text={stripAnsi(output)} />
+   ```
+
+2. **Absolute-positioned over a `<pre>` block** (DoneView, FailedView, TestResults):
+   ```tsx
+   <div className="relative">
+     <CopyButton text={content} className="absolute top-1 right-1" />
+     <pre>...</pre>
+   </div>
+   ```
+
+3. **Inline with a label** (ExecutionTimeline):
+   ```tsx
+   <div className="flex items-center justify-between">
+     <p className="text-[10px] font-medium">Output</p>
+     <CopyButton text={JSON.stringify(data, null, 2)} />
+   </div>
+   ```
+
+**File: `src/components/ImplementationPanel/ClaudeCommandBox.tsx`**
+
+Auto-generates the correct Claude Code slash command based on the current navigation scope. Shows a copyable command box with Terminal icon. Used in IdleView, PromptPreview, and DoneView.
+
+```tsx
+import { Terminal } from 'lucide-react';
+import { useSheetStore } from '../../stores/sheet-store';
+import { CopyButton } from '../shared/CopyButton';
+
+interface Props {
+  /** Override the auto-detected scope (e.g. for fix commands) */
+  command?: string;
+}
+
+export function ClaudeCommandBox({ command: commandOverride }: Props) {
+  const current = useSheetStore((s) => s.current);
+
+  let command: string;
+  if (commandOverride) {
+    command = commandOverride;
+  } else if (current.level === 'flow' && current.domainId && current.flowId) {
+    command = `/ddd-implement ${current.domainId}/${current.flowId}`;
+  } else if (current.level === 'domain' && current.domainId) {
+    command = `/ddd-implement ${current.domainId}`;
+  } else {
+    command = `/ddd-implement --all`;
+  }
+
+  return (
+    <div className="border border-border rounded bg-bg-primary">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border">
+        <Terminal className="w-3 h-3 text-text-muted" />
+        <span className="text-[10px] text-text-muted flex-1">Claude Code command</span>
+        <CopyButton text={command} />
+      </div>
+      <div className="px-3 py-2">
+        <code className="text-xs font-mono text-accent select-all">{command}</code>
+      </div>
+    </div>
+  );
+}
+```
+
+**Placement in ImplementationPanel:**
+- **IdleView**: Below the "Ready to implement" message
+- **PromptPreview**: Above the Run Implementation button
+- **DoneView**: Two instances — `/ddd-implement` (scoped) and `/ddd-sync` (override)
+
+---
+
+**File: `src/components/ProjectLauncher/CloneDialog.tsx`**
+
+Modal dialog for cloning Git repositories with optional token authentication for private repos.
+
+```tsx
+// Key features:
+// - Repository URL input
+// - Optional Personal Access Token field (password type)
+// - Destination folder with Browse button (uses @tauri-apps/plugin-dialog open())
+// - Token injection: embeds token into HTTPS URL as https://<token>@host/repo
+// - Uses system git binary via invoke('git_clone', { url, path })
+// - Error display and loading state
+```
+
+**Token handling:**
+```tsx
+let cloneUrl = url.trim();
+if (token.trim()) {
+  try {
+    const parsed = new URL(cloneUrl);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      parsed.username = token.trim();
+      parsed.password = '';
+      cloneUrl = parsed.toString();
+    }
+  } catch { /* ignore parse errors */ }
+}
+await invoke('git_clone', { url: cloneUrl, path: destination });
+```
+
+---
+
+**Fix Runtime Error — `implementation-store.ts` action:**
+
+```tsx
+fixRuntimeError: (errorDescription: string) => {
+  const { currentPrompt } = get();
+  if (!currentPrompt) return;
+  const fixPrompt: BuiltPrompt = {
+    ...currentPrompt,
+    title: `Fix runtime error: ${currentPrompt.flowId}`,
+    content: [
+      `# Fix Runtime Error`, '',
+      `Flow: "${currentPrompt.flowId}" in domain "${currentPrompt.domainId}"`, '',
+      `## Error`, '```', errorDescription, '```', '',
+      `## Instructions`,
+      `The implementation for this flow has a runtime error. Read the existing code, identify the root cause, and fix it.`,
+      `- Do NOT rewrite from scratch — fix the existing implementation`,
+      `- Make sure the fix handles edge cases`,
+      `- Run the existing tests after fixing to ensure nothing breaks`,
+      `- If the error is due to missing infrastructure (database, env vars), set up a working local default`,
+    ].join('\n'),
+  };
+  set({ currentPrompt: fixPrompt, panelState: 'prompt_ready', processOutput: '', processExitCode: null, testResults: null });
+},
+```
+
+**UI in DoneView:** "Fix Runtime Error" button reveals a textarea. User pastes error → clicks "Fix It" → calls `fixRuntimeError(errorText)` → transitions to prompt_ready state.
+
+**UI in FailedView:** "Fix Error" button directly calls `fixRuntimeError(processOutput.slice(-1000))` using the last 1000 chars of process output.
+
+---
 
 **File: `src/components/ImplementationPanel/TestResults.tsx`**
 ```tsx
