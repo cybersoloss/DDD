@@ -2040,51 +2040,71 @@ The DDD Tool validates event wiring across domains automatically (system-level v
 
 ## 10. Workflow: Creating a DDD Project
 
-### Step 1: Create project files
+### Recommended: `/ddd-create` workflow
 
-```bash
-mkdir my-project && cd my-project
+The fastest way to create a DDD project is with the `/ddd-create` command in Claude Code:
 
-# Create ddd-project.json
-cat > ddd-project.json << 'EOF'
-{
-  "domains": [
-    { "name": "Users", "description": "User management" },
-    { "name": "Orders", "description": "Order processing" }
-  ]
-}
-EOF
-
-# Create directory structure
-mkdir -p specs/domains/users/flows
-mkdir -p specs/domains/orders/flows
-mkdir -p specs/shared
-mkdir -p specs/schemas
+```
+/ddd-create A task management app with user auth, projects, tasks with
+            assignments and deadlines, and email notifications
 ```
 
-### Step 2: Create supplementary spec files
+This generates the complete spec structure — `ddd-project.json`, supplementary specs, schemas, domain YAML, and flow YAML — ready for visual review.
 
-Create `specs/system.yaml`, `specs/architecture.yaml`, `specs/config.yaml`, `specs/shared/errors.yaml`, and schema files in `specs/schemas/`. See Section 4 for formats.
+**Full workflow:**
 
-### Step 3: Write domain YAML files
+1. **Design** — Run `/ddd-create` with a project description (Session A)
+2. **Review** — Open the project in DDD Tool to visualize, validate, and refine specs on the canvas
+3. **Implement** — Run `/ddd-implement --all` to generate code from specs (Session B)
+4. **Iterate** — Use `/ddd-update` to modify specs, `/ddd-sync` to reconcile drift
 
-Create `specs/domains/users/domain.yaml` with flows, events, layout.
+### Alternative: Manual spec creation
 
-### Step 4: Write flow YAML files
+You can also create specs by hand:
 
-Create `specs/domains/users/flows/user-register.yaml` with the full flow graph (trigger -> nodes -> terminals).
-
-### Step 5: Open in DDD Tool
-
-Open the project in the DDD Tool to visualize, validate, and refine the specs using the graphical canvas.
-
-### Step 6: Implement with Claude Code
-
-Use the `/ddd-implement` command in a Claude Code terminal to generate implementation code from the specs.
+1. Create `ddd-project.json` with domain list (see Section 2)
+2. Create supplementary spec files: `specs/system.yaml`, `specs/architecture.yaml`, `specs/config.yaml`, `specs/shared/errors.yaml`, schema files in `specs/schemas/` (see Section 4)
+3. Create domain YAML files: `specs/domains/{domain}/domain.yaml` (see Section 3)
+4. Create flow YAML files: `specs/domains/{domain}/flows/{flow}.yaml` (see Section 5)
+5. Open in DDD Tool to visualize and validate
+6. Run `/ddd-implement` to generate code
 
 ---
 
 ## 11. Slash Commands
+
+### /ddd-create
+
+Generates a complete DDD project from a natural-language description.
+
+**Usage:**
+```
+/ddd-create {description}
+```
+
+**Example:**
+```
+/ddd-create An e-commerce platform with user auth, product catalog,
+            shopping cart, order processing, and email notifications
+```
+
+**What it does:**
+1. Fetches the latest DDD Usage Guide for spec format reference
+2. Analyzes the description (asks clarifying questions if brief)
+3. Creates the full project structure:
+   - `ddd-project.json` with domain list
+   - `specs/system.yaml`, `specs/architecture.yaml`, `specs/config.yaml`
+   - `specs/shared/errors.yaml`, `specs/shared/types.yaml` (if needed)
+   - `specs/schemas/` with `_base.yaml` and per-model schemas
+   - `specs/domains/{domain}/domain.yaml` with flows and event wiring
+   - `specs/domains/{domain}/flows/{flow}.yaml` with full node graphs
+4. Validates all flows (trigger → terminals, wired branches, event matching)
+5. Shows summary with domain counts, file list, event wiring, and next steps
+
+**After running:**
+1. Open the project in DDD Tool to review visually
+2. Refine flows on the canvas if needed
+3. Run `/ddd-implement --all` to generate code
 
 ### /ddd-implement
 
