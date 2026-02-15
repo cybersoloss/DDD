@@ -67,14 +67,12 @@ ddd-tool/
 │       │   ├── entity.rs      # Domain/flow CRUD (create, rename, delete, move, duplicate)
 │       │   ├── git.rs         # Git operations
 │       │   ├── project.rs     # Project management
-│       │   ├── llm.rs         # LLM API proxy (Anthropic/OpenAI/Ollama)
 │       │   ├── pty.rs         # PTY terminal for Claude Code
 │       │   └── test_runner.rs # Run tests and parse output
 │       └── services/
 │           ├── mod.rs
 │           ├── git_service.rs
 │           ├── file_service.rs
-│           ├── llm_service.rs  # HTTP client, streaming, provider abstraction
 │           ├── pty_service.rs  # PTY process management
 │           └── test_service.rs # Test execution and parsing
 │
@@ -141,15 +139,6 @@ ddd-tool/
 │   │   │   ├── FlowList.tsx
 │   │   │   ├── NodePalette.tsx
 │   │   │   └── GitPanel.tsx
-│   │   ├── LLMAssistant/
-│   │   │   ├── ChatPanel.tsx          # Toggleable chat sidebar
-│   │   │   ├── ChatMessage.tsx        # Single message (user/assistant/system)
-│   │   │   ├── ChatInput.tsx          # Input box with submit + context indicator
-│   │   │   ├── GhostPreview.tsx       # Ghost nodes overlay + Apply/Discard bar
-│   │   │   ├── InlineAssist.tsx       # Context menu with ✨ actions
-│   │   │   ├── ModelPicker.tsx        # Model dropdown selector in chat header
-│   │   │   ├── UsageBar.tsx           # Bottom status bar (model + cost tracking)
-│   │   │   └── FlowPreview.tsx        # Mini flow diagram in chat for generated flows
 │   │   ├── ImplementationPanel/
 │   │   │   ├── ImplementationPanel.tsx # Main panel (prompt preview + terminal + test results)
 │   │   │   ├── PromptPreview.tsx       # Editable prompt display with Run button
@@ -162,27 +151,18 @@ ddd-tool/
 │   │   │   ├── TestGenerator.tsx       # Derived test spec viewer + generate test code
 │   │   │   ├── CoverageBadge.tsx       # Spec test coverage badge for flow blocks
 │   │   │   └── SpecComplianceTab.tsx   # Spec compliance results after test run
-│   │   ├── MemoryPanel/
-│   │   │   ├── MemoryPanel.tsx        # Main memory panel (sidebar toggle)
-│   │   │   ├── SummaryCard.tsx        # Project summary display
-│   │   │   ├── StatusList.tsx         # Implementation status per flow
-│   │   │   ├── DecisionList.tsx       # Design decisions with add/edit
-│   │   │   ├── DecisionForm.tsx       # Add/edit decision dialog
-│   │   │   └── FlowDependencies.tsx   # Flow map for current flow
 │   │   ├── ProjectLauncher/
 │   │   │   ├── ProjectLauncher.tsx    # Main launcher screen (recent projects + actions)
 │   │   │   ├── NewProjectWizard.tsx   # 3-step project creation wizard
 │   │   │   └── RecentProjects.tsx     # Recent projects list with open/remove
 │   │   ├── Settings/
 │   │   │   ├── SettingsDialog.tsx     # Modal settings with tab navigation
-│   │   │   ├── LLMSettings.tsx        # Provider API keys, connection testing
-│   │   │   ├── ModelSettings.tsx      # Task-to-model routing, fallback chains
 │   │   │   ├── ClaudeCodeSettings.tsx # CLI path, post-implementation options
 │   │   │   ├── TestingSettings.tsx    # Test command, args, auto-run
 │   │   │   ├── EditorSettings.tsx     # Grid snap, auto-save, theme, font size
 │   │   │   └── GitSettings.tsx        # Commit messages, branch naming
 │   │   ├── FirstRun/
-│   │   │   └── FirstRunWizard.tsx     # First-time setup (LLM + Claude Code + project)
+│   │   │   └── FirstRunWizard.tsx     # First-time setup (Claude Code + Get Started)
 │   │   ├── Validation/
 │   │   │   ├── ValidationPanel.tsx    # Validation results (errors, warnings, info) per scope
 │   │   │   ├── ValidationBadge.tsx    # Compact badge for canvas (✓/⚠/✗ + count)
@@ -199,13 +179,10 @@ ddd-tool/
 │   │   ├── project-store.ts   # Project/file state, domain configs
 │   │   ├── ui-store.ts        # UI state (minimap visibility)
 │   │   ├── git-store.ts       # Git state
-│   │   ├── llm-store.ts       # Chat state, ghost nodes, LLM config
-│   │   ├── memory-store.ts    # Project memory layers, refresh triggers
 │   │   ├── implementation-store.ts  # Implementation panel state, queue, test results
 │   │   ├── app-store.ts         # App-level state: current view, recent projects, first-run
 │   │   ├── undo-store.ts        # Per-flow undo/redo stacks
-│   │   ├── validation-store.ts  # Validation results per flow/domain/system, gate state
-│   │   └── generator-store.ts   # Generator panel state, generated files, save state
+│   │   └── validation-store.ts  # Validation results per flow/domain/system, gate state
 │   ├── types/
 │   │   ├── sheet.ts           # Sheet levels, navigation, breadcrumb types
 │   │   ├── domain.ts          # Domain config, event wiring, portal types
@@ -213,33 +190,19 @@ ddd-tool/
 │   │   ├── node.ts
 │   │   ├── spec.ts
 │   │   ├── project.ts
-│   │   ├── llm.ts             # Chat messages, LLM config, ghost node types
-│   │   ├── memory.ts          # Project memory layer types
 │   │   ├── implementation.ts  # Implementation panel, prompt builder, test runner types
 │   │   ├── test-generator.ts  # Derived test cases, test paths, boundary tests, spec compliance
 │   │   ├── app.ts             # App shell types: recent projects, settings, first-run, undo
-│   │   ├── validation.ts     # Validation issue types, scopes, severity, gate state
-│   │   └── generator.ts      # Generator input, generated file, generator function types
+│   │   └── validation.ts     # Validation issue types, scopes, severity, gate state
 │   ├── utils/
 │   │   ├── yaml.ts
 │   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
-│   │   ├── llm-context.ts     # Build context object for LLM requests (uses memory layers)
-│   │   ├── memory-builder.ts  # Scan specs → generate memory layers
 │   │   ├── prompt-builder.ts  # Build Claude Code prompts from specs
 │   │   ├── claude-md-generator.ts  # Generate/update CLAUDE.md from project state
-│   │   ├── openapi-generator.ts    # Generate OpenAPI 3.0 from flow specs
-│   │   ├── cicd-generator.ts       # Generate CI/CD pipeline from architecture.yaml
-│   │   ├── dockerfile-generator.ts # Generate Dockerfile + compose from deployment config
-│   │   ├── migration-tracker.ts    # Track schema hashes, detect changes, build migration prompts
 │   │   ├── test-case-deriver.ts   # Walk flow graphs, derive test paths + boundary tests
 │   │   ├── flow-validator.ts      # Flow, domain, and system-level validation engine
 │   │   ├── flow-templates.ts     # Pre-built flow templates (REST API, CRUD, Webhook, Agent, etc.)
-│   │   ├── generators/
-│   │   │   ├── mermaid.ts        # Generate Mermaid flowchart diagrams from flow specs
-│   │   │   ├── openapi.ts        # Generate OpenAPI 3.0 spec
-│   │   │   ├── dockerfile.ts     # Generate Dockerfile + docker-compose
-│   │   │   ├── kubernetes.ts     # Generate K8s manifests
-│   │   │   └── cicd.ts           # Generate CI/CD pipeline
+│   │   ├── mermaid-export.ts    # Generate Mermaid flowchart diagrams from flow specs
 │   │   └── validation.ts
 │   └── styles/
 │       └── globals.css
@@ -4276,2856 +4239,6 @@ pub fn git_clone(url: String, path: String) -> Result<(), String> {
 }
 ```
 
-#### Day 15-17: LLM Design Assistant
-
-**File: `src/types/llm.ts`**
-```typescript
-// --- Multi-Model Architecture ---
-
-export type LLMProvider = 'anthropic' | 'openai' | 'ollama' | 'openai_compatible';
-export type ModelTier = 'fast' | 'standard' | 'powerful';
-
-export interface ModelRegistryEntry {
-  id: string;                    // Registry key (e.g., 'claude-sonnet')
-  provider: LLMProvider;
-  modelId: string;               // Provider model ID (e.g., 'claude-sonnet-4-5-20250929')
-  apiKeyEnv?: string;            // Env var for API key (not needed for Ollama)
-  baseUrl?: string;              // For ollama / openai_compatible endpoints
-  label: string;                 // Display name in UI
-  tier: ModelTier;
-  maxTokens: number;
-  temperature: number;
-  costPer1kInput: number;        // USD per 1K input tokens (0 for local)
-  costPer1kOutput: number;       // USD per 1K output tokens
-  available?: boolean;           // Runtime: is this model reachable?
-}
-
-export type TaskType =
-  // Inline assist
-  | 'suggest_spec' | 'complete_spec' | 'explain_node' | 'add_error_handling'
-  | 'generate_test_cases' | 'label_connection' | 'add_node_between'
-  // Flow/domain/system generation
-  | 'generate_flow' | 'generate_domain' | 'generate_from_description'
-  | 'import_from_description'
-  // Review
-  | 'review_flow' | 'review_architecture' | 'suggest_wiring'
-  | 'suggest_flows' | 'suggest_events' | 'suggest_domains'
-  // Memory
-  | 'generate_summary'
-  // Chat
-  | 'chat';
-
-export interface TaskRouting {
-  [task: string]: string;        // TaskType → model registry ID ('_active' = user's choice)
-}
-
-export interface CostTracking {
-  enabled: boolean;
-  resetPeriod: 'daily' | 'weekly' | 'monthly';
-  budgetWarning: number;         // USD threshold for warning
-  budgetLimit: number;           // USD threshold for blocking (0 = unlimited)
-}
-
-export interface LLMConfig {
-  activeModel: string;           // Current model registry ID for chat
-  models: Record<string, ModelRegistryEntry>;
-  taskRouting: TaskRouting;
-  fallbackChain: string[];       // Ordered list of model IDs to try
-  costTracking: CostTracking;
-}
-
-// --- Cost / Usage Tracking ---
-
-export interface UsagePeriod {
-  start: string;                 // ISO date
-  end: string;
-  totalCost: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  requests: number;
-  byModel: Record<string, ModelUsage>;
-  byTask: Record<string, TaskUsage>;
-}
-
-export interface ModelUsage {
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-}
-
-export interface TaskUsage {
-  requests: number;
-  cost: number;
-}
-
-export interface UsageData {
-  currentPeriod: UsagePeriod;
-  history: UsagePeriod[];
-}
-
-// --- Chat Messages ---
-
-export type ChatRole = 'user' | 'assistant' | 'system';
-
-export interface ChatMessage {
-  id: string;
-  role: ChatRole;
-  content: string;
-  timestamp: number;
-  modelId?: string;              // Which model generated this (for assistant messages)
-  inputTokens?: number;          // Token usage for this message
-  outputTokens?: number;
-  // For assistant messages that generate nodes/flows
-  generatedYaml?: string;
-  previewState?: 'pending' | 'applied' | 'discarded';
-}
-
-export interface ChatThread {
-  id: string;
-  flowId?: string;             // Scoped to a flow (null = project-level)
-  domainId?: string;
-  messages: ChatMessage[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-// --- Ghost Nodes (Preview before Apply) ---
-
-export interface GhostPreview {
-  id: string;
-  sourceMessageId: string;     // Which chat message generated this
-  yaml: string;                // The generated YAML
-  nodes: GhostNode[];
-  connections: GhostConnection[];
-  state: 'previewing' | 'applied' | 'discarded';
-}
-
-export interface GhostNode {
-  id: string;
-  type: string;
-  label: string;
-  position: { x: number; y: number };
-  spec: Record<string, any>;
-}
-
-export interface GhostConnection {
-  from: string;
-  to: string;
-  label?: string;
-}
-
-// --- Inline Assist ---
-
-export type InlineAssistAction =
-  // Node-level
-  | 'suggest_spec'
-  | 'complete_spec'
-  | 'explain_node'
-  | 'add_error_handling'
-  | 'generate_test_cases'
-  // Connection-level
-  | 'add_node_between'
-  | 'label_connection'
-  // Canvas-level
-  | 'generate_flow'
-  | 'review_flow'
-  | 'suggest_wiring'
-  | 'import_from_description'
-  // Domain-level (Level 2)
-  | 'suggest_flows'
-  | 'suggest_events'
-  | 'generate_domain'
-  // System-level (Level 1)
-  | 'suggest_domains'
-  | 'review_architecture'
-  | 'generate_from_description';
-
-export interface InlineAssistRequest {
-  action: InlineAssistAction;
-  target: InlineAssistTarget;
-}
-
-export type InlineAssistTarget =
-  | { type: 'node'; nodeId: string }
-  | { type: 'connection'; fromId: string; toId: string }
-  | { type: 'canvas'; flowId: string }
-  | { type: 'domain'; domainId: string }
-  | { type: 'system' };
-
-// --- LLM Context (sent with every request) ---
-
-export interface LLMContext {
-  system: {
-    name: string;
-    techStack: Record<string, string>;
-    domains: string[];
-  };
-  currentDomain?: {
-    name: string;
-    flows: string[];
-    publishesEvents: string[];
-    consumesEvents: string[];
-  };
-  currentFlow?: {
-    id: string;
-    type: 'traditional' | 'agent';
-    yaml: string;
-  };
-  selectedNodes?: Array<{
-    id: string;
-    type: string;
-    spec: Record<string, any>;
-  }>;
-  errorCodes?: string[];
-  schemas?: Record<string, any>;
-}
-```
-
-**File: `src/stores/llm-store.ts`**
-```typescript
-import { create } from 'zustand';
-import type { ChatThread, ChatMessage, GhostPreview, LLMConfig, InlineAssistRequest } from '../types/llm';
-import { buildLLMContext } from '../utils/llm-context';
-import { invoke } from '@tauri-apps/api/core';
-import { nanoid } from 'nanoid';
-
-interface LLMState {
-  // Config
-  config: LLMConfig;
-
-  // Usage tracking
-  usage: UsageData | null;
-  sessionTokens: number;
-  sessionCost: number;
-
-  // Chat panel
-  chatOpen: boolean;
-  activeThread: ChatThread | null;
-  threads: ChatThread[];
-  isStreaming: boolean;
-
-  // Ghost preview
-  ghostPreview: GhostPreview | null;
-
-  // Actions — Model Management
-  setActiveModel: (modelId: string) => void;
-  resolveModelForTask: (taskType: TaskType) => ModelRegistryEntry;
-  addModel: (model: ModelRegistryEntry) => void;
-  removeModel: (modelId: string) => void;
-  updateModel: (modelId: string, updates: Partial<ModelRegistryEntry>) => void;
-  setTaskRouting: (task: TaskType, modelId: string) => void;
-  checkModelAvailability: () => Promise<void>;
-
-  // Actions — Chat
-  toggleChat: () => void;
-  openChat: () => void;
-  closeChat: () => void;
-  sendMessage: (content: string, modelOverride?: string) => Promise<void>;
-  switchThread: (threadId: string) => void;
-  startThreadForFlow: (flowId: string, domainId: string) => void;
-
-  // Actions — Ghost Preview
-  applyGhostPreview: () => void;
-  discardGhostPreview: () => void;
-  editGhostInChat: () => void;
-
-  // Actions — Inline Assist
-  executeInlineAssist: (request: InlineAssistRequest, modelOverride?: string) => Promise<string>;
-
-  // Actions — Usage
-  trackUsage: (modelId: string, taskType: TaskType, inputTokens: number, outputTokens: number) => void;
-  loadUsage: (projectPath: string) => Promise<void>;
-  isOverBudget: () => boolean;
-  isNearBudget: () => boolean;
-
-  // Actions — Config
-  updateConfig: (config: Partial<LLMConfig>) => void;
-}
-
-const DEFAULT_MODELS: Record<string, ModelRegistryEntry> = {
-  'claude-sonnet': {
-    id: 'claude-sonnet',
-    provider: 'anthropic',
-    modelId: 'claude-sonnet-4-5-20250929',
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-    label: 'Claude Sonnet',
-    tier: 'standard',
-    maxTokens: 4096,
-    temperature: 0.3,
-    costPer1kInput: 0.003,
-    costPer1kOutput: 0.015,
-  },
-  'claude-haiku': {
-    id: 'claude-haiku',
-    provider: 'anthropic',
-    modelId: 'claude-haiku-4-5-20251001',
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-    label: 'Claude Haiku',
-    tier: 'fast',
-    maxTokens: 2048,
-    temperature: 0.2,
-    costPer1kInput: 0.0008,
-    costPer1kOutput: 0.004,
-  },
-  'claude-opus': {
-    id: 'claude-opus',
-    provider: 'anthropic',
-    modelId: 'claude-opus-4-6',
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-    label: 'Claude Opus',
-    tier: 'powerful',
-    maxTokens: 4096,
-    temperature: 0.3,
-    costPer1kInput: 0.015,
-    costPer1kOutput: 0.075,
-  },
-};
-
-const DEFAULT_TASK_ROUTING: TaskRouting = {
-  // Fast model for inline assists
-  suggest_spec: 'claude-haiku',
-  complete_spec: 'claude-haiku',
-  explain_node: 'claude-haiku',
-  label_connection: 'claude-haiku',
-  add_error_handling: 'claude-haiku',
-  add_node_between: 'claude-haiku',
-  // Standard model for generation
-  generate_flow: 'claude-sonnet',
-  generate_domain: 'claude-sonnet',
-  generate_from_description: 'claude-sonnet',
-  import_from_description: 'claude-sonnet',
-  generate_test_cases: 'claude-sonnet',
-  suggest_wiring: 'claude-sonnet',
-  suggest_flows: 'claude-sonnet',
-  suggest_events: 'claude-sonnet',
-  suggest_domains: 'claude-sonnet',
-  // Powerful model for review / summary
-  review_flow: 'claude-sonnet',
-  review_architecture: 'claude-opus',
-  generate_summary: 'claude-opus',
-  // Chat uses active model
-  chat: '_active',
-};
-
-export const useLLMStore = create<LLMState>((set, get) => ({
-  config: {
-    activeModel: 'claude-sonnet',
-    models: DEFAULT_MODELS,
-    taskRouting: DEFAULT_TASK_ROUTING,
-    fallbackChain: ['claude-sonnet', 'claude-haiku'],
-    costTracking: {
-      enabled: true,
-      resetPeriod: 'monthly',
-      budgetWarning: 10.0,
-      budgetLimit: 50.0,
-    },
-  },
-
-  usage: null,
-  sessionTokens: 0,
-  sessionCost: 0,
-  chatOpen: false,
-  activeThread: null,
-  threads: [],
-  isStreaming: false,
-  ghostPreview: null,
-
-  // --- Model Management ---
-
-  setActiveModel: (modelId: string) => {
-    set(s => ({ config: { ...s.config, activeModel: modelId } }));
-  },
-
-  resolveModelForTask: (taskType: TaskType): ModelRegistryEntry => {
-    const { config } = get();
-    const routedId = config.taskRouting[taskType] ?? config.activeModel;
-    const modelId = routedId === '_active' ? config.activeModel : routedId;
-    const model = config.models[modelId];
-    if (!model) {
-      // Fallback to first available model
-      return Object.values(config.models)[0];
-    }
-    return model;
-  },
-
-  addModel: (model: ModelRegistryEntry) => {
-    set(s => ({
-      config: {
-        ...s.config,
-        models: { ...s.config.models, [model.id]: model },
-      },
-    }));
-  },
-
-  removeModel: (modelId: string) => {
-    set(s => {
-      const { [modelId]: _, ...rest } = s.config.models;
-      return { config: { ...s.config, models: rest } };
-    });
-  },
-
-  updateModel: (modelId: string, updates: Partial<ModelRegistryEntry>) => {
-    set(s => ({
-      config: {
-        ...s.config,
-        models: {
-          ...s.config.models,
-          [modelId]: { ...s.config.models[modelId], ...updates },
-        },
-      },
-    }));
-  },
-
-  setTaskRouting: (task: TaskType, modelId: string) => {
-    set(s => ({
-      config: {
-        ...s.config,
-        taskRouting: { ...s.config.taskRouting, [task]: modelId },
-      },
-    }));
-  },
-
-  checkModelAvailability: async () => {
-    const { config } = get();
-    const results = await Promise.allSettled(
-      Object.values(config.models).map(async (model) => {
-        try {
-          await invoke('llm_health_check', { model });
-          return { id: model.id, available: true };
-        } catch {
-          return { id: model.id, available: false };
-        }
-      })
-    );
-
-    const updates: Record<string, ModelRegistryEntry> = { ...config.models };
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        const { id, available } = result.value;
-        updates[id] = { ...updates[id], available };
-      }
-    }
-    set(s => ({ config: { ...s.config, models: updates } }));
-  },
-
-  // --- Chat ---
-
-  toggleChat: () => set(s => ({ chatOpen: !s.chatOpen })),
-  openChat: () => set({ chatOpen: true }),
-  closeChat: () => set({ chatOpen: false }),
-
-  sendMessage: async (content: string, modelOverride?: string) => {
-    const state = get();
-    const thread = state.activeThread;
-    if (!thread) return;
-
-    // Budget check
-    if (state.isOverBudget()) {
-      // Add system message about budget
-      return;
-    }
-
-    // Resolve which model to use
-    const model = modelOverride
-      ? state.config.models[modelOverride]
-      : state.resolveModelForTask('chat');
-
-    const userMsg: ChatMessage = {
-      id: nanoid(),
-      role: 'user',
-      content,
-      timestamp: Date.now(),
-    };
-
-    const updatedThread = {
-      ...thread,
-      messages: [...thread.messages, userMsg],
-      updatedAt: Date.now(),
-    };
-
-    set({ activeThread: updatedThread, isStreaming: true });
-
-    const context = buildLLMContext();
-
-    // Try model with fallback chain
-    let response: { content: string; inputTokens: number; outputTokens: number } | null = null;
-    let usedModelId = model.id;
-
-    const modelsToTry = [model.id, ...state.config.fallbackChain.filter(id => id !== model.id)];
-
-    for (const modelId of modelsToTry) {
-      const tryModel = state.config.models[modelId];
-      if (!tryModel) continue;
-
-      try {
-        response = await invoke('llm_chat', {
-          messages: updatedThread.messages.map(m => ({ role: m.role, content: m.content })),
-          context,
-          model: tryModel,
-        });
-        usedModelId = modelId;
-        break;
-      } catch (err) {
-        console.warn(`Model ${modelId} failed, trying next...`, err);
-      }
-    }
-
-    if (!response) {
-      set({ isStreaming: false });
-      return;
-    }
-
-    // Track usage
-    state.trackUsage(usedModelId, 'chat', response.inputTokens, response.outputTokens);
-
-    const assistantMsg: ChatMessage = {
-      id: nanoid(),
-      role: 'assistant',
-      content: response.content,
-      timestamp: Date.now(),
-      modelId: usedModelId,
-      inputTokens: response.inputTokens,
-      outputTokens: response.outputTokens,
-    };
-
-    const yamlMatch = response.content.match(/```yaml\n([\s\S]*?)```/);
-    if (yamlMatch) {
-      assistantMsg.generatedYaml = yamlMatch[1];
-      assistantMsg.previewState = 'pending';
-    }
-
-    const finalThread = {
-      ...updatedThread,
-      messages: [...updatedThread.messages, assistantMsg],
-      updatedAt: Date.now(),
-    };
-
-    set({
-      activeThread: finalThread,
-      isStreaming: false,
-      threads: state.threads.map(t => t.id === finalThread.id ? finalThread : t),
-    });
-
-    if (assistantMsg.generatedYaml) {
-      set({ ghostPreview: parseYamlToGhostPreview(assistantMsg.id, assistantMsg.generatedYaml) });
-    }
-  },
-
-  switchThread: (threadId: string) => {
-    const thread = get().threads.find(t => t.id === threadId);
-    if (thread) set({ activeThread: thread });
-  },
-
-  startThreadForFlow: (flowId: string, domainId: string) => {
-    const existing = get().threads.find(t => t.flowId === flowId);
-    if (existing) {
-      set({ activeThread: existing, chatOpen: true });
-      return;
-    }
-
-    const thread: ChatThread = {
-      id: nanoid(),
-      flowId,
-      domainId,
-      messages: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    set(s => ({
-      threads: [...s.threads, thread],
-      activeThread: thread,
-      chatOpen: true,
-    }));
-  },
-
-  // --- Ghost Preview ---
-
-  applyGhostPreview: () => {
-    const preview = get().ghostPreview;
-    if (!preview) return;
-
-    set({ ghostPreview: { ...preview, state: 'applied' } });
-
-    const thread = get().activeThread;
-    if (thread) {
-      const updatedMessages = thread.messages.map(m =>
-        m.id === preview.sourceMessageId ? { ...m, previewState: 'applied' as const } : m
-      );
-      set({ activeThread: { ...thread, messages: updatedMessages }, ghostPreview: null });
-    }
-  },
-
-  discardGhostPreview: () => {
-    const preview = get().ghostPreview;
-    if (!preview) return;
-
-    const thread = get().activeThread;
-    if (thread) {
-      const updatedMessages = thread.messages.map(m =>
-        m.id === preview.sourceMessageId ? { ...m, previewState: 'discarded' as const } : m
-      );
-      set({ activeThread: { ...thread, messages: updatedMessages }, ghostPreview: null });
-    }
-  },
-
-  editGhostInChat: () => {
-    const preview = get().ghostPreview;
-    if (!preview) return;
-    set({ ghostPreview: null, chatOpen: true });
-  },
-
-  // --- Inline Assist ---
-
-  executeInlineAssist: async (request: InlineAssistRequest, modelOverride?: string): Promise<string> => {
-    const state = get();
-
-    // Resolve model: override → task routing → fallback
-    const model = modelOverride
-      ? state.config.models[modelOverride]
-      : state.resolveModelForTask(request.action as TaskType);
-
-    const context = buildLLMContext();
-
-    const response: { content: string; inputTokens: number; outputTokens: number } =
-      await invoke('llm_inline_assist', {
-        action: request.action,
-        target: request.target,
-        context,
-        model,
-      });
-
-    // Track usage
-    state.trackUsage(model.id, request.action as TaskType, response.inputTokens, response.outputTokens);
-
-    return response.content;
-  },
-
-  // --- Usage Tracking ---
-
-  trackUsage: (modelId: string, taskType: TaskType, inputTokens: number, outputTokens: number) => {
-    const model = get().config.models[modelId];
-    if (!model) return;
-
-    const cost = (inputTokens / 1000) * model.costPer1kInput +
-                 (outputTokens / 1000) * model.costPer1kOutput;
-
-    set(s => ({
-      sessionTokens: s.sessionTokens + inputTokens + outputTokens,
-      sessionCost: s.sessionCost + cost,
-      usage: s.usage ? {
-        ...s.usage,
-        currentPeriod: {
-          ...s.usage.currentPeriod,
-          totalCost: s.usage.currentPeriod.totalCost + cost,
-          totalInputTokens: s.usage.currentPeriod.totalInputTokens + inputTokens,
-          totalOutputTokens: s.usage.currentPeriod.totalOutputTokens + outputTokens,
-          requests: s.usage.currentPeriod.requests + 1,
-          byModel: {
-            ...s.usage.currentPeriod.byModel,
-            [modelId]: {
-              requests: (s.usage.currentPeriod.byModel[modelId]?.requests ?? 0) + 1,
-              inputTokens: (s.usage.currentPeriod.byModel[modelId]?.inputTokens ?? 0) + inputTokens,
-              outputTokens: (s.usage.currentPeriod.byModel[modelId]?.outputTokens ?? 0) + outputTokens,
-              cost: (s.usage.currentPeriod.byModel[modelId]?.cost ?? 0) + cost,
-            },
-          },
-          byTask: {
-            ...s.usage.currentPeriod.byTask,
-            [taskType]: {
-              requests: (s.usage.currentPeriod.byTask[taskType]?.requests ?? 0) + 1,
-              cost: (s.usage.currentPeriod.byTask[taskType]?.cost ?? 0) + cost,
-            },
-          },
-        },
-      } : null,
-    }));
-  },
-
-  loadUsage: async (projectPath: string) => {
-    try {
-      const usage = await invoke<UsageData>('load_usage', { projectPath });
-      set({ usage });
-    } catch {
-      // Initialize empty usage
-    }
-  },
-
-  isOverBudget: () => {
-    const { usage, config } = get();
-    if (!config.costTracking.enabled || config.costTracking.budgetLimit === 0) return false;
-    return (usage?.currentPeriod.totalCost ?? 0) >= config.costTracking.budgetLimit;
-  },
-
-  isNearBudget: () => {
-    const { usage, config } = get();
-    if (!config.costTracking.enabled) return false;
-    return (usage?.currentPeriod.totalCost ?? 0) >= config.costTracking.budgetWarning;
-  },
-
-  updateConfig: (partial: Partial<LLMConfig>) => {
-    set(s => ({ config: { ...s.config, ...partial } }));
-  },
-}));
-
-// Helper: parse generated YAML into ghost nodes for canvas preview
-function parseYamlToGhostPreview(
-  messageId: string,
-  yaml: string
-): GhostPreview {
-  // Parse YAML, extract nodes[] and connections
-  // Position nodes in a vertical layout starting from (400, 100)
-  // Returns GhostPreview for canvas rendering
-  return {
-    id: nanoid(),
-    sourceMessageId: messageId,
-    yaml,
-    nodes: [],       // Populated by YAML parser
-    connections: [],  // Populated by YAML parser
-    state: 'previewing',
-  };
-}
-```
-
-**File: `src/utils/llm-context.ts`**
-```typescript
-import { useProjectStore } from '../stores/project-store';
-import { useSheetStore } from '../stores/sheet-store';
-import { useFlowStore } from '../stores/flow-store';
-import type { LLMContext } from '../types/llm';
-
-/**
- * Build the context object sent with every LLM request.
- * Automatically scoped to the user's current location and selection.
- */
-export function buildLLMContext(): LLMContext {
-  const project = useProjectStore.getState();
-  const sheet = useSheetStore.getState();
-  const flow = useFlowStore.getState();
-
-  const context: LLMContext = {
-    system: {
-      name: project.systemConfig?.name ?? '',
-      techStack: project.systemConfig?.tech_stack ?? {},
-      domains: project.domains?.map(d => d.name) ?? [],
-    },
-  };
-
-  // Add domain context on Level 2 or 3
-  if (sheet.current.level !== 'system' && sheet.current.domainId) {
-    const domain = project.domainConfigs?.[sheet.current.domainId];
-    if (domain) {
-      context.currentDomain = {
-        name: domain.name,
-        flows: domain.flows.map(f => f.id),
-        publishesEvents: domain.publishes_events.map(e => e.event),
-        consumesEvents: domain.consumes_events.map(e => e.event),
-      };
-    }
-  }
-
-  // Add flow context on Level 3
-  if (sheet.current.level === 'flow' && sheet.current.flowId) {
-    context.currentFlow = {
-      id: sheet.current.flowId,
-      type: flow.flowType ?? 'traditional',
-      yaml: flow.toYaml(),      // Serialize current flow state
-    };
-  }
-
-  // Add selected nodes
-  const selectedNodes = flow.getSelectedNodes?.();
-  if (selectedNodes?.length) {
-    context.selectedNodes = selectedNodes.map(n => ({
-      id: n.id,
-      type: n.type,
-      spec: n.spec,
-    }));
-  }
-
-  // Add error codes and schemas from project
-  context.errorCodes = project.errorCodes ?? [];
-  context.schemas = project.schemas ?? {};
-
-  return context;
-}
-```
-
-**File: `src-tauri/src/commands/llm.rs`**
-```rust
-use serde::{Deserialize, Serialize};
-use tauri::command;
-
-/// A single model from the registry — sent from the frontend per-request
-#[derive(Deserialize, Clone)]
-pub struct ModelEntry {
-    id: String,
-    provider: String,            // "anthropic" | "openai" | "ollama" | "openai_compatible"
-    model_id: String,            // Provider-specific model ID
-    api_key_env: Option<String>, // Env var name (None for Ollama)
-    base_url: Option<String>,    // For ollama / openai_compatible
-    max_tokens: u32,
-    temperature: f32,
-}
-
-#[derive(Deserialize)]
-pub struct ChatMsg {
-    role: String,
-    content: String,
-}
-
-#[derive(Serialize)]
-pub struct LLMResult {
-    content: String,
-    input_tokens: u32,
-    output_tokens: u32,
-}
-
-/// Main chat endpoint — the frontend resolves which model to use and passes it directly
-#[command]
-pub async fn llm_chat(
-    messages: Vec<ChatMsg>,
-    context: serde_json::Value,
-    model: ModelEntry,
-) -> Result<LLMResult, String> {
-    let api_key = resolve_api_key(&model)?;
-    let system_prompt = build_system_prompt(&context);
-
-    call_model(&model, &api_key, &system_prompt, &messages).await
-}
-
-/// Inline assist endpoint
-#[command]
-pub async fn llm_inline_assist(
-    action: String,
-    target: serde_json::Value,
-    context: serde_json::Value,
-    model: ModelEntry,
-) -> Result<LLMResult, String> {
-    let api_key = resolve_api_key(&model)?;
-    let system_prompt = build_inline_assist_prompt(&action, &target, &context);
-
-    let messages = vec![ChatMsg {
-        role: "user".to_string(),
-        content: format_inline_assist_user_message(&action, &target),
-    }];
-
-    call_model(&model, &api_key, &system_prompt, &messages).await
-}
-
-/// Health check — test if a model endpoint is reachable
-#[command]
-pub async fn llm_health_check(model: ModelEntry) -> Result<bool, String> {
-    let api_key = resolve_api_key(&model).unwrap_or_default();
-
-    let messages = vec![ChatMsg {
-        role: "user".to_string(),
-        content: "ping".to_string(),
-    }];
-
-    match call_model(&model, &api_key, "Respond with 'pong'.", &messages).await {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
-}
-
-/// Resolve API key from environment variable
-fn resolve_api_key(model: &ModelEntry) -> Result<String, String> {
-    match &model.api_key_env {
-        Some(env_var) => std::env::var(env_var)
-            .map_err(|_| format!("Environment variable {} not set", env_var)),
-        None => Ok(String::new()), // Ollama doesn't need an API key
-    }
-}
-
-/// Unified model caller — routes to the correct provider
-async fn call_model(
-    model: &ModelEntry,
-    api_key: &str,
-    system_prompt: &str,
-    messages: &[ChatMsg],
-) -> Result<LLMResult, String> {
-    match model.provider.as_str() {
-        "anthropic" => call_anthropic(api_key, &model.model_id, system_prompt, messages, model.max_tokens, model.temperature).await,
-        "openai" => call_openai(api_key, &model.model_id, system_prompt, messages, model.max_tokens, model.temperature, None).await,
-        "ollama" => call_ollama(&model.model_id, system_prompt, messages, model.base_url.as_deref()).await,
-        "openai_compatible" => call_openai(api_key, &model.model_id, system_prompt, messages, model.max_tokens, model.temperature, model.base_url.as_deref()).await,
-        _ => Err(format!("Unsupported provider: {}", model.provider)),
-    }
-}
-
-fn build_system_prompt(context: &serde_json::Value) -> String {
-    format!(
-        r#"You are the DDD Design Assistant, embedded in the DDD (Design Driven Development) desktop tool.
-You help users design software flows visually.
-
-When generating flows or nodes, output valid DDD YAML inside a ```yaml``` code block.
-Always follow the DDD spec format with proper node types, connections, and specs.
-
-Project context:
-{}
-
-When suggesting specs, use exact error codes from the project's errors.yaml.
-When suggesting schemas, reference existing schemas with $ref.
-Keep suggestions concise and actionable."#,
-        serde_json::to_string_pretty(context).unwrap_or_default()
-    )
-}
-
-fn build_inline_assist_prompt(
-    action: &str,
-    target: &serde_json::Value,
-    context: &serde_json::Value,
-) -> String {
-    let action_instruction = match action {
-        "suggest_spec" => "Suggest a complete spec for this node based on its name, type, and the flow context. Output the spec as YAML.",
-        "complete_spec" => "The node has a partial spec. Fill in any missing fields with sensible defaults based on context.",
-        "explain_node" => "Explain what this node does in plain language, based on its spec.",
-        "add_error_handling" => "Add failure connections and error handling to this node. Use error codes from the project's errors.yaml.",
-        "generate_test_cases" => "List test scenarios for this node: happy path, edge cases, and failure cases.",
-        "add_node_between" => "Suggest a node to insert on this connection based on the source and target node semantics.",
-        "label_connection" => "Suggest a label for this connection based on the source and target nodes.",
-        "generate_flow" => "Generate a complete DDD flow with nodes and connections based on the user's description. Output as YAML.",
-        "review_flow" => "Review this flow for completeness: missing error paths, unhandled edges, security gaps, missing validations.",
-        "suggest_wiring" => "Look at unconnected nodes in this flow and suggest how to wire them together.",
-        "import_from_description" => "Convert this feature description into a DDD flow with nodes and connections. Output as YAML.",
-        "suggest_flows" => "Based on this domain's existing flows, suggest additional flows that are typically needed.",
-        "suggest_events" => "Based on this domain's flows, suggest events to publish and consume.",
-        "generate_domain" => "Generate a domain.yaml with flows, events, and wiring based on the description. Output as YAML.",
-        "suggest_domains" => "Based on the system description and existing domains, suggest additional domains.",
-        "review_architecture" => "Check domain boundaries, event wiring completeness, and circular dependencies.",
-        "generate_from_description" => "Generate a system.yaml with domains based on the application description. Output as YAML.",
-        _ => "Help the user with their DDD design.",
-    };
-
-    format!(
-        r#"You are the DDD Inline Assistant. Perform exactly ONE action.
-
-Action: {}
-Instruction: {}
-
-Target: {}
-
-Project context:
-{}
-
-Be concise. If outputting YAML, use a ```yaml``` code block."#,
-        action,
-        action_instruction,
-        serde_json::to_string_pretty(target).unwrap_or_default(),
-        serde_json::to_string_pretty(context).unwrap_or_default()
-    )
-}
-
-fn format_inline_assist_user_message(action: &str, target: &serde_json::Value) -> String {
-    format!("Execute inline assist action '{}' on target: {}", action, target)
-}
-
-// Provider implementations — all return LLMResult with token counts
-
-async fn call_anthropic(
-    api_key: &str,
-    model: &str,
-    system_prompt: &str,
-    messages: &[ChatMsg],
-    max_tokens: u32,
-    temperature: f32,
-) -> Result<LLMResult, String> {
-    let client = reqwest::Client::new();
-
-    let api_messages: Vec<serde_json::Value> = messages.iter().map(|m| {
-        serde_json::json!({ "role": m.role, "content": m.content })
-    }).collect();
-
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "system": system_prompt,
-        "messages": api_messages
-    });
-
-    let response = client.post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send().await.map_err(|e| e.to_string())?;
-
-    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-
-    let content = json["content"][0]["text"].as_str()
-        .ok_or_else(|| "Failed to parse Anthropic response".to_string())?
-        .to_string();
-
-    Ok(LLMResult {
-        content,
-        input_tokens: json["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
-        output_tokens: json["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
-    })
-}
-
-async fn call_openai(
-    api_key: &str,
-    model: &str,
-    system_prompt: &str,
-    messages: &[ChatMsg],
-    max_tokens: u32,
-    temperature: f32,
-    base_url: Option<&str>,        // None = OpenAI, Some = Azure/Together/Groq/etc.
-) -> Result<LLMResult, String> {
-    let client = reqwest::Client::new();
-    let url = format!("{}/chat/completions",
-        base_url.unwrap_or("https://api.openai.com/v1"));
-
-    let mut api_messages = vec![serde_json::json!({
-        "role": "system", "content": system_prompt
-    })];
-    for m in messages {
-        api_messages.push(serde_json::json!({ "role": m.role, "content": m.content }));
-    }
-
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "messages": api_messages
-    });
-
-    let response = client.post(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("content-type", "application/json")
-        .json(&body)
-        .send().await.map_err(|e| e.to_string())?;
-
-    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-
-    let content = json["choices"][0]["message"]["content"].as_str()
-        .ok_or_else(|| "Failed to parse OpenAI response".to_string())?
-        .to_string();
-
-    Ok(LLMResult {
-        content,
-        input_tokens: json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-        output_tokens: json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
-    })
-}
-
-async fn call_ollama(
-    model: &str,
-    system_prompt: &str,
-    messages: &[ChatMsg],
-    base_url: Option<&str>,
-) -> Result<LLMResult, String> {
-    let client = reqwest::Client::new();
-    let url = format!("{}/api/chat", base_url.unwrap_or("http://localhost:11434"));
-
-    let mut api_messages = vec![serde_json::json!({
-        "role": "system", "content": system_prompt
-    })];
-    for m in messages {
-        api_messages.push(serde_json::json!({ "role": m.role, "content": m.content }));
-    }
-
-    let body = serde_json::json!({
-        "model": model,
-        "messages": api_messages,
-        "stream": false
-    });
-
-    let response = client.post(&url)
-        .json(&body)
-        .send().await.map_err(|e| e.to_string())?;
-
-    let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-
-    let content = json["message"]["content"].as_str()
-        .ok_or_else(|| "Failed to parse Ollama response".to_string())?
-        .to_string();
-
-    Ok(LLMResult {
-        content,
-        input_tokens: json["prompt_eval_count"].as_u64().unwrap_or(0) as u32,
-        output_tokens: json["eval_count"].as_u64().unwrap_or(0) as u32,
-    })
-}
-```
-
-**File: `src/components/LLMAssistant/ChatPanel.tsx`**
-```tsx
-import { useEffect, useRef, useState } from 'react';
-import { useLLMStore } from '../../stores/llm-store';
-import { ChatMessage } from './ChatMessage';
-import { ChatInput } from './ChatInput';
-import { GhostPreview } from './GhostPreview';
-import { X, MessageSquare, Sparkles } from 'lucide-react';
-
-export function ChatPanel() {
-  const {
-    chatOpen, activeThread, isStreaming,
-    sessionTokens, sessionCost,
-    closeChat, sendMessage,
-  } = useLLMStore();
-
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activeThread?.messages.length]);
-
-  if (!chatOpen) return null;
-
-  return (
-    <div className="w-96 border-l border-gray-200 bg-white flex flex-col h-full">
-      {/* Header with Model Picker */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-purple-500" />
-          <span className="font-medium text-sm">Design Assistant</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <ModelPicker />
-          <button onClick={closeChat} className="text-gray-400 hover:text-gray-600">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Context indicator */}
-      <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 border-b flex justify-between">
-        <span>
-          {activeThread?.flowId
-            ? `Context: ${activeThread.domainId} / ${activeThread.flowId}`
-            : 'Context: Project-level'}
-        </span>
-        <span className="text-gray-400">
-          {sessionTokens > 0 && `${(sessionTokens / 1000).toFixed(1)}K tok · $${sessionCost.toFixed(2)}`}
-        </span>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-        {!activeThread?.messages.length && (
-          <div className="text-center text-gray-400 text-sm mt-8">
-            <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
-            <p>Ask me to generate flows, fill specs,</p>
-            <p>review your design, or suggest improvements.</p>
-            <div className="mt-4 space-y-2">
-              <SuggestionChip text="Generate a user registration flow" />
-              <SuggestionChip text="Review this flow for missing error paths" />
-              <SuggestionChip text="Suggest flows for this domain" />
-            </div>
-          </div>
-        )}
-
-        {activeThread?.messages.map(msg => (
-          <ChatMessage key={msg.id} message={msg} />
-        ))}
-
-        {isStreaming && (
-          <div className="flex gap-1 text-purple-400">
-            <span className="animate-bounce">●</span>
-            <span className="animate-bounce" style={{ animationDelay: '0.1s' }}>●</span>
-            <span className="animate-bounce" style={{ animationDelay: '0.2s' }}>●</span>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input */}
-      <ChatInput onSend={sendMessage} disabled={isStreaming} />
-    </div>
-  );
-}
-
-function SuggestionChip({ text }: { text: string }) {
-  const { sendMessage } = useLLMStore();
-  return (
-    <button
-      onClick={() => sendMessage(text)}
-      className="block w-full text-left px-3 py-2 text-xs bg-white border border-gray-200 rounded-lg hover:border-purple-300 hover:bg-purple-50 transition-colors"
-    >
-      ✨ {text}
-    </button>
-  );
-}
-```
-
-**File: `src/components/LLMAssistant/ChatMessage.tsx`**
-```tsx
-import type { ChatMessage as ChatMessageType } from '../../types/llm';
-import { useLLMStore } from '../../stores/llm-store';
-import { User, Sparkles, Check, X } from 'lucide-react';
-
-interface Props {
-  message: ChatMessageType;
-}
-
-export function ChatMessage({ message }: Props) {
-  const { applyGhostPreview, discardGhostPreview, editGhostInChat } = useLLMStore();
-  const isUser = message.role === 'user';
-
-  return (
-    <div className={`flex gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
-      {!isUser && (
-        <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-          <Sparkles className="w-3 h-3 text-purple-600" />
-        </div>
-      )}
-
-      <div
-        className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-          isUser
-            ? 'bg-blue-500 text-white'
-            : 'bg-gray-100 text-gray-800'
-        }`}
-      >
-        {/* Render markdown content */}
-        <div className="whitespace-pre-wrap">{message.content}</div>
-
-        {/* Generated YAML actions */}
-        {message.generatedYaml && message.previewState === 'pending' && (
-          <div className="mt-2 pt-2 border-t border-gray-200 flex gap-2">
-            <button
-              onClick={applyGhostPreview}
-              className="flex items-center gap-1 px-2 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600"
-            >
-              <Check className="w-3 h-3" /> Apply
-            </button>
-            <button
-              onClick={editGhostInChat}
-              className="px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-            >
-              Edit
-            </button>
-            <button
-              onClick={discardGhostPreview}
-              className="flex items-center gap-1 px-2 py-1 text-xs bg-red-100 text-red-600 rounded hover:bg-red-200"
-            >
-              <X className="w-3 h-3" /> Discard
-            </button>
-          </div>
-        )}
-
-        {message.previewState === 'applied' && (
-          <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-green-600">
-            ✓ Applied to canvas
-          </div>
-        )}
-
-        {message.previewState === 'discarded' && (
-          <div className="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-400">
-            Discarded
-          </div>
-        )}
-      </div>
-
-      {isUser && (
-        <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-          <User className="w-3 h-3 text-blue-600" />
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-**File: `src/components/LLMAssistant/ChatInput.tsx`**
-```tsx
-import { useState, useRef, useEffect } from 'react';
-import { Send } from 'lucide-react';
-
-interface Props {
-  onSend: (message: string) => void;
-  disabled: boolean;
-}
-
-export function ChatInput({ onSend, disabled }: Props) {
-  const [value, setValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-resize textarea
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (el) {
-      el.style.height = 'auto';
-      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-    }
-  }, [value]);
-
-  const handleSubmit = () => {
-    const trimmed = value.trim();
-    if (!trimmed || disabled) return;
-    onSend(trimmed);
-    setValue('');
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  return (
-    <div className="border-t border-gray-200 px-4 py-3">
-      <div className="flex items-end gap-2">
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Describe what you need…"
-          disabled={disabled}
-          rows={1}
-          className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300 disabled:opacity-50"
-        />
-        <button
-          onClick={handleSubmit}
-          disabled={disabled || !value.trim()}
-          className="p-2 rounded-lg bg-purple-500 text-white hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Send className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/LLMAssistant/GhostPreview.tsx`**
-```tsx
-import { useLLMStore } from '../../stores/llm-store';
-import { Check, Pencil, X, Sparkles } from 'lucide-react';
-
-/**
- * Floating bar rendered at the bottom of the canvas when ghost nodes are visible.
- * Ghost nodes themselves are rendered by the Canvas component with dashed borders
- * and reduced opacity — this component just provides the Apply/Edit/Discard controls.
- */
-export function GhostPreview() {
-  const { ghostPreview, applyGhostPreview, editGhostInChat, discardGhostPreview } = useLLMStore();
-
-  if (!ghostPreview || ghostPreview.state !== 'previewing') return null;
-
-  const nodeCount = ghostPreview.nodes.length;
-  const connectionCount = ghostPreview.connections.length;
-
-  return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50">
-      <div className="bg-white border border-purple-200 rounded-xl shadow-lg px-5 py-3 flex items-center gap-4">
-        <div className="flex items-center gap-2 text-sm text-purple-700">
-          <Sparkles className="w-4 h-4" />
-          <span>
-            Generated {nodeCount} node{nodeCount !== 1 ? 's' : ''}
-            {connectionCount > 0 && `, ${connectionCount} connection${connectionCount !== 1 ? 's' : ''}`}
-          </span>
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={applyGhostPreview}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-          >
-            <Check className="w-3.5 h-3.5" /> Apply
-          </button>
-          <button
-            onClick={editGhostInChat}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-          >
-            <Pencil className="w-3.5 h-3.5" /> Edit in chat
-          </button>
-          <button
-            onClick={discardGhostPreview}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
-          >
-            <X className="w-3.5 h-3.5" /> Discard
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/LLMAssistant/InlineAssist.tsx`**
-```tsx
-import { useState } from 'react';
-import { useLLMStore } from '../../stores/llm-store';
-import { useSheetStore } from '../../stores/sheet-store';
-import { Sparkles, Loader2 } from 'lucide-react';
-import type { InlineAssistAction, InlineAssistTarget } from '../../types/llm';
-
-interface Props {
-  x: number;
-  y: number;
-  target: InlineAssistTarget;
-  onClose: () => void;
-}
-
-interface MenuAction {
-  action: InlineAssistAction;
-  label: string;
-}
-
-const NODE_ACTIONS: MenuAction[] = [
-  { action: 'suggest_spec', label: '✨ Suggest spec' },
-  { action: 'complete_spec', label: '✨ Complete spec' },
-  { action: 'explain_node', label: '✨ Explain this node' },
-  { action: 'add_error_handling', label: '✨ Add error handling' },
-  { action: 'generate_test_cases', label: '✨ Generate test cases' },
-];
-
-const CONNECTION_ACTIONS: MenuAction[] = [
-  { action: 'add_node_between', label: '✨ Add node between' },
-  { action: 'label_connection', label: '✨ Suggest label' },
-];
-
-const CANVAS_ACTIONS: MenuAction[] = [
-  { action: 'generate_flow', label: '✨ Generate flow…' },
-  { action: 'review_flow', label: '✨ Review this flow' },
-  { action: 'suggest_wiring', label: '✨ Suggest wiring' },
-  { action: 'import_from_description', label: '✨ Import from description…' },
-];
-
-const DOMAIN_ACTIONS: MenuAction[] = [
-  { action: 'suggest_flows', label: '✨ Suggest flows' },
-  { action: 'suggest_events', label: '✨ Suggest events' },
-  { action: 'generate_domain', label: '✨ Generate domain…' },
-];
-
-const SYSTEM_ACTIONS: MenuAction[] = [
-  { action: 'suggest_domains', label: '✨ Suggest domains' },
-  { action: 'review_architecture', label: '✨ Review architecture' },
-  { action: 'generate_from_description', label: '✨ Generate from description…' },
-];
-
-function getActionsForTarget(target: InlineAssistTarget): MenuAction[] {
-  switch (target.type) {
-    case 'node': return NODE_ACTIONS;
-    case 'connection': return CONNECTION_ACTIONS;
-    case 'canvas': return CANVAS_ACTIONS;
-    case 'domain': return DOMAIN_ACTIONS;
-    case 'system': return SYSTEM_ACTIONS;
-  }
-}
-
-export function InlineAssist({ x, y, target, onClose }: Props) {
-  const { executeInlineAssist, openChat } = useLLMStore();
-  const [loading, setLoading] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
-
-  const actions = getActionsForTarget(target);
-
-  const handleAction = async (menuAction: MenuAction) => {
-    // Actions ending with '…' open the chat panel instead
-    if (menuAction.label.endsWith('…')) {
-      openChat();
-      onClose();
-      return;
-    }
-
-    setLoading(menuAction.action);
-    try {
-      const response = await executeInlineAssist({
-        action: menuAction.action,
-        target,
-      });
-      setResult(response);
-    } catch (err) {
-      setResult('Error: ' + String(err));
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  return (
-    <div
-      className="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 min-w-[220px] py-1"
-      style={{ left: x, top: y }}
-    >
-      {!result ? (
-        // Action menu
-        actions.map(a => (
-          <button
-            key={a.action}
-            onClick={() => handleAction(a)}
-            disabled={!!loading}
-            className="w-full text-left px-4 py-2 text-sm hover:bg-purple-50 disabled:opacity-50 flex items-center gap-2"
-          >
-            {loading === a.action ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500" />
-            ) : null}
-            {a.label}
-          </button>
-        ))
-      ) : (
-        // Result popover
-        <div className="px-4 py-3 max-w-sm">
-          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-            <Sparkles className="w-3 h-3 text-purple-500" />
-            Suggestion
-          </div>
-          <div className="text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
-            {result}
-          </div>
-          <div className="mt-3 flex gap-2 justify-end">
-            <button
-              onClick={onClose}
-              className="px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-**File: `src/components/LLMAssistant/ModelPicker.tsx`**
-```tsx
-import { useState, useRef, useEffect } from 'react';
-import { useLLMStore } from '../../stores/llm-store';
-import { ChevronDown, Circle, Settings } from 'lucide-react';
-
-export function ModelPicker() {
-  const { config, setActiveModel, isNearBudget, usage } = useLLMStore();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  const activeModel = config.models[config.activeModel];
-
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  // Group models by provider
-  const grouped = Object.values(config.models).reduce((acc, model) => {
-    const group = model.provider === 'ollama' ? 'Local' :
-                  model.provider === 'anthropic' ? 'Anthropic' :
-                  model.provider === 'openai' ? 'OpenAI' : 'Other';
-    if (!acc[group]) acc[group] = [];
-    acc[group].push(model);
-    return acc;
-  }, {} as Record<string, typeof Object.values<any>>);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-2 py-1 text-xs border border-gray-200 rounded-md hover:bg-gray-50"
-      >
-        <Circle
-          className={`w-2 h-2 ${activeModel?.available !== false ? 'fill-green-500 text-green-500' : 'fill-red-400 text-red-400'}`}
-        />
-        <span className="max-w-[120px] truncate">{activeModel?.label ?? 'Select model'}</span>
-        <ChevronDown className="w-3 h-3 text-gray-400" />
-      </button>
-
-      {open && (
-        <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-xl z-50 py-1">
-          {Object.entries(grouped).map(([group, models]) => (
-            <div key={group}>
-              <div className="px-3 py-1.5 text-xs font-medium text-gray-400 uppercase tracking-wide">
-                {group}
-              </div>
-              {(models as any[]).map((model: any) => (
-                <button
-                  key={model.id}
-                  onClick={() => { setActiveModel(model.id); setOpen(false); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-purple-50 ${
-                    model.id === config.activeModel ? 'bg-purple-50 text-purple-700' : 'text-gray-700'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Circle
-                      className={`w-2 h-2 ${model.available !== false ? 'fill-green-500 text-green-500' : 'fill-red-400 text-red-400'}`}
-                    />
-                    <span>{model.label}</span>
-                  </div>
-                  <span className="text-xs text-gray-400">
-                    {model.costPer1kInput === 0 ? 'Free' : `$${model.costPer1kInput}`}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ))}
-
-          <div className="border-t border-gray-100 mt-1">
-            <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50">
-              <Settings className="w-3.5 h-3.5" />
-              Manage models…
-            </button>
-          </div>
-
-          {/* Budget indicator */}
-          {usage && config.costTracking.enabled && (
-            <div className={`border-t px-3 py-2 text-xs ${
-              isNearBudget() ? 'text-amber-600 bg-amber-50' : 'text-gray-400'
-            }`}>
-              Month: ${usage.currentPeriod.totalCost.toFixed(2)}
-              {config.costTracking.budgetLimit > 0 && ` / $${config.costTracking.budgetLimit.toFixed(2)}`}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-**File: `src/components/LLMAssistant/UsageBar.tsx`**
-```tsx
-import { useLLMStore } from '../../stores/llm-store';
-import { Circle } from 'lucide-react';
-
-/**
- * Status bar at the bottom of the app showing active model + usage.
- */
-export function UsageBar() {
-  const { config, usage, sessionTokens, sessionCost, isNearBudget, isOverBudget } = useLLMStore();
-
-  const activeModel = config.models[config.activeModel];
-
-  return (
-    <div className="h-6 border-t border-gray-200 bg-gray-50 px-4 flex items-center justify-between text-xs text-gray-500">
-      {/* Active model */}
-      <div className="flex items-center gap-2">
-        <Circle
-          className={`w-2 h-2 ${activeModel?.available !== false ? 'fill-green-500 text-green-500' : 'fill-red-400 text-red-400'}`}
-        />
-        <span>{activeModel?.label ?? 'No model'}</span>
-      </div>
-
-      {/* Session + period usage */}
-      <div className="flex items-center gap-4">
-        {sessionTokens > 0 && (
-          <span>Session: {(sessionTokens / 1000).toFixed(1)}K tok · ${sessionCost.toFixed(2)}</span>
-        )}
-
-        {usage && config.costTracking.enabled && (
-          <span className={
-            isOverBudget() ? 'text-red-600 font-medium' :
-            isNearBudget() ? 'text-amber-600' : ''
-          }>
-            Month: ${usage.currentPeriod.totalCost.toFixed(2)}
-            {config.costTracking.budgetLimit > 0 && `/$${config.costTracking.budgetLimit.toFixed(2)}`}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-```
-
-**Update the InlineAssist context menu to show routed model and allow override:**
-
-Add to `src/components/LLMAssistant/InlineAssist.tsx` — update the action menu items:
-```tsx
-// Inside InlineAssist component, update the action rendering:
-const { resolveModelForTask } = useLLMStore();
-
-// In the menu render:
-actions.map(a => {
-  const routedModel = resolveModelForTask(a.action as TaskType);
-  return (
-    <button
-      key={a.action}
-      onClick={() => handleAction(a)}
-      disabled={!!loading}
-      className="w-full text-left px-4 py-2 text-sm hover:bg-purple-50 disabled:opacity-50 flex items-center justify-between"
-    >
-      <span className="flex items-center gap-2">
-        {loading === a.action ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500" />
-        ) : null}
-        {a.label}
-      </span>
-      <span className="text-xs text-gray-400">{routedModel.label}</span>
-    </button>
-  );
-})
-```
-
-**Keyboard shortcuts — add to `src/App.tsx`:**
-```typescript
-// Inside App component useEffect for keyboard shortcuts
-useEffect(() => {
-  const handleKeyDown = (e: KeyboardEvent) => {
-    const mod = e.metaKey || e.ctrlKey;
-
-    // Cmd+L / Ctrl+L — Toggle Chat Panel
-    if (mod && e.key === 'l') {
-      e.preventDefault();
-      useLLMStore.getState().toggleChat();
-    }
-
-    // Cmd+Shift+G — Generate flow from description
-    if (mod && e.shiftKey && e.key === 'G') {
-      e.preventDefault();
-      useLLMStore.getState().openChat();
-      // Pre-fill with generate prompt (handled by ChatPanel)
-    }
-
-    // Cmd+. — Inline assist on selected node
-    if (mod && e.key === '.') {
-      e.preventDefault();
-      // Trigger inline assist for currently selected node
-      // (handled by Canvas component)
-    }
-
-    // Escape — Discard ghost preview (if active)
-    if (e.key === 'Escape') {
-      const ghost = useLLMStore.getState().ghostPreview;
-      if (ghost?.state === 'previewing') {
-        e.preventDefault();
-        useLLMStore.getState().discardGhostPreview();
-      }
-    }
-
-    // Enter — Apply ghost preview (if active and no input focused)
-    if (e.key === 'Enter' && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) {
-      const ghost = useLLMStore.getState().ghostPreview;
-      if (ghost?.state === 'previewing') {
-        e.preventDefault();
-        useLLMStore.getState().applyGhostPreview();
-      }
-    }
-  };
-
-  window.addEventListener('keydown', handleKeyDown);
-  return () => window.removeEventListener('keydown', handleKeyDown);
-}, []);
-```
-
-**App layout update — ChatPanel, MemoryPanel, and UsageBar:**
-```tsx
-// In App.tsx render
-function App() {
-  const { current } = useSheetStore();
-  const { chatOpen } = useLLMStore();
-  const { memoryPanelOpen } = useMemoryStore();
-
-  return (
-    <div className="flex flex-col h-screen">
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar */}
-        <Sidebar />
-
-        {/* Main canvas area */}
-        <div className="flex-1 flex flex-col">
-          <Breadcrumb />
-          <div className="flex-1 relative">
-            {current.level === 'system' && <SystemMap />}
-            {current.level === 'domain' && <DomainMap />}
-            {current.level === 'flow' && <Canvas />}
-
-            {/* Ghost preview bar (floats above canvas) */}
-            <GhostPreview />
-          </div>
-        </div>
-
-        {/* Right panels — Spec Panel, Chat Panel, and/or Memory Panel */}
-        <SpecPanel />
-        {chatOpen && <ChatPanel />}
-        {memoryPanelOpen && <MemoryPanel />}
-      </div>
-
-      {/* Bottom status bar — active model + usage tracking */}
-      <UsageBar />
-    </div>
-  );
-}
-```
-
-#### Day 18-19: Project Memory System
-
-**File: `src/types/memory.ts`**
-```typescript
-// --- Project Memory Layer Types ---
-
-// Layer 1: Project Summary
-export interface ProjectSummary {
-  content: string;              // Markdown content
-  generatedAt: number;          // Timestamp
-  stale: boolean;               // True if specs changed since generation
-}
-
-// Layer 2: Spec Index
-export interface SpecIndex {
-  domains: Record<string, SpecIndexDomain>;
-  schemas: Record<string, SpecIndexSchema>;
-  events: SpecIndexEvent[];
-  sharedErrorCodes: string[];
-  generatedAt: number;
-}
-
-export interface SpecIndexDomain {
-  description: string;
-  flows: Record<string, SpecIndexFlow>;
-}
-
-export interface SpecIndexFlow {
-  type: 'traditional' | 'agent';
-  trigger: {
-    type: string;
-    method?: string;
-    path?: string;
-    schedule?: string;
-    event?: string;
-  };
-  nodes: string[];               // Node IDs (condensed)
-  publishesEvents: string[];
-  consumesEvents: string[];
-  schemasUsed: string[];
-  errorCodes: string[];
-  // Agent-specific
-  agentModel?: string;
-  tools?: string[];
-  guardrails?: string[];
-}
-
-export interface SpecIndexSchema {
-  fields: string[];              // Field names (condensed)
-}
-
-export interface SpecIndexEvent {
-  name: string;
-  publisher: string;             // domain name
-  consumers: string[];           // domain names
-}
-
-// Layer 3: Decision Log
-export interface Decision {
-  id: string;
-  date: string;                  // ISO date string
-  title: string;
-  rationale: string;
-  affected: string[];            // Domain/flow/file references
-  author: 'user' | 'llm';       // Who captured it
-}
-
-// Layer 4: Cross-Flow Map
-export interface FlowMap {
-  events: FlowMapEdge[];
-  subFlows: FlowMapEdge[];
-  sharedSchemas: FlowMapSchemaUsage[];
-  agentConnections: FlowMapEdge[];
-  flowDependencies: Record<string, FlowDependency>;
-  generatedAt: number;
-}
-
-export interface FlowMapEdge {
-  from: string;                  // "domain/flow"
-  to: string;                   // "domain/flow"
-  via?: string;                  // Event name or ref
-  type: 'event' | 'sub_flow' | 'orchestrator_manages' | 'handoff';
-  mode?: string;                 // For handoffs: transfer/consult/collaborate
-}
-
-export interface FlowMapSchemaUsage {
-  schema: string;
-  usedBy: string[];              // "domain/flow" paths
-}
-
-export interface FlowDependency {
-  dependsOn: string[];           // "domain/flow" paths
-  dependedOnBy: string[];
-  schemas: string[];
-  eventsIn: string[];
-  eventsOut: string[];
-}
-
-// Layer 5: Implementation Status
-export interface ImplementationStatus {
-  overview: {
-    totalFlows: number;
-    implemented: number;
-    pending: number;
-    stale: number;
-  };
-  flows: Record<string, FlowStatus>;
-  schemas: Record<string, SchemaStatus>;
-  generatedAt: number;
-}
-
-export interface FlowStatus {
-  status: 'implemented' | 'pending' | 'stale';
-  codeFiles: string[];
-  lastGenerated?: string;        // ISO timestamp
-  specChangedSince: boolean;
-  changesSince?: string[];       // Human-readable change descriptions
-}
-
-export interface SchemaStatus {
-  status: 'implemented' | 'pending' | 'stale';
-  migration?: string;
-  specChangedSince: boolean;
-}
-
-// --- Memory Panel State ---
-
-export interface MemoryState {
-  summary: ProjectSummary | null;
-  specIndex: SpecIndex | null;
-  decisions: Decision[];
-  flowMap: FlowMap | null;
-  implementationStatus: ImplementationStatus | null;
-  memoryPanelOpen: boolean;
-  isRefreshing: boolean;
-}
-```
-
-**File: `src/stores/memory-store.ts`**
-```typescript
-import { create } from 'zustand';
-import type {
-  MemoryState, ProjectSummary, SpecIndex, Decision,
-  FlowMap, ImplementationStatus, FlowDependency,
-} from '../types/memory';
-import { invoke } from '@tauri-apps/api/core';
-import { nanoid } from 'nanoid';
-
-interface MemoryActions {
-  // Panel
-  toggleMemoryPanel: () => void;
-
-  // Load all memory layers from .ddd/memory/
-  loadMemory: (projectPath: string) => Promise<void>;
-
-  // Refresh auto-generated layers (1, 2, 4, 5)
-  refreshMemory: (projectPath: string) => Promise<void>;
-
-  // Regenerate project summary using LLM
-  regenerateSummary: (projectPath: string) => Promise<void>;
-
-  // Decision log
-  addDecision: (decision: Omit<Decision, 'id'>) => void;
-  editDecision: (id: string, updates: Partial<Decision>) => void;
-  removeDecision: (id: string) => void;
-  saveDecisions: (projectPath: string) => Promise<void>;
-
-  // Contextual getters
-  getFlowDependencies: (flowId: string) => FlowDependency | null;
-  getRelevantDecisions: (domainId?: string, flowId?: string) => Decision[];
-  getFlowStatus: (flowId: string) => FlowStatus | null;
-}
-
-export const useMemoryStore = create<MemoryState & MemoryActions>((set, get) => ({
-  summary: null,
-  specIndex: null,
-  decisions: [],
-  flowMap: null,
-  implementationStatus: null,
-  memoryPanelOpen: false,
-  isRefreshing: false,
-
-  toggleMemoryPanel: () => set(s => ({ memoryPanelOpen: !s.memoryPanelOpen })),
-
-  loadMemory: async (projectPath: string) => {
-    try {
-      const [summary, specIndex, decisions, flowMap, status] = await Promise.all([
-        invoke<ProjectSummary | null>('load_memory_layer', { projectPath, layer: 'summary' }),
-        invoke<SpecIndex | null>('load_memory_layer', { projectPath, layer: 'spec-index' }),
-        invoke<Decision[]>('load_memory_layer', { projectPath, layer: 'decisions' }),
-        invoke<FlowMap | null>('load_memory_layer', { projectPath, layer: 'flow-map' }),
-        invoke<ImplementationStatus | null>('load_memory_layer', { projectPath, layer: 'status' }),
-      ]);
-
-      set({
-        summary,
-        specIndex,
-        decisions: decisions ?? [],
-        flowMap,
-        implementationStatus: status,
-      });
-    } catch (err) {
-      console.error('Failed to load project memory:', err);
-    }
-  },
-
-  refreshMemory: async (projectPath: string) => {
-    set({ isRefreshing: true });
-
-    try {
-      // Rebuild auto-generated layers from specs
-      const [specIndex, flowMap, status] = await Promise.all([
-        invoke<SpecIndex>('build_spec_index', { projectPath }),
-        invoke<FlowMap>('build_flow_map', { projectPath }),
-        invoke<ImplementationStatus>('build_implementation_status', { projectPath }),
-      ]);
-
-      set({
-        specIndex,
-        flowMap,
-        implementationStatus: status,
-        isRefreshing: false,
-      });
-
-      // Save to disk
-      await Promise.all([
-        invoke('save_memory_layer', { projectPath, layer: 'spec-index', data: specIndex }),
-        invoke('save_memory_layer', { projectPath, layer: 'flow-map', data: flowMap }),
-        invoke('save_memory_layer', { projectPath, layer: 'status', data: status }),
-      ]);
-    } catch (err) {
-      console.error('Failed to refresh memory:', err);
-      set({ isRefreshing: false });
-    }
-  },
-
-  regenerateSummary: async (projectPath: string) => {
-    set({ isRefreshing: true });
-
-    try {
-      // Send all specs to LLM to generate project summary
-      const summary = await invoke<ProjectSummary>('generate_project_summary', { projectPath });
-      set({ summary, isRefreshing: false });
-
-      await invoke('save_memory_layer', { projectPath, layer: 'summary', data: summary });
-    } catch (err) {
-      console.error('Failed to regenerate summary:', err);
-      set({ isRefreshing: false });
-    }
-  },
-
-  addDecision: (decision) => {
-    const newDecision: Decision = { ...decision, id: nanoid() };
-    set(s => ({ decisions: [...s.decisions, newDecision] }));
-  },
-
-  editDecision: (id, updates) => {
-    set(s => ({
-      decisions: s.decisions.map(d => d.id === id ? { ...d, ...updates } : d),
-    }));
-  },
-
-  removeDecision: (id) => {
-    set(s => ({ decisions: s.decisions.filter(d => d.id !== id) }));
-  },
-
-  saveDecisions: async (projectPath: string) => {
-    await invoke('save_memory_layer', {
-      projectPath,
-      layer: 'decisions',
-      data: get().decisions,
-    });
-  },
-
-  getFlowDependencies: (flowId: string) => {
-    return get().flowMap?.flowDependencies[flowId] ?? null;
-  },
-
-  getRelevantDecisions: (domainId?: string, flowId?: string) => {
-    const decisions = get().decisions;
-    if (!domainId && !flowId) return decisions;
-
-    return decisions.filter(d =>
-      d.affected.some(ref =>
-        (domainId && ref.includes(domainId)) ||
-        (flowId && ref.includes(flowId))
-      )
-    );
-  },
-
-  getFlowStatus: (flowId: string) => {
-    return get().implementationStatus?.flows[flowId] ?? null;
-  },
-}));
-```
-
-**File: `src/utils/memory-builder.ts`**
-```typescript
-import type { SpecIndex, SpecIndexDomain, SpecIndexFlow, FlowMap, FlowMapEdge, FlowDependency } from '../types/memory';
-
-/**
- * Build SpecIndex (Layer 2) by scanning all parsed domain configs and flow files.
- * Called on project load and when specs change.
- */
-export function buildSpecIndex(
-  systemConfig: any,
-  domainConfigs: Record<string, any>,
-  flowFiles: Record<string, any>,
-  schemas: Record<string, any>,
-  errorCodes: string[]
-): SpecIndex {
-  const domains: Record<string, SpecIndexDomain> = {};
-
-  for (const [domainId, domain] of Object.entries(domainConfigs)) {
-    const flows: Record<string, SpecIndexFlow> = {};
-
-    for (const flowEntry of (domain as any).flows ?? []) {
-      const flowYaml = flowFiles[`${domainId}/${flowEntry.id}`];
-      if (!flowYaml) continue;
-
-      const flow: SpecIndexFlow = {
-        type: flowYaml.flow?.type ?? 'traditional',
-        trigger: {
-          type: flowYaml.trigger?.type ?? 'unknown',
-          method: flowYaml.trigger?.method,
-          path: flowYaml.trigger?.path,
-          schedule: flowYaml.trigger?.schedule,
-          event: flowYaml.trigger?.event,
-        },
-        nodes: (flowYaml.nodes ?? []).map((n: any) => n.id),
-        publishesEvents: extractPublishedEvents(flowYaml),
-        consumesEvents: flowYaml.trigger?.type === 'event' ? [flowYaml.trigger.event] : [],
-        schemasUsed: extractSchemaRefs(flowYaml),
-        errorCodes: extractErrorCodes(flowYaml),
-      };
-
-      // Agent-specific fields
-      if (flow.type === 'agent') {
-        flow.agentModel = flowYaml.agent_config?.model;
-        flow.tools = (flowYaml.tools ?? []).map((t: any) => t.id);
-        flow.guardrails = (flowYaml.guardrails ?? []).map((g: any) => g.id);
-      }
-
-      flows[flowEntry.id] = flow;
-    }
-
-    domains[domainId] = {
-      description: (domain as any).description ?? '',
-      flows,
-    };
-  }
-
-  // Build event map
-  const events = buildEventList(domains);
-
-  return {
-    domains,
-    schemas: Object.fromEntries(
-      Object.entries(schemas).map(([name, schema]) => [
-        name,
-        { fields: Object.keys((schema as any).fields ?? (schema as any).properties ?? {}) },
-      ])
-    ),
-    events,
-    sharedErrorCodes: errorCodes,
-    generatedAt: Date.now(),
-  };
-}
-
-/**
- * Build FlowMap (Layer 4) from SpecIndex — derive the dependency graph.
- */
-export function buildFlowMap(specIndex: SpecIndex): FlowMap {
-  const events: FlowMapEdge[] = [];
-  const subFlows: FlowMapEdge[] = [];
-  const agentConnections: FlowMapEdge[] = [];
-  const sharedSchemas: { schema: string; usedBy: string[] }[] = [];
-  const flowDependencies: Record<string, FlowDependency> = {};
-
-  // Initialize dependencies for all flows
-  for (const [domainId, domain] of Object.entries(specIndex.domains)) {
-    for (const flowId of Object.keys(domain.flows)) {
-      const fullId = `${domainId}/${flowId}`;
-      flowDependencies[fullId] = {
-        dependsOn: [],
-        dependedOnBy: [],
-        schemas: domain.flows[flowId].schemasUsed,
-        eventsIn: domain.flows[flowId].consumesEvents,
-        eventsOut: domain.flows[flowId].publishesEvents,
-      };
-    }
-  }
-
-  // Build event edges
-  for (const event of specIndex.events) {
-    for (const [domainId, domain] of Object.entries(specIndex.domains)) {
-      for (const [flowId, flow] of Object.entries(domain.flows)) {
-        const fullId = `${domainId}/${flowId}`;
-
-        if (flow.publishesEvents.includes(event.name)) {
-          // Find consumers
-          for (const [cDomainId, cDomain] of Object.entries(specIndex.domains)) {
-            for (const [cFlowId, cFlow] of Object.entries(cDomain.flows)) {
-              if (cFlow.consumesEvents.includes(event.name)) {
-                const cFullId = `${cDomainId}/${cFlowId}`;
-                events.push({
-                  from: fullId,
-                  to: cFullId,
-                  via: event.name,
-                  type: 'event',
-                });
-                flowDependencies[cFullId]?.dependsOn.push(fullId);
-                flowDependencies[fullId]?.dependedOnBy.push(cFullId);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Build shared schema map
-  const schemaUsage: Record<string, string[]> = {};
-  for (const [domainId, domain] of Object.entries(specIndex.domains)) {
-    for (const [flowId, flow] of Object.entries(domain.flows)) {
-      for (const schema of flow.schemasUsed) {
-        if (!schemaUsage[schema]) schemaUsage[schema] = [];
-        schemaUsage[schema].push(`${domainId}/${flowId}`);
-      }
-    }
-  }
-  for (const [schema, usedBy] of Object.entries(schemaUsage)) {
-    if (usedBy.length > 1) {
-      sharedSchemas.push({ schema, usedBy });
-    }
-  }
-
-  return {
-    events,
-    subFlows,
-    sharedSchemas,
-    agentConnections,
-    flowDependencies,
-    generatedAt: Date.now(),
-  };
-}
-
-// --- Helpers ---
-
-function extractPublishedEvents(flowYaml: any): string[] {
-  const events: string[] = [];
-  for (const node of flowYaml.nodes ?? []) {
-    if (node.type === 'event' && node.spec?.event) {
-      events.push(node.spec.event);
-    }
-  }
-  return events;
-}
-
-function extractSchemaRefs(flowYaml: any): string[] {
-  const refs: string[] = [];
-  const yamlStr = JSON.stringify(flowYaml);
-  const matches = yamlStr.matchAll(/\$ref:\/schemas\/(\w+)/g);
-  for (const match of matches) {
-    refs.push(match[1]);
-  }
-  // Also check model references in data_store nodes
-  for (const node of flowYaml.nodes ?? []) {
-    if (node.spec?.model && typeof node.spec.model === 'string') {
-      refs.push(node.spec.model);
-    }
-  }
-  return [...new Set(refs)];
-}
-
-function extractErrorCodes(flowYaml: any): string[] {
-  const codes: string[] = [];
-  const yamlStr = JSON.stringify(flowYaml);
-  const matches = yamlStr.matchAll(/"error_code"\s*:\s*"(\w+)"/g);
-  for (const match of matches) {
-    codes.push(match[1]);
-  }
-  return [...new Set(codes)];
-}
-
-function buildEventList(domains: Record<string, SpecIndexDomain>) {
-  const eventMap: Record<string, { publisher: string; consumers: string[] }> = {};
-
-  for (const [domainId, domain] of Object.entries(domains)) {
-    for (const flow of Object.values(domain.flows)) {
-      for (const event of flow.publishesEvents) {
-        if (!eventMap[event]) eventMap[event] = { publisher: domainId, consumers: [] };
-        eventMap[event].publisher = domainId;
-      }
-      for (const event of flow.consumesEvents) {
-        if (!eventMap[event]) eventMap[event] = { publisher: '', consumers: [] };
-        if (!eventMap[event].consumers.includes(domainId)) {
-          eventMap[event].consumers.push(domainId);
-        }
-      }
-    }
-  }
-
-  return Object.entries(eventMap).map(([name, info]) => ({
-    name,
-    publisher: info.publisher,
-    consumers: info.consumers,
-  }));
-}
-```
-
-**Update `src/utils/llm-context.ts` — integrate memory layers:**
-```typescript
-import { useProjectStore } from '../stores/project-store';
-import { useSheetStore } from '../stores/sheet-store';
-import { useFlowStore } from '../stores/flow-store';
-import { useMemoryStore } from '../stores/memory-store';
-import type { LLMContext } from '../types/llm';
-
-/**
- * Build the context object sent with every LLM request.
- * Integrates all 5 Project Memory layers with priority-based budgeting.
- */
-export function buildLLMContext(): LLMContext {
-  const project = useProjectStore.getState();
-  const sheet = useSheetStore.getState();
-  const flow = useFlowStore.getState();
-  const memory = useMemoryStore.getState();
-
-  const context: LLMContext = {
-    // Priority 1: Project Summary (Layer 1) — always included
-    projectSummary: memory.summary?.content ?? '',
-
-    system: {
-      name: project.systemConfig?.name ?? '',
-      techStack: project.systemConfig?.tech_stack ?? {},
-      domains: project.domains?.map(d => d.name) ?? [],
-    },
-  };
-
-  // Priority 2: Current domain + related domains (Layer 4)
-  if (sheet.current.level !== 'system' && sheet.current.domainId) {
-    const domain = project.domainConfigs?.[sheet.current.domainId];
-    if (domain) {
-      context.currentDomain = {
-        name: domain.name,
-        flows: domain.flows.map(f => f.id),
-        publishesEvents: domain.publishes_events.map(e => e.event),
-        consumesEvents: domain.consumes_events.map(e => e.event),
-      };
-    }
-  }
-
-  // Priority 3: Current flow + connected flows (Layer 4)
-  if (sheet.current.level === 'flow' && sheet.current.flowId) {
-    const flowId = sheet.current.flowId;
-    const domainId = sheet.current.domainId;
-    const fullFlowId = domainId ? `${domainId}/${flowId}` : flowId;
-
-    context.currentFlow = {
-      id: flowId,
-      type: flow.flowType ?? 'traditional',
-      yaml: flow.toYaml(),
-    };
-
-    // Connected flows from Flow Map (Layer 4)
-    const deps = memory.getFlowDependencies(fullFlowId);
-    if (deps) {
-      context.connectedFlows = {
-        upstream: deps.dependsOn,
-        downstream: deps.dependedOnBy,
-        sharedSchemas: deps.schemas,
-        eventsIn: deps.eventsIn,
-        eventsOut: deps.eventsOut,
-      };
-    }
-
-    // Implementation status (Layer 5)
-    const status = memory.getFlowStatus(fullFlowId);
-    if (status) {
-      context.implementationStatus = {
-        status: status.status,
-        specChangedSince: status.specChangedSince,
-        changesSince: status.changesSince,
-      };
-    }
-  }
-
-  // Selected nodes
-  const selectedNodes = flow.getSelectedNodes?.();
-  if (selectedNodes?.length) {
-    context.selectedNodes = selectedNodes.map(n => ({
-      id: n.id,
-      type: n.type,
-      spec: n.spec,
-    }));
-  }
-
-  // Priority 4: Relevant decisions (Layer 3)
-  const relevantDecisions = memory.getRelevantDecisions(
-    sheet.current.domainId,
-    sheet.current.flowId
-  );
-  if (relevantDecisions.length) {
-    context.relevantDecisions = relevantDecisions.map(d =>
-      `${d.title}: ${d.rationale}`
-    );
-  }
-
-  // Error codes and schemas
-  context.errorCodes = project.errorCodes ?? [];
-  context.schemas = project.schemas ?? {};
-
-  return context;
-}
-```
-
-**File: `src/components/MemoryPanel/MemoryPanel.tsx`**
-```tsx
-import { useMemoryStore } from '../../stores/memory-store';
-import { useProjectStore } from '../../stores/project-store';
-import { useSheetStore } from '../../stores/sheet-store';
-import { SummaryCard } from './SummaryCard';
-import { StatusList } from './StatusList';
-import { DecisionList } from './DecisionList';
-import { FlowDependencies } from './FlowDependencies';
-import { X, Brain, RefreshCw } from 'lucide-react';
-
-export function MemoryPanel() {
-  const {
-    summary, implementationStatus, decisions, flowMap,
-    memoryPanelOpen, isRefreshing,
-    toggleMemoryPanel, refreshMemory, regenerateSummary,
-  } = useMemoryStore();
-  const { projectPath } = useProjectStore();
-  const { current } = useSheetStore();
-
-  if (!memoryPanelOpen) return null;
-
-  return (
-    <div className="w-80 border-l border-gray-200 bg-white flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-        <div className="flex items-center gap-2">
-          <Brain className="w-4 h-4 text-indigo-500" />
-          <span className="font-medium text-sm">Project Memory</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => refreshMemory(projectPath)}
-            disabled={isRefreshing}
-            className="p-1 text-gray-400 hover:text-gray-600 disabled:animate-spin"
-            title="Refresh memory"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
-          <button onClick={toggleMemoryPanel} className="p-1 text-gray-400 hover:text-gray-600">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-        {/* Layer 1: Summary */}
-        <SummaryCard
-          summary={summary}
-          status={implementationStatus?.overview}
-          onRegenerate={() => regenerateSummary(projectPath)}
-          isRefreshing={isRefreshing}
-        />
-
-        {/* Layer 5: Implementation Status */}
-        <StatusList status={implementationStatus} />
-
-        {/* Layer 3: Decisions */}
-        <DecisionList decisions={decisions} />
-
-        {/* Layer 4: Flow Dependencies (shown on L3) */}
-        {current.level === 'flow' && current.flowId && current.domainId && (
-          <FlowDependencies
-            flowId={`${current.domainId}/${current.flowId}`}
-            flowMap={flowMap}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/MemoryPanel/SummaryCard.tsx`**
-```tsx
-import type { ProjectSummary } from '../../types/memory';
-import { FileText, RefreshCw } from 'lucide-react';
-
-interface Props {
-  summary: ProjectSummary | null;
-  status?: { totalFlows: number; implemented: number; pending: number; stale: number };
-  onRegenerate: () => void;
-  isRefreshing: boolean;
-}
-
-export function SummaryCard({ summary, status, onRegenerate, isRefreshing }: Props) {
-  return (
-    <div className="border border-gray-200 rounded-lg p-3">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
-          <FileText className="w-3 h-3" />
-          Summary
-        </div>
-        <button
-          onClick={onRegenerate}
-          disabled={isRefreshing}
-          className="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1"
-        >
-          <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-          Regenerate
-        </button>
-      </div>
-
-      {summary ? (
-        <>
-          <div className="text-sm text-gray-700 line-clamp-4 whitespace-pre-wrap">
-            {summary.content.split('\n').slice(0, 4).join('\n')}
-          </div>
-          {summary.stale && (
-            <div className="mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
-              Summary may be outdated — specs changed since generation
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="text-xs text-gray-400">
-          No summary generated yet. Click Regenerate.
-        </div>
-      )}
-
-      {status && (
-        <div className="mt-2 flex gap-3 text-xs">
-          <span className="text-gray-500">{status.totalFlows} flows</span>
-          <span className="text-green-600">✓ {status.implemented}</span>
-          <span className="text-gray-400">◌ {status.pending}</span>
-          {status.stale > 0 && (
-            <span className="text-amber-600">⚠ {status.stale} stale</span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-**File: `src/components/MemoryPanel/StatusList.tsx`**
-```tsx
-import type { ImplementationStatus } from '../../types/memory';
-import { CheckCircle, Circle, AlertTriangle } from 'lucide-react';
-
-interface Props {
-  status: ImplementationStatus | null;
-}
-
-export function StatusList({ status }: Props) {
-  if (!status) return null;
-
-  const entries = Object.entries(status.flows).sort(([, a], [, b]) => {
-    const order = { stale: 0, pending: 1, implemented: 2 };
-    return order[a.status] - order[b.status];
-  });
-
-  return (
-    <div className="border border-gray-200 rounded-lg p-3">
-      <div className="text-xs font-medium text-gray-500 mb-2">Implementation Status</div>
-      <div className="space-y-1.5 max-h-48 overflow-y-auto">
-        {entries.map(([flowId, flowStatus]) => (
-          <div key={flowId} className="flex items-center gap-2 text-xs">
-            {flowStatus.status === 'implemented' && (
-              <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
-            )}
-            {flowStatus.status === 'pending' && (
-              <Circle className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
-            )}
-            {flowStatus.status === 'stale' && (
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-            )}
-            <span className="text-gray-700 truncate flex-1" title={flowId}>
-              {flowId}
-            </span>
-            {flowStatus.status === 'stale' && flowStatus.changesSince && (
-              <span className="text-amber-500" title={flowStatus.changesSince.join(', ')}>
-                {flowStatus.changesSince.length} changes
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/MemoryPanel/DecisionList.tsx`**
-```tsx
-import { useState } from 'react';
-import { useMemoryStore } from '../../stores/memory-store';
-import { useProjectStore } from '../../stores/project-store';
-import { DecisionForm } from './DecisionForm';
-import type { Decision } from '../../types/memory';
-import { Plus, Pencil, Trash2, BookOpen } from 'lucide-react';
-
-interface Props {
-  decisions: Decision[];
-}
-
-export function DecisionList({ decisions }: Props) {
-  const { addDecision, removeDecision, saveDecisions } = useMemoryStore();
-  const { projectPath } = useProjectStore();
-  const [showForm, setShowForm] = useState(false);
-
-  const handleAdd = (decision: Omit<Decision, 'id'>) => {
-    addDecision(decision);
-    saveDecisions(projectPath);
-    setShowForm(false);
-  };
-
-  const handleRemove = (id: string) => {
-    removeDecision(id);
-    saveDecisions(projectPath);
-  };
-
-  return (
-    <div className="border border-gray-200 rounded-lg p-3">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
-          <BookOpen className="w-3 h-3" />
-          Decisions ({decisions.length})
-        </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1"
-        >
-          <Plus className="w-3 h-3" /> Add
-        </button>
-      </div>
-
-      <div className="space-y-2 max-h-48 overflow-y-auto">
-        {decisions.map(d => (
-          <div key={d.id} className="bg-gray-50 rounded px-2 py-1.5 group">
-            <div className="flex items-start justify-between">
-              <div className="text-xs font-medium text-gray-700">{d.title}</div>
-              <button
-                onClick={() => handleRemove(d.id)}
-                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-            <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{d.rationale}</div>
-            <div className="text-xs text-gray-400 mt-0.5">{d.date}</div>
-          </div>
-        ))}
-      </div>
-
-      {showForm && (
-        <DecisionForm onSave={handleAdd} onCancel={() => setShowForm(false)} />
-      )}
-    </div>
-  );
-}
-```
-
-**File: `src/components/MemoryPanel/DecisionForm.tsx`**
-```tsx
-import { useState } from 'react';
-import type { Decision } from '../../types/memory';
-
-interface Props {
-  onSave: (decision: Omit<Decision, 'id'>) => void;
-  onCancel: () => void;
-}
-
-export function DecisionForm({ onSave, onCancel }: Props) {
-  const [title, setTitle] = useState('');
-  const [rationale, setRationale] = useState('');
-  const [affected, setAffected] = useState('');
-
-  const handleSubmit = () => {
-    if (!title.trim() || !rationale.trim()) return;
-    onSave({
-      date: new Date().toISOString().slice(0, 10),
-      title: title.trim(),
-      rationale: rationale.trim(),
-      affected: affected.split(',').map(s => s.trim()).filter(Boolean),
-      author: 'user',
-    });
-  };
-
-  return (
-    <div className="mt-2 p-2 bg-indigo-50 rounded-lg border border-indigo-200 space-y-2">
-      <input
-        value={title}
-        onChange={e => setTitle(e.target.value)}
-        placeholder="Decision title"
-        className="w-full text-xs px-2 py-1 border rounded"
-      />
-      <textarea
-        value={rationale}
-        onChange={e => setRationale(e.target.value)}
-        placeholder="Why this decision was made…"
-        rows={3}
-        className="w-full text-xs px-2 py-1 border rounded resize-none"
-      />
-      <input
-        value={affected}
-        onChange={e => setAffected(e.target.value)}
-        placeholder="Affected (comma-separated: domain, flow, file)"
-        className="w-full text-xs px-2 py-1 border rounded"
-      />
-      <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="text-xs px-2 py-1 text-gray-500 hover:text-gray-700">
-          Cancel
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={!title.trim() || !rationale.trim()}
-          className="text-xs px-2 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 disabled:opacity-50"
-        >
-          Save
-        </button>
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/MemoryPanel/FlowDependencies.tsx`**
-```tsx
-import type { FlowMap } from '../../types/memory';
-import { ArrowDown, ArrowUp, Layers, Zap } from 'lucide-react';
-
-interface Props {
-  flowId: string;
-  flowMap: FlowMap | null;
-}
-
-export function FlowDependencies({ flowId, flowMap }: Props) {
-  if (!flowMap) return null;
-
-  const deps = flowMap.flowDependencies[flowId];
-  if (!deps) return null;
-
-  return (
-    <div className="border border-gray-200 rounded-lg p-3">
-      <div className="text-xs font-medium text-gray-500 mb-2">Flow Dependencies</div>
-
-      {/* Upstream */}
-      {deps.dependsOn.length > 0 && (
-        <div className="mb-2">
-          <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
-            <ArrowDown className="w-3 h-3" /> Depends on
-          </div>
-          {deps.dependsOn.map(id => (
-            <div key={id} className="text-xs text-gray-700 ml-4">{id}</div>
-          ))}
-        </div>
-      )}
-
-      {/* Downstream */}
-      {deps.dependedOnBy.length > 0 && (
-        <div className="mb-2">
-          <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
-            <ArrowUp className="w-3 h-3" /> Depended on by
-          </div>
-          {deps.dependedOnBy.map(id => (
-            <div key={id} className="text-xs text-gray-700 ml-4">{id}</div>
-          ))}
-        </div>
-      )}
-
-      {/* Schemas */}
-      {deps.schemas.length > 0 && (
-        <div className="mb-2">
-          <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
-            <Layers className="w-3 h-3" /> Schemas
-          </div>
-          <div className="flex flex-wrap gap-1 ml-4">
-            {deps.schemas.map(s => (
-              <span key={s} className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{s}</span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Events */}
-      {(deps.eventsOut.length > 0 || deps.eventsIn.length > 0) && (
-        <div>
-          <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
-            <Zap className="w-3 h-3" /> Events
-          </div>
-          {deps.eventsOut.map(e => (
-            <div key={e} className="text-xs text-gray-700 ml-4">→ {e} (publishes)</div>
-          ))}
-          {deps.eventsIn.map(e => (
-            <div key={e} className="text-xs text-gray-700 ml-4">← {e} (consumes)</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-**Add keyboard shortcut for Memory Panel in `src/App.tsx`:**
-```typescript
-// Add to the existing keyboard handler useEffect
-// Cmd+M / Ctrl+M — Toggle Memory Panel
-if (mod && e.key === 'm') {
-  e.preventDefault();
-  useMemoryStore.getState().toggleMemoryPanel();
-}
-```
-
-**Trigger memory refresh on spec changes — add to `src/stores/project-store.ts`:**
-```typescript
-// After loading or saving any spec file, trigger memory refresh
-import { useMemoryStore } from './memory-store';
-
-// In loadProject action:
-async loadProject(path: string) {
-  // ... existing project loading logic ...
-
-  // After all specs are loaded, build memory layers
-  const memoryStore = useMemoryStore.getState();
-  await memoryStore.loadMemory(path);
-
-  // Check if auto-generated layers need refresh
-  if (!memoryStore.specIndex || memoryStore.summary?.stale) {
-    await memoryStore.refreshMemory(path);
-  }
-}
-
-// In saveFlow action:
-async saveFlow(flowId: string) {
-  // ... existing save logic ...
-
-  // Mark memory as potentially stale and refresh
-  const memoryStore = useMemoryStore.getState();
-  await memoryStore.refreshMemory(get().projectPath);
-}
-```
-
-**Decision capture in Chat — update `src/stores/llm-store.ts`:**
-```typescript
-// After receiving an LLM response, check if it detected a design decision
-// Pattern: LLM includes "💡 Decision detected:" in response
-
-sendMessage: async (content: string) => {
-  // ... existing send logic ...
-
-  // After response received, check for decision capture
-  if (response.includes('💡 Decision detected:')) {
-    const decisionMatch = response.match(
-      /💡 Decision detected:\n- Title: (.+)\n- Rationale: (.+)\n- Affected: (.+)/
-    );
-    if (decisionMatch) {
-      // Add to decision log automatically
-      useMemoryStore.getState().addDecision({
-        date: new Date().toISOString().slice(0, 10),
-        title: decisionMatch[1],
-        rationale: decisionMatch[2],
-        affected: decisionMatch[3].split(',').map(s => s.trim()),
-        author: 'llm',
-      });
-    }
-  }
-}
-```
-
----
 
 ### Claude Code Integration
 
@@ -7713,13 +4826,8 @@ export const useImplementationStore = create<ImplementationState>((set, get) => 
         } catch { /* file may have been deleted */ }
       }
 
-      // Send to Design Assistant LLM for comparison
-      const { useLLMStore } = await import('./llm-store');
-      const reconciliationPrompt = buildReconciliationPrompt(flowId, specContent, codeContents);
-      const response = await useLLMStore.getState().sendRawMessage(reconciliationPrompt, 'review_flow');
-
-      // Parse LLM response into structured report
-      const report = parseReconciliationResponse(flowId, response);
+      // Compare spec vs code using hash-based comparison and structural analysis
+      const report = buildReconciliationReport(flowId, specContent, codeContents);
       set({ reconciliationReport: report, isReconciling: false });
 
       // Update mapping with sync score
@@ -7744,16 +4852,22 @@ export const useImplementationStore = create<ImplementationState>((set, get) => 
     item.resolvedAt = new Date().toISOString();
 
     if (resolution === 'accepted' && report.codeOnly.some(i => i.id === itemId)) {
-      // Accept into spec — use LLM to generate spec update
-      const { useLLMStore } = await import('./llm-store');
+      // Accept into spec — build a Claude Code prompt to update the spec
       const mapping = get().mappings[flowId];
       const specContent = await invoke<string>('read_file', { path: `${projectPath}/${mapping.spec}` });
-      const codeFile = item.codeLocation?.split(':')[0] ?? '';
-      const codeContent = codeFile ? await invoke<string>('read_file', { path: `${projectPath}/${codeFile}` }) : '';
-
-      const updatePrompt = `The following item exists in code but not in the spec. Generate an updated spec YAML that includes this item.\n\nItem: ${item.description}\nCode location: ${item.codeLocation}\nCode:\n${codeContent}\n\nCurrent spec:\n${specContent}\n\nReturn only the updated YAML.`;
-      const updatedSpec = await useLLMStore.getState().sendRawMessage(updatePrompt, 'suggest_spec');
-      await invoke('write_file', { path: `${projectPath}/${mapping.spec}`, content: updatedSpec });
+      const acceptPrompt = `The following item exists in code but not in the spec. Update the spec YAML to include this item.\n\nItem: ${item.description}\nCode location: ${item.codeLocation}\n\nCurrent spec:\n${specContent}`;
+      set({
+        currentPrompt: {
+          flowId,
+          domain: flowId.split('/')[0],
+          content: acceptPrompt,
+          specFiles: [mapping.spec],
+          mode: 'update',
+          agentFlow: false,
+          editedByUser: false,
+        },
+        panelState: 'prompt_ready',
+      });
     } else if (resolution === 'removed') {
       // Remove from code — build targeted Claude Code prompt
       const removePrompt = `Remove this from the implementation — it's not in the spec:\n${item.description}\nLocation: ${item.codeLocation}`;
@@ -7808,48 +4922,27 @@ export const useImplementationStore = create<ImplementationState>((set, get) => 
 
 // --- Helper functions for reconciliation ---
 
-function buildReconciliationPrompt(
+function buildReconciliationReport(
   flowId: string,
   specContent: string,
   codeContents: Record<string, string>
-): string {
-  let prompt = `Compare this flow spec against its implementation code. For each item, determine if the code matches the spec, if the code has something the spec doesn't, or if the spec has something the code doesn't.\n\n`;
-  prompt += `## Flow Spec (${flowId})\n\`\`\`yaml\n${specContent}\n\`\`\`\n\n`;
-  prompt += `## Implementation Code\n`;
-  for (const [file, content] of Object.entries(codeContents)) {
-    prompt += `### ${file}\n\`\`\`\n${content}\n\`\`\`\n\n`;
-  }
-  prompt += `## Response Format\nRespond with JSON only:\n\`\`\`json\n{\n  "matching": [{"description": "...", "category": "..."}],\n  "codeOnly": [{"description": "...", "category": "...", "codeLocation": "file:line", "severity": "minor|moderate|significant"}],\n  "specOnly": [{"description": "...", "category": "...", "specLocation": "...", "severity": "minor|moderate|significant"}]\n}\n\`\`\``;
-  return prompt;
-}
+): ReconciliationReport {
+  // Hash-based comparison: parse spec YAML and compare structural elements
+  // against code contents to detect drift
+  const specNodes = extractSpecItems(specContent);
+  const codeItems = extractCodeItems(codeContents);
 
-function parseReconciliationResponse(flowId: string, response: string): ReconciliationReport {
-  // Extract JSON from response
-  const jsonMatch = response.match(/```json\n([\s\S]*?)\n```/) ?? response.match(/\{[\s\S]*\}/);
-  const parsed = JSON.parse(jsonMatch?.[1] ?? jsonMatch?.[0] ?? '{}');
+  const matching = specNodes
+    .filter(s => codeItems.some(c => c.description === s.description))
+    .map((item, i) => ({ id: `match-${i}`, description: item.description, category: item.category, severity: 'minor' as const }));
 
-  const matching = (parsed.matching ?? []).map((item: any, i: number) => ({
-    id: `match-${i}`,
-    description: item.description,
-    category: item.category ?? 'other',
-    severity: 'minor' as const,
-  }));
+  const specOnly = specNodes
+    .filter(s => !codeItems.some(c => c.description === s.description))
+    .map((item, i) => ({ id: `spec-${i}`, description: item.description, category: item.category, severity: 'moderate' as const }));
 
-  const codeOnly = (parsed.codeOnly ?? []).map((item: any, i: number) => ({
-    id: `code-${i}`,
-    description: item.description,
-    category: item.category ?? 'other',
-    codeLocation: item.codeLocation,
-    severity: item.severity ?? 'moderate',
-  }));
-
-  const specOnly = (parsed.specOnly ?? []).map((item: any, i: number) => ({
-    id: `spec-${i}`,
-    description: item.description,
-    category: item.category ?? 'other',
-    specLocation: item.specLocation,
-    severity: item.severity ?? 'moderate',
-  }));
+  const codeOnly = codeItems
+    .filter(c => !specNodes.some(s => s.description === c.description))
+    .map((item, i) => ({ id: `code-${i}`, description: item.description, category: item.category, codeLocation: item.location, severity: 'moderate' as const }));
 
   const total = matching.length + codeOnly.length + specOnly.length;
   const syncScore = total > 0 ? Math.round((matching.length / total) * 100) : 100;
@@ -8644,7 +5737,7 @@ export function TerminalEmbed({ sessionId }: Props) {
 
 **File: `src/components/shared/CopyButton.tsx`**
 
-Reusable copy-to-clipboard button used across all output text areas (terminal output, prompt preview, test errors, chat YAML blocks, agent test I/O, generator preview). Uses the browser Clipboard API with visual feedback.
+Reusable copy-to-clipboard button used across all output text areas (terminal output, prompt preview, test errors). Uses the browser Clipboard API with visual feedback.
 
 ```tsx
 import { useState, useCallback } from 'react';
@@ -9281,9 +6374,8 @@ if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
 
 // Add to layout — Implementation Panel goes rightmost:
 <div className="flex h-screen">
-  {/* ... existing Sidebar, Canvas, SpecPanel, ChatPanel, MemoryPanel ... */}
+  {/* ... existing Sidebar, Canvas, SpecPanel ... */}
   <ImplementationPanel />
-  <UsageBar /> {/* Bottom bar */}
 </div>
 ```
 
@@ -9296,697 +6388,6 @@ sha2 = "0.10"
 nanoid = "0.4"
 ```
 
----
-
-### Production Infrastructure Generators
-
-**File: `src/types/production.ts`**
-```typescript
-/** OpenAPI generation */
-export interface OpenAPISpec {
-  openapi: string;
-  info: { title: string; version: string; description: string };
-  paths: Record<string, Record<string, OpenAPIOperation>>;
-  components: { schemas: Record<string, any> };
-}
-
-export interface OpenAPIOperation {
-  operationId: string;
-  summary: string;
-  tags: string[];
-  requestBody?: any;
-  responses: Record<string, { description: string; content?: any }>;
-}
-
-/** Schema migration tracking */
-export interface SchemaMapping {
-  spec: string;
-  spec_hash: string;
-  migration_history: MigrationEntry[];
-  last_synced_at: string;
-}
-
-export interface MigrationEntry {
-  version: string;
-  description: string;
-  generated_at: string;
-}
-
-export interface SchemaChange {
-  schemaName: string;
-  changes: string[];        // Human-readable changes
-  currentHash: string;
-  storedHash: string;
-}
-
-/** Generated artifact tracking */
-export interface GeneratedArtifact {
-  type: 'openapi' | 'ci_pipeline' | 'dockerfile' | 'compose' | 'k8s' | 'migration';
-  path: string;
-  generated_at: string;
-  source_hash: string;      // Hash of source config that generated this
-  stale: boolean;
-}
-```
-
-**File: `src/utils/openapi-generator.ts`**
-```typescript
-import { invoke } from '@tauri-apps/api/core';
-import type { OpenAPISpec } from '../types/production';
-
-/**
- * Generate OpenAPI 3.0 spec from all HTTP flow specs.
- * Reads flow YAMLs, errors.yaml, and schemas to produce a complete API spec.
- */
-export async function generateOpenAPI(projectPath: string): Promise<string> {
-  const systemRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/system.yaml` });
-  const system = (await import('yaml')).parse(systemRaw);
-
-  const spec: OpenAPISpec = {
-    openapi: '3.0.3',
-    info: {
-      title: system.system?.name ?? 'API',
-      version: system.system?.version ?? '1.0.0',
-      description: system.system?.description ?? '',
-    },
-    paths: {},
-    components: { schemas: {} },
-  };
-
-  // Read error codes for response mapping
-  let errorCodes: Record<string, any> = {};
-  try {
-    const errRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/shared/errors.yaml` });
-    errorCodes = (await import('yaml')).parse(errRaw);
-  } catch { /* ignore */ }
-
-  // Read schemas
-  try {
-    const schemaFiles = await invoke<string[]>('list_files', { dir: `${projectPath}/specs/schemas`, pattern: '*.yaml' });
-    for (const file of schemaFiles) {
-      const raw = await invoke<string>('read_file', { path: `${projectPath}/specs/schemas/${file}` });
-      const schema = (await import('yaml')).parse(raw);
-      const name = file.replace('.yaml', '');
-      spec.components.schemas[name] = schemaToOpenAPI(schema);
-    }
-  } catch { /* no schemas dir */ }
-
-  // Read all flows and extract HTTP endpoints
-  const domains = system.system?.domains ?? [];
-  for (const domain of domains) {
-    try {
-      const flowFiles = await invoke<string[]>('list_files', {
-        dir: `${projectPath}/specs/domains/${domain.name}/flows`,
-        pattern: '*.yaml',
-      });
-
-      for (const file of flowFiles) {
-        const raw = await invoke<string>('read_file', {
-          path: `${projectPath}/specs/domains/${domain.name}/flows/${file}`,
-        });
-        const flow = (await import('yaml')).parse(raw);
-
-        // Only include HTTP-triggered flows
-        if (flow.trigger?.type !== 'http') continue;
-
-        const path = flow.trigger.path;
-        const method = flow.trigger.method.toLowerCase();
-
-        if (!spec.paths[path]) spec.paths[path] = {};
-
-        spec.paths[path][method] = {
-          operationId: flow.flow?.id ?? file.replace('.yaml', ''),
-          summary: flow.flow?.name ?? '',
-          tags: [domain.name],
-          ...buildRequestBody(flow),
-          responses: buildResponses(flow, errorCodes),
-        };
-
-        // Add request/response schemas
-        const reqSchema = buildInputSchema(flow);
-        if (reqSchema) {
-          const schemaName = `${capitalize(flow.flow.id.replace(/-/g, ''))}Request`;
-          spec.components.schemas[schemaName] = reqSchema;
-        }
-      }
-    } catch { /* domain has no flows */ }
-  }
-
-  return (await import('yaml')).stringify(spec);
-}
-
-function buildInputSchema(flow: any): any | null {
-  const inputNode = (flow.nodes ?? []).find((n: any) => n.type === 'input');
-  if (!inputNode?.spec?.fields) return null;
-
-  const properties: Record<string, any> = {};
-  const required: string[] = [];
-
-  for (const [name, field] of Object.entries(inputNode.spec.fields)) {
-    const f = field as any;
-    properties[name] = { type: mapType(f.type) };
-    if (f.format) properties[name].format = f.format;
-    if (f.min_length) properties[name].minLength = f.min_length;
-    if (f.max_length) properties[name].maxLength = f.max_length;
-    if (f.required) required.push(name);
-  }
-
-  return { type: 'object', required, properties };
-}
-
-function buildRequestBody(flow: any): any {
-  const inputNode = (flow.nodes ?? []).find((n: any) => n.type === 'input');
-  if (!inputNode) return {};
-  return {
-    requestBody: {
-      required: true,
-      content: { 'application/json': { schema: buildInputSchema(flow) } },
-    },
-  };
-}
-
-function buildResponses(flow: any, errorCodes: any): Record<string, any> {
-  const responses: Record<string, any> = {};
-
-  // Success responses from terminal nodes
-  for (const node of flow.nodes ?? []) {
-    if (node.type === 'terminal' && node.spec?.status) {
-      const status = String(node.spec.status);
-      responses[status] = {
-        description: node.spec.body?.message ?? 'Success',
-      };
-    }
-  }
-
-  // Error responses from error codes used in the flow
-  const usedCodes = extractFlowErrorCodes(flow);
-  for (const code of usedCodes) {
-    const errorDef = findErrorDef(code, errorCodes);
-    if (errorDef) {
-      const status = String(errorDef.http_status);
-      if (!responses[status]) {
-        responses[status] = { description: errorDef.message ?? code };
-      }
-    }
-  }
-
-  return responses;
-}
-
-function extractFlowErrorCodes(flow: any): string[] {
-  const codes: string[] = [];
-  const str = JSON.stringify(flow);
-  const matches = str.matchAll(/"error_code"\s*:\s*"(\w+)"/g);
-  for (const m of matches) codes.push(m[1]);
-  return [...new Set(codes)];
-}
-
-function findErrorDef(code: string, errorCodes: any): any {
-  for (const category of Object.values(errorCodes)) {
-    if (typeof category === 'object' && (category as any)[code]) {
-      return (category as any)[code];
-    }
-  }
-  return null;
-}
-
-function schemaToOpenAPI(schema: any): any {
-  const properties: Record<string, any> = {};
-  for (const [name, field] of Object.entries(schema.fields ?? schema.properties ?? {})) {
-    properties[name] = { type: mapType((field as any).type) };
-  }
-  return { type: 'object', properties };
-}
-
-function mapType(t: string): string {
-  const map: Record<string, string> = { string: 'string', int: 'integer', integer: 'integer', float: 'number', boolean: 'boolean', date: 'string', datetime: 'string', uuid: 'string' };
-  return map[t] ?? 'string';
-}
-
-function capitalize(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1); }
-```
-
-**File: `src/utils/cicd-generator.ts`**
-```typescript
-import { invoke } from '@tauri-apps/api/core';
-
-/**
- * Generate GitHub Actions CI/CD pipeline from architecture.yaml and system.yaml.
- */
-export async function generateCICD(projectPath: string): Promise<string> {
-  const yaml = await import('yaml');
-  const systemRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/system.yaml` });
-  const system = yaml.parse(systemRaw);
-
-  let arch: any = {};
-  try {
-    const archRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/architecture.yaml` });
-    arch = yaml.parse(archRaw);
-  } catch { /* use defaults */ }
-
-  const techStack = system.system?.tech_stack ?? {};
-  const lang = techStack.language ?? 'python';
-  const langVersion = techStack.language_version ?? '3.11';
-  const db = techStack.database;
-  const cache = techStack.cache;
-
-  const testing = arch.testing ?? {};
-  const security = arch.cross_cutting?.security ?? {};
-
-  let pipeline: any = {
-    name: 'CI',
-    on: {
-      push: { branches: ['main', 'develop'] },
-      pull_request: { branches: ['main'] },
-    },
-    jobs: {
-      test: {
-        'runs-on': 'ubuntu-latest',
-        services: {},
-        steps: [
-          { uses: 'actions/checkout@v4' },
-        ],
-      },
-    },
-  };
-
-  const steps = pipeline.jobs.test.steps;
-
-  // Add database service
-  if (db === 'postgresql') {
-    pipeline.jobs.test.services.postgres = {
-      image: 'postgres:15',
-      env: { POSTGRES_USER: 'test', POSTGRES_PASSWORD: 'test', POSTGRES_DB: 'test' },
-      ports: ['5432:5432'],
-      options: '--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5',
-    };
-  }
-
-  // Add cache service
-  if (cache === 'redis') {
-    pipeline.jobs.test.services.redis = {
-      image: 'redis:7',
-      ports: ['6379:6379'],
-    };
-  }
-
-  // Language setup
-  if (lang === 'python') {
-    steps.push({
-      name: `Set up Python ${langVersion}`,
-      uses: 'actions/setup-python@v5',
-      with: { 'python-version': langVersion },
-    });
-    steps.push({ name: 'Install dependencies', run: 'pip install -e ".[dev]"' });
-  } else if (lang === 'typescript' || lang === 'javascript') {
-    steps.push({
-      name: `Set up Node ${langVersion}`,
-      uses: 'actions/setup-node@v4',
-      with: { 'node-version': langVersion },
-    });
-    steps.push({ name: 'Install dependencies', run: 'npm ci' });
-  }
-
-  // Migration step
-  if (arch.database?.migrations) {
-    steps.push({ name: 'Run migrations', run: arch.database.migrations.command ?? 'alembic upgrade head' });
-  }
-
-  // Lint
-  const lintCmd = testing.commands?.lint ?? (lang === 'python' ? 'ruff check .' : 'npm run lint');
-  steps.push({ name: 'Lint', run: lintCmd });
-
-  // Type check
-  const typeCmd = testing.commands?.typecheck ?? (lang === 'python' ? 'mypy src/' : 'npx tsc --noEmit');
-  steps.push({ name: 'Type check', run: typeCmd });
-
-  // Test
-  const testCmd = testing.commands?.test ?? (lang === 'python' ? 'pytest --tb=short -q' : 'npm test');
-  steps.push({ name: 'Test', run: testCmd });
-
-  // Dependency scanning
-  if (security.dependency_scanning?.ci_step) {
-    const scanTool = security.dependency_scanning.tool ?? 'safety';
-    steps.push({ name: 'Dependency scan', run: scanTool === 'safety' ? 'pip install safety && safety check' : 'npm audit' });
-  }
-
-  // Spec-code sync check
-  steps.push({
-    name: 'Spec-code sync check',
-    run: lang === 'python'
-      ? `python -c "\nimport yaml, hashlib, sys\nmapping = yaml.safe_load(open('.ddd/mapping.yaml'))\nstale = [fid for fid, m in mapping.get('flows', {}).items() if hashlib.sha256(open(m['spec'], 'rb').read()).hexdigest() != m['spec_hash']]\nif stale: print(f'Stale: {stale}'); sys.exit(1)\nprint('All in sync')\n"`
-      : 'node -e "/* spec sync check */"',
-  });
-
-  return yaml.stringify(pipeline);
-}
-```
-
-**File: `src/utils/dockerfile-generator.ts`**
-```typescript
-import { invoke } from '@tauri-apps/api/core';
-
-/**
- * Generate Dockerfile and docker-compose.yaml from architecture.yaml deployment config.
- */
-export async function generateDockerfile(projectPath: string): Promise<string> {
-  const yaml = await import('yaml');
-  const systemRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/system.yaml` });
-  const system = yaml.parse(systemRaw);
-
-  let arch: any = {};
-  try {
-    const archRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/architecture.yaml` });
-    arch = yaml.parse(archRaw);
-  } catch { /* defaults */ }
-
-  const techStack = system.system?.tech_stack ?? {};
-  const deployment = arch.deployment?.docker ?? {};
-  const health = arch.cross_cutting?.observability?.health ?? {};
-  const lang = techStack.language ?? 'python';
-  const langVersion = techStack.language_version ?? '3.11';
-  const port = deployment.port ?? 8000;
-  const multiStage = deployment.multi_stage ?? true;
-  const baseImage = deployment.base_image ?? `${lang}:${langVersion}-slim`;
-  const healthPath = health.liveness?.path ?? '/health/live';
-
-  if (lang === 'python') {
-    const framework = techStack.framework ?? 'fastapi';
-    const startCmd = framework === 'fastapi'
-      ? `uvicorn src.main:app --host 0.0.0.0 --port ${port}`
-      : `python -m src.main`;
-
-    if (multiStage) {
-      return `# Generated by DDD Tool
-FROM ${baseImage} AS builder
-WORKDIR /app
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
-
-FROM ${baseImage}
-WORKDIR /app
-COPY --from=builder /usr/local/lib/python${langVersion}/site-packages /usr/local/lib/python${langVersion}/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-COPY src/ src/
-COPY alembic/ alembic/
-COPY alembic.ini .
-EXPOSE ${port}
-HEALTHCHECK --interval=30s --timeout=5s CMD curl -f http://localhost:${port}${healthPath} || exit 1
-CMD ["${startCmd.split(' ')[0]}", ${startCmd.split(' ').slice(1).map(a => `"${a}"`).join(', ')}]
-`;
-    }
-  }
-
-  // Fallback generic Dockerfile
-  return `# Generated by DDD Tool
-FROM ${baseImage}
-WORKDIR /app
-COPY . .
-EXPOSE ${port}
-CMD ["start"]
-`;
-}
-
-export async function generateDockerCompose(projectPath: string): Promise<string> {
-  const yaml = await import('yaml');
-  const systemRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/system.yaml` });
-  const system = yaml.parse(systemRaw);
-
-  let arch: any = {};
-  try {
-    const archRaw = await invoke<string>('read_file', { path: `${projectPath}/specs/architecture.yaml` });
-    arch = yaml.parse(archRaw);
-  } catch { /* defaults */ }
-
-  const techStack = system.system?.tech_stack ?? {};
-  const port = arch.deployment?.docker?.port ?? 8000;
-
-  const services: any = {
-    app: {
-      build: '.',
-      ports: [`${port}:${port}`],
-      env_file: '.env',
-      depends_on: [],
-    },
-  };
-
-  if (techStack.database === 'postgresql') {
-    services.postgres = {
-      image: 'postgres:15',
-      volumes: ['pgdata:/var/lib/postgresql/data'],
-      environment: { POSTGRES_DB: system.system?.name ?? 'app', POSTGRES_USER: 'app', POSTGRES_PASSWORD: '${DB_PASSWORD}' },
-      ports: ['5432:5432'],
-    };
-    services.app.depends_on.push('postgres');
-  }
-
-  if (techStack.cache === 'redis') {
-    services.redis = { image: 'redis:7-alpine', ports: ['6379:6379'] };
-    services.app.depends_on.push('redis');
-  }
-
-  const compose: any = { version: '3.8', services };
-  if (techStack.database === 'postgresql') {
-    compose.volumes = { pgdata: {} };
-  }
-
-  return yaml.stringify(compose);
-}
-```
-
-**File: `src/utils/migration-tracker.ts`**
-```typescript
-import { invoke } from '@tauri-apps/api/core';
-import type { SchemaMapping, SchemaChange } from '../types/production';
-
-/**
- * Track schema hashes and detect changes for migration generation.
- */
-export async function checkSchemaChanges(projectPath: string): Promise<SchemaChange[]> {
-  const yaml = await import('yaml');
-  const changes: SchemaChange[] = [];
-
-  // Load existing schema mappings
-  let mappings: Record<string, SchemaMapping> = {};
-  try {
-    const raw = await invoke<string>('read_file', { path: `${projectPath}/.ddd/mapping.yaml` });
-    const parsed = yaml.parse(raw);
-    mappings = parsed.schemas ?? {};
-  } catch { /* no mapping file */ }
-
-  // Scan all schemas
-  let schemaFiles: string[] = [];
-  try {
-    schemaFiles = await invoke<string[]>('list_files', { dir: `${projectPath}/specs/schemas`, pattern: '*.yaml' });
-  } catch { return []; }
-
-  for (const file of schemaFiles) {
-    const schemaName = file.replace('.yaml', '').replace('_base', 'Base');
-    const specPath = `${projectPath}/specs/schemas/${file}`;
-    const currentHash = await invoke<string>('hash_file', { path: specPath });
-    const stored = mappings[schemaName];
-
-    if (stored && stored.spec_hash !== currentHash) {
-      // Schema changed — compute diff
-      const cachedPath = `${projectPath}/.ddd/cache/schemas-at-migration/${file}`;
-      let diffChanges: string[] = [];
-      try {
-        diffChanges = await invoke<string[]>('diff_specs', { cachedPath, currentPath: specPath });
-      } catch {
-        diffChanges = ['Schema file changed (no cached version for diff)'];
-      }
-
-      changes.push({
-        schemaName,
-        changes: diffChanges,
-        currentHash,
-        storedHash: stored.spec_hash,
-      });
-    } else if (!stored) {
-      // New schema — not yet tracked
-      changes.push({
-        schemaName,
-        changes: ['New schema (not yet in database)'],
-        currentHash,
-        storedHash: '',
-      });
-    }
-  }
-
-  return changes;
-}
-
-/**
- * Build a migration prompt for Claude Code based on detected schema changes.
- */
-export function buildMigrationPrompt(changes: SchemaChange[], ormTool: string): string {
-  let prompt = `## Database Migration Required\n\n`;
-  prompt += `The following schema changes need database migrations:\n\n`;
-
-  for (const change of changes) {
-    prompt += `### ${change.schemaName}\n`;
-    for (const c of change.changes) {
-      prompt += `- ${c}\n`;
-    }
-    prompt += `\n`;
-  }
-
-  prompt += `Generate a database migration using ${ormTool}:\n`;
-  prompt += `- Migration should be reversible (include downgrade)\n`;
-  prompt += `- Do NOT modify existing data destructively\n`;
-  prompt += `- Add new columns as nullable or with defaults\n`;
-  prompt += `- For renamed columns, create new + copy + drop old\n`;
-
-  return prompt;
-}
-
-/**
- * Cache a schema at migration time for future diffing.
- */
-export async function cacheSchemaAtMigration(projectPath: string, schemaFile: string): Promise<void> {
-  const cacheDir = `${projectPath}/.ddd/cache/schemas-at-migration`;
-  await invoke('ensure_dir', { path: cacheDir });
-  await invoke('copy_file', {
-    src: `${projectPath}/specs/schemas/${schemaFile}`,
-    dst: `${cacheDir}/${schemaFile}`,
-  });
-}
-```
-
-**Update `src/stores/implementation-store.ts` — add artifact generation methods:**
-
-Add to the ImplementationState interface:
-```typescript
-  // Production infrastructure generation
-  generateOpenAPI: (projectPath: string) => Promise<void>;
-  generateCICD: (projectPath: string) => Promise<void>;
-  generateDockerfiles: (projectPath: string) => Promise<void>;
-  checkSchemaChanges: (projectPath: string) => Promise<SchemaChange[]>;
-  schemaChanges: SchemaChange[];
-```
-
-Add to the store implementation:
-```typescript
-  schemaChanges: [],
-
-  generateOpenAPI: async (projectPath) => {
-    const { generateOpenAPI } = await import('../utils/openapi-generator');
-    const content = await generateOpenAPI(projectPath);
-    await invoke('write_file', { path: `${projectPath}/openapi.yaml`, content });
-  },
-
-  generateCICD: async (projectPath) => {
-    const { generateCICD } = await import('../utils/cicd-generator');
-    const content = await generateCICD(projectPath);
-    await invoke('ensure_dir', { path: `${projectPath}/.github/workflows` });
-    await invoke('write_file', { path: `${projectPath}/.github/workflows/ci.yaml`, content });
-  },
-
-  generateDockerfiles: async (projectPath) => {
-    const { generateDockerfile, generateDockerCompose } = await import('../utils/dockerfile-generator');
-    const dockerfile = await generateDockerfile(projectPath);
-    const compose = await generateDockerCompose(projectPath);
-    await invoke('write_file', { path: `${projectPath}/Dockerfile`, content: dockerfile });
-    await invoke('write_file', { path: `${projectPath}/docker-compose.yaml`, content: compose });
-  },
-
-  checkSchemaChanges: async (projectPath) => {
-    const { checkSchemaChanges } = await import('../utils/migration-tracker');
-    const changes = await checkSchemaChanges(projectPath);
-    set({ schemaChanges: changes });
-    return changes;
-  },
-```
-
-**Update prompt builder — add migration prompt when schemas changed:**
-
-In `runClaudeCode` post-implementation, after test runner:
-```typescript
-  // Check for schema changes needing migrations
-  const schemaChanges = await get().checkSchemaChanges(projectPath);
-  if (schemaChanges.length > 0) {
-    const { buildMigrationPrompt } = await import('../utils/migration-tracker');
-    const ormTool = config?.claude_code?.orm_migration_tool ?? 'alembic';
-    const migrationPrompt = buildMigrationPrompt(schemaChanges, ormTool);
-    // Show migration prompt in panel for user to review and run
-    set({
-      currentPrompt: {
-        flowId: `schema-migration`,
-        domain: '_schemas',
-        content: migrationPrompt,
-        specFiles: schemaChanges.map(c => `specs/schemas/${c.schemaName}.yaml`),
-        mode: 'update',
-        agentFlow: false,
-        editedByUser: false,
-      },
-      panelState: 'prompt_ready',
-    });
-  }
-```
-
-**Sidebar addition — Production tab:**
-
-Add to `src/components/Sidebar/`:
-```tsx
-// ProductionTab.tsx — shows generated artifacts status
-import { useImplementationStore } from '../../stores/implementation-store';
-import { useProjectStore } from '../../stores/project-store';
-import { FileCode, GitBranch, Container, Database, Shield, Activity, RefreshCw } from 'lucide-react';
-
-export function ProductionTab() {
-  const { generateOpenAPI, generateCICD, generateDockerfiles, checkSchemaChanges, schemaChanges } = useImplementationStore();
-  const { projectPath } = useProjectStore();
-
-  const artifacts = [
-    { icon: FileCode, label: 'OpenAPI Spec', file: 'openapi.yaml', generate: () => generateOpenAPI(projectPath) },
-    { icon: GitBranch, label: 'CI/CD Pipeline', file: '.github/workflows/ci.yaml', generate: () => generateCICD(projectPath) },
-    { icon: Container, label: 'Dockerfile', file: 'Dockerfile', generate: () => generateDockerfiles(projectPath) },
-  ];
-
-  return (
-    <div className="p-3 space-y-3">
-      <div className="text-xs font-medium text-gray-500 uppercase">Generated Artifacts</div>
-
-      {artifacts.map(({ icon: Icon, label, generate }) => (
-        <div key={label} className="flex items-center justify-between text-xs">
-          <div className="flex items-center gap-2 text-gray-700">
-            <Icon className="w-3.5 h-3.5" />
-            {label}
-          </div>
-          <button
-            onClick={generate}
-            className="flex items-center gap-1 text-blue-500 hover:text-blue-700"
-          >
-            <RefreshCw className="w-3 h-3" /> Generate
-          </button>
-        </div>
-      ))}
-
-      {schemaChanges.length > 0 && (
-        <div className="border border-amber-200 rounded p-2 bg-amber-50">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-700 mb-1">
-            <Database className="w-3.5 h-3.5" />
-            Schema changes detected
-          </div>
-          {schemaChanges.map(c => (
-            <div key={c.schemaName} className="text-[10px] text-amber-600">
-              {c.schemaName}: {c.changes.length} change(s)
-            </div>
-          ))}
-          <button
-            onClick={() => checkSchemaChanges(projectPath)}
-            className="text-[10px] text-amber-700 underline mt-1"
-          >
-            Generate migration prompt
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
----
 
 ### Diagram-Derived Test Generation
 
@@ -10547,17 +6948,15 @@ generateTestCode: async (flowId) => {
   const project = useProjectStore.getState();
   const architecture = project.architecture;
 
-  // Build prompt for LLM to generate test code
+  // Build prompt for Claude Code to generate test code
   const testFramework = architecture?.testing?.framework || 'pytest';
   const prompt = buildTestCodePrompt(derivedSpec, flow, testFramework);
 
-  // Call Design Assistant LLM
-  const response = await callModel({
-    task: 'generate',
-    messages: [{ role: 'user', content: prompt }],
-  });
+  // Write prompt to .ddd/.test-gen-prompt.md and execute via Claude Code
+  await invoke('write_file', { path: `${projectPath}/.ddd/.test-gen-prompt.md`, content: prompt });
+  const response = await invoke<string>('run_claude_code', { promptPath: `${projectPath}/.ddd/.test-gen-prompt.md` });
 
-  const code = extractCodeBlock(response.content);
+  const code = extractCodeBlock(response);
   set({
     generatedTestCode: {
       flow_id: flowId,
@@ -10581,12 +6980,11 @@ checkSpecCompliance: async (flowId) => {
   // Build prompt comparing expected outcomes against test results
   const prompt = buildCompliancePrompt(derivedSpec, testResults, flow);
 
-  const response = await callModel({
-    task: 'review',
-    messages: [{ role: 'user', content: prompt }],
-  });
+  // Write prompt and execute via Claude Code
+  await invoke('write_file', { path: `${projectPath}/.ddd/.compliance-prompt.md`, content: prompt });
+  const response = await invoke<string>('run_claude_code', { promptPath: `${projectPath}/.ddd/.compliance-prompt.md` });
 
-  const report = parseComplianceResponse(response.content, flowId);
+  const report = parseComplianceResponse(response, flowId);
   set({ complianceReport: report, isCheckingCompliance: false });
 
   // Persist to mapping
@@ -10614,7 +7012,7 @@ checkSpecCompliance: async (flowId) => {
 **Helper functions:**
 
 ```typescript
-/** Build prompt for LLM to generate test code from derived spec */
+/** Build prompt for Claude Code to generate test code from derived spec */
 function buildTestCodePrompt(
   spec: DerivedTestSpec,
   flow: DddFlow,
@@ -10668,7 +7066,7 @@ Output JSON array:
 [{ "test_id": "...", "description": "...", "compliant": true/false, "expected": {...}, "actual": {...}, "diff": "..." }]`;
 }
 
-/** Parse LLM compliance response into structured report */
+/** Parse compliance response into structured report */
 function parseComplianceResponse(content: string, flowId: string): SpecComplianceReport {
   const results = JSON.parse(extractJsonBlock(content)) as ComplianceResult[];
   const compliant = results.filter(r => r.compliant).length;
@@ -10979,14 +7377,6 @@ export type AppView = 'launcher' | 'first-run' | 'project';
 
 /** Global settings (stored in ~/.ddd-tool/settings.json) */
 export interface GlobalSettings {
-  llm: {
-    providers: ProviderConfig[];
-  };
-  models: {
-    taskRouting: Record<string, string>;    // task → model ID
-    fallbackChain: string[];                // ordered fallback model IDs
-    costLimit?: { daily: number; monthly: number };
-  };
   claudeCode: {
     enabled: boolean;
     command: string;                        // CLI path
@@ -11009,7 +7399,6 @@ export interface GlobalSettings {
     autoSaveInterval: number;               // seconds, 0 = disabled
     theme: 'light' | 'dark' | 'system';
     fontSize: number;
-    ghostPreviewAnimation: boolean;
   };
   git: {
     autoCommitMessage: string;              // template with {flow_id}, {action}
@@ -11025,16 +7414,6 @@ export interface GlobalSettings {
     includeInPrompt: boolean;
     complianceCheck: boolean;
   };
-}
-
-export interface ProviderConfig {
-  id: string;
-  name: string;
-  type: 'anthropic' | 'openai' | 'ollama' | 'openai_compatible';
-  apiKeyEnvVar?: string;                    // env var name — never store raw key
-  baseUrl?: string;
-  models: string[];
-  enabled: boolean;
 }
 
 /** Undo/redo snapshot for a flow */
@@ -11057,7 +7436,7 @@ export interface UndoState {
 export interface AppError {
   id: string;
   severity: 'info' | 'warning' | 'error' | 'fatal';
-  component: string;                        // which subsystem: 'file', 'git', 'llm', 'pty', 'canvas'
+  component: string;                        // which subsystem: 'file', 'git', 'pty', 'canvas'
   message: string;
   detail?: string;
   recoveryAction?: {
@@ -11310,14 +7689,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
 function getDefaultSettings(): GlobalSettings {
   return {
-    llm: { providers: [] },
-    models: { taskRouting: {}, fallbackChain: [] },
     claudeCode: {
       enabled: false, command: 'claude',
       postImplement: { runTests: true, runLint: false, autoCommit: false, regenerateClaudeMd: true },
     },
     testing: { command: 'pytest', args: ['--tb=short', '-q'], scoped: true, scopePattern: 'tests/**/test_{flow_id}*', autoRun: true },
-    editor: { gridSnap: true, autoSaveInterval: 30, theme: 'system', fontSize: 14, ghostPreviewAnimation: true },
+    editor: { gridSnap: true, autoSaveInterval: 30, theme: 'system', fontSize: 14 },
     git: { autoCommitMessage: 'Update {flow_id}', branchNaming: 'feature/{flow_id}' },
     reconciliation: { autoRun: true, autoAcceptMatching: true, notifyOnDrift: true },
     testGeneration: { autoDerive: true, includeInPrompt: true, complianceCheck: true },
@@ -11683,18 +8060,16 @@ export function NewProjectWizard({ onCancel }: { onCancel: () => void }) {
 ```tsx
 import { useState } from 'react';
 import { useAppStore } from '../../stores/app-store';
-import { LLMSettings } from './LLMSettings';
-import { ModelSettings } from './ModelSettings';
 import { ClaudeCodeSettings } from './ClaudeCodeSettings';
 import { TestingSettings } from './TestingSettings';
 import { EditorSettings } from './EditorSettings';
 import { GitSettings } from './GitSettings';
 
-const TABS = ['LLM', 'Models', 'Claude Code', 'Testing', 'Editor', 'Git'] as const;
+const TABS = ['Editor', 'Claude Code', 'Testing', 'Git'] as const;
 type Tab = typeof TABS[number];
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
-  const [activeTab, setActiveTab] = useState<Tab>('LLM');
+  const [activeTab, setActiveTab] = useState<Tab>('Editor');
   const [scope, setScope] = useState<'global' | 'project'>('global');
   const { globalSettings, saveGlobalSettings } = useAppStore();
 
@@ -11726,8 +8101,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
           </div>
 
-          {activeTab === 'LLM' && <LLMSettings settings={globalSettings} onSave={saveGlobalSettings} />}
-          {activeTab === 'Models' && <ModelSettings settings={globalSettings} onSave={saveGlobalSettings} />}
           {activeTab === 'Claude Code' && <ClaudeCodeSettings settings={globalSettings} onSave={saveGlobalSettings} />}
           {activeTab === 'Testing' && <TestingSettings settings={globalSettings} onSave={saveGlobalSettings} />}
           {activeTab === 'Editor' && <EditorSettings settings={globalSettings} onSave={saveGlobalSettings} />}
@@ -12862,10 +9235,9 @@ interface Props {
   result: ValidationResult;
   title: string;
   onSelectNode?: (nodeId: string) => void;
-  onFixWithAI?: (issues: ValidationIssue[]) => void;
 }
 
-export function ValidationPanel({ result, title, onSelectNode, onFixWithAI }: Props) {
+export function ValidationPanel({ result, title, onSelectNode }: Props) {
   const errors = result.issues.filter(i => i.severity === 'error');
   const warnings = result.issues.filter(i => i.severity === 'warning');
   const infos = result.issues.filter(i => i.severity === 'info');
@@ -12895,12 +9267,6 @@ export function ValidationPanel({ result, title, onSelectNode, onFixWithAI }: Pr
           color="blue" onSelectNode={onSelectNode} />
       )}
 
-      {result.issues.length > 0 && onFixWithAI && (
-        <button onClick={() => onFixWithAI(result.issues)}
-          className="btn btn-sm mt-3">
-          Fix all with AI ✨
-        </button>
-      )}
     </div>
   );
 }
@@ -13166,105 +9532,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Changed files listed
     - [ ] Stage/commit works
 
-15. **LLM Chat Panel**
-    - [ ] Cmd+L / Ctrl+L toggles chat panel open/closed
-    - [ ] Chat panel shows context indicator (project-level / domain / flow)
-    - [ ] Suggestion chips appear in empty chat
-    - [ ] Can send a message and receive LLM response
-    - [ ] Streaming indicator shows while LLM is responding
-    - [ ] Generated YAML in response shows Apply / Edit / Discard buttons
-    - [ ] Apply adds ghost nodes to canvas
-    - [ ] Discard removes ghost preview
-    - [ ] "Edit in chat" closes preview and focuses chat input
-    - [ ] Chat history persists per-flow thread
-    - [ ] Switching flows switches chat thread
-
-16. **Ghost Preview**
-    - [ ] Ghost nodes appear with dashed borders and reduced opacity
-    - [ ] Ghost preview bar appears at bottom of canvas with node count
-    - [ ] Apply converts ghost nodes to real nodes
-    - [ ] Escape discards ghost preview
-    - [ ] Enter (when no input focused) applies ghost preview
-
-17. **Inline Assist**
-    - [ ] Right-click node shows ✨ actions (Suggest spec, Explain, Add error handling, etc.)
-    - [ ] Right-click connection shows ✨ actions (Add node between, Suggest label)
-    - [ ] Right-click empty canvas shows ✨ actions (Generate flow, Review, Suggest wiring)
-    - [ ] Right-click on Level 2 shows ✨ actions (Suggest flows, Suggest events, Generate domain)
-    - [ ] Right-click on Level 1 shows ✨ actions (Suggest domains, Review architecture, Generate from description)
-    - [ ] Inline assist shows loading spinner while LLM processes
-    - [ ] Result appears as popover with suggestion text
-    - [ ] Cmd+. / Ctrl+. triggers inline assist on selected node
-
-18. **LLM Context**
-    - [ ] System context always included in LLM requests
-    - [ ] Domain context included on Level 2 and 3
-    - [ ] Flow context (full YAML) included on Level 3
-    - [ ] Selected node specs included when nodes are selected
-    - [ ] Error codes from project included
-    - [ ] Schemas from project included
-
-19. **Multi-Model Architecture**
-    - [ ] Model registry shows all configured models with availability indicators
-    - [ ] Model picker dropdown in chat header shows all models grouped by provider
-    - [ ] Switching active model applies to subsequent chat messages
-    - [ ] Task routing routes inline assist actions to configured models (fast for suggest, powerful for review)
-    - [ ] Inline assist context menu shows which model will handle each action
-    - [ ] Inline assist model can be overridden via "Use different model…" submenu
-    - [ ] Fallback chain tries next model when primary fails
-    - [ ] OpenAI-compatible endpoint works (custom base_url)
-    - [ ] Ollama works for offline use (no API key required)
-    - [ ] API keys read from environment variables (never stored in config)
-    - [ ] Health check detects which models are reachable (green/red dots)
-
-20. **Cost Tracking**
-    - [ ] Usage bar at bottom of app shows active model + session cost
-    - [ ] Monthly usage tracked per model and per task type
-    - [ ] Budget warning banner appears at configured threshold
-    - [ ] Budget limit blocks requests with option to switch to free model
-    - [ ] Usage data persisted to .ddd/memory/usage.yaml
-    - [ ] Chat messages show which model generated them
-
-20. **Project Memory — Summary (Layer 1)**
-    - [ ] Project summary generated on first load (LLM call)
-    - [ ] Summary regenerates when specs change
-    - [ ] Stale indicator shows when summary is outdated
-    - [ ] Summary included in every LLM request context
-
-21. **Project Memory — Spec Index (Layer 2)**
-    - [ ] Spec index built from all flow YAMLs, domain configs, schemas
-    - [ ] Index includes condensed flow info (trigger, nodes, events, schemas, error codes)
-    - [ ] Index auto-refreshes when spec files change
-
-22. **Project Memory — Decision Log (Layer 3)**
-    - [ ] Can add design decisions via Memory Panel
-    - [ ] Can edit and remove decisions
-    - [ ] Decisions saved to .ddd/memory/decisions.md
-    - [ ] decisions.md is NOT in .gitignore (committed to repo)
-    - [ ] LLM auto-detects rationale in chat and offers to save as decision
-    - [ ] Relevant decisions filtered by current domain/flow in LLM context
-
-23. **Project Memory — Flow Map (Layer 4)**
-    - [ ] Cross-flow dependency graph derived from events, sub-flows, schemas
-    - [ ] Flow dependencies shown in Memory Panel when on Level 3
-    - [ ] Connected flows (upstream/downstream) included in LLM context
-    - [ ] Auto-refreshes when flow specs change
-
-24. **Project Memory — Implementation Status (Layer 5)**
-    - [ ] Status list shows implemented/pending/stale per flow
-    - [ ] Stale flows show count of changes since last code generation
-    - [ ] Status derived from .ddd/mapping.yaml + git diff
-    - [ ] Implementation status of current flow included in LLM context
-
-25. **Memory Panel**
-    - [ ] Cmd+M / Ctrl+M toggles memory panel
-    - [ ] Shows summary card with project overview + flow counts
-    - [ ] Shows implementation status list (sorted: stale first)
-    - [ ] Shows decision list with add/edit/remove
-    - [ ] Shows flow dependencies card when on Level 3
-    - [ ] Refresh button triggers memory rebuild
-
-26. **Implementation Panel**
+15. **Implementation Panel**
     - [ ] Cmd+I / Ctrl+I toggles implementation panel
     - [ ] Panel shows queue in idle state (pending, stale, implemented flows)
     - [ ] Click flow in queue → builds prompt and shows prompt preview
@@ -13278,14 +9546,14 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] "Implement" button on L3 toolbar opens panel with prompt for current flow
     - [ ] Right-click flow block on L2 → "Implement" opens panel for that flow
 
-27. **Prompt Builder**
+16. **Prompt Builder**
     - [ ] Prompt includes architecture.yaml, errors.yaml, referenced schemas, flow spec
     - [ ] Schema resolution: only schemas referenced by $ref or data_store model are included
     - [ ] Agent flows include agent-specific instructions (tools, guardrails, memory)
     - [ ] Update mode: prompt includes list of spec changes and targets existing code
     - [ ] User edits to prompt are preserved until a new prompt is built
 
-28. **Stale Detection**
+17. **Stale Detection**
     - [ ] On project load, all flow hashes compared against mapping.yaml
     - [ ] Stale flows show warning badge on L2 (Domain Map)
     - [ ] Stale flow sheet shows banner with list of changes
@@ -13293,7 +9561,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Spec cached at implementation time in .ddd/cache/specs-at-implementation/
     - [ ] Human-readable diff computed between cached and current spec
 
-29. **Test Runner**
+18. **Test Runner**
     - [ ] Tests auto-run after successful Claude Code completion (if configured)
     - [ ] Test results displayed with pass/fail per test case
     - [ ] "Re-run tests" button re-executes test command
@@ -13301,30 +9569,30 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Test badges shown on L2 flow blocks (green ✓ or red ✗ with counts)
     - [ ] Scoped test execution: only runs tests matching the implemented flow
 
-30. **CLAUDE.md Auto-Generation**
+19. **CLAUDE.md Auto-Generation**
     - [ ] CLAUDE.md generated on first implementation
     - [ ] Regenerated when implementation status changes
     - [ ] Includes project name, spec files, domain table, rules, tech stack, commands
     - [ ] Custom section (below `<!-- CUSTOM -->` marker) preserved on regeneration
     - [ ] Domain table shows implementation status (N implemented, M pending)
 
-31. **Implementation Queue**
+20. **Implementation Queue**
     - [ ] Queue shows all flows grouped by status (pending, stale, implemented)
     - [ ] Can select multiple flows with checkboxes
     - [ ] "Select all pending" selects all pending + stale flows
     - [ ] "Implement selected" processes flows sequentially (prompt → run → test → next)
     - [ ] Implemented flows show test result counts
 
-32. **Reverse Drift Detection — Implementation Report**
+21. **Reverse Drift Detection — Implementation Report**
     - [ ] Prompt includes "Implementation Report" instruction asking Claude Code to list deviations
     - [ ] Terminal output is parsed for `## Implementation Notes` section after Claude Code finishes
     - [ ] "No deviations" is detected and skips reconciliation
     - [ ] Non-empty notes trigger auto-reconciliation (if configured)
 
-33. **Reverse Drift Detection — Reconciliation**
+22. **Reverse Drift Detection — Reconciliation**
     - [ ] After implementation, reconciliation runs automatically (configurable)
     - [ ] Reconciliation reads spec YAML and generated code files
-    - [ ] LLM compares spec vs code and produces structured report
+    - [ ] Hash-based comparison of spec vs code produces structured report
     - [ ] Report shows matching items, code-only items, and spec-only items
     - [ ] Sync score calculated and displayed (100% = perfect match)
     - [ ] "Accept into spec" updates flow YAML to include code addition
@@ -13334,7 +9602,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Matching items collapsed by default (expandable)
     - [ ] Each item shows severity (minor/moderate/significant) and category
 
-34. **Reverse Drift Detection — Sync Score**
+23. **Reverse Drift Detection — Sync Score**
     - [ ] Sync score badge shown on L2 flow blocks alongside test badge
     - [ ] Green (≥95%), yellow (80-94%), amber (50-79%), red (<50%)
     - [ ] Clicking sync badge opens reconciliation report
@@ -13342,58 +9610,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Sync score stored in .ddd/mapping.yaml per flow
     - [ ] Sync score recalculates when items are resolved
 
-35. **OpenAPI Generation**
-    - [ ] "Generate" button produces openapi.yaml from all HTTP flow specs
-    - [ ] Paths derived from trigger method + path
-    - [ ] Request schemas derived from input node fields (type, format, min/max)
-    - [ ] Response schemas derived from terminal node body shapes
-    - [ ] Error responses mapped from error codes used in each flow
-    - [ ] Schema $ref links to specs/schemas definitions
-    - [ ] Non-HTTP flows (event, scheduled) excluded
-    - [ ] Regenerates when flows with HTTP triggers change
-
-36. **CI/CD Pipeline Generation**
-    - [ ] "Generate" button produces .github/workflows/ci.yaml
-    - [ ] Language setup step matches system.yaml tech stack
-    - [ ] Service containers generated for database/cache (postgres, redis)
-    - [ ] Lint, type-check, test commands from architecture.yaml
-    - [ ] Dependency scanning step if security.dependency_scanning.ci_step enabled
-    - [ ] Spec-code sync validation step always included
-    - [ ] Regenerates when tech stack or commands change
-
-37. **Database Migration Tracking**
-    - [ ] Schema hashes tracked in .ddd/mapping.yaml under schemas key
-    - [ ] Schema changes detected on project load and schema save
-    - [ ] Changed schemas show warning in Production tab
-    - [ ] "Generate migration prompt" builds Claude Code prompt with change details
-    - [ ] Migration prompt specifies ORM tool from architecture.yaml
-    - [ ] Schemas cached at migration time in .ddd/cache/schemas-at-migration/
-
-38. **Observability Config**
-    - [ ] Logging config in architecture.yaml generates structured logging setup
-    - [ ] Tracing config generates OpenTelemetry initialization
-    - [ ] Metrics config generates Prometheus endpoint and custom metric definitions
-    - [ ] Health check config generates readiness and liveness endpoints
-    - [ ] Sensitive fields redacted in log output
-    - [ ] Per-flow node logging auto-generated (node.start, node.complete with duration)
-
-39. **Security Layer**
-    - [ ] Rate limiting config generates middleware with per-endpoint overrides
-    - [ ] CORS config generates middleware
-    - [ ] Security headers config generates middleware
-    - [ ] Input sanitization config generates middleware (trim, strip HTML, max length)
-    - [ ] Audit logging config generates audit model and middleware
-    - [ ] Dependency scanning added to CI pipeline when configured
-
-40. **Deployment Generation**
-    - [ ] "Generate" button produces Dockerfile from deployment config
-    - [ ] Multi-stage build when configured
-    - [ ] Health check from observability config
-    - [ ] docker-compose.yaml generated with all services (app, database, cache)
-    - [ ] Kubernetes manifests generated when k8s enabled (deployment, service, ingress, hpa)
-    - [ ] Regenerates when deployment or tech stack config changes
-
-41. **Test Case Derivation**
+24. **Test Case Derivation**
     - [ ] "Derive tests" button walks flow graph and enumerates all paths (trigger → terminal)
     - [ ] Happy path, error path, and edge case paths correctly identified
     - [ ] Boundary tests derived from input node validation rules (min/max/missing/format)
@@ -13401,14 +9618,14 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Orchestration test cases derived: routing per rule, fallback, circuit breaker, handoff, supervisor override
     - [ ] Derived test spec shows path count, boundary count, and total test case count
 
-42. **Test Code Generation**
-    - [ ] "Generate test code" calls Design Assistant LLM with derived spec + flow YAML
+25. **Test Code Generation**
+    - [ ] "Generate test code" uses Claude Code with derived spec + flow YAML
     - [ ] Generated code uses project's test framework (from architecture.yaml)
     - [ ] Generated tests use exact error messages and status codes from spec
     - [ ] "Include in prompt" appends generated tests to the Claude Code prompt
     - [ ] Coverage badge appears on Level 2 flow blocks after generation
 
-43. **Spec Compliance Validation**
+26. **Spec Compliance Validation**
     - [ ] "Check compliance" compares test results against derived spec expectations
     - [ ] Compliance report shows compliant/non-compliant items with score percentage
     - [ ] Non-compliant items show expected vs actual diff
@@ -13416,7 +9633,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] "Fix all non-compliant" batches all issues into one prompt
     - [ ] Compliance data persisted in mapping.yaml (score, issues, timestamps)
 
-44. **Project Launcher**
+27. **Project Launcher**
     - [ ] App launches to Project Launcher (not directly into canvas)
     - [ ] Recent projects listed with name, path, last opened timestamp
     - [ ] Click recent project → loads project and navigates to System Map
@@ -13428,50 +9645,44 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Non-DDD folder shows error with "Initialize as DDD project?" recovery action
     - [ ] Recent projects pruned on load (remove entries where folder no longer exists)
 
-45. **Settings Screen**
+28. **Settings Screen**
     - [ ] Accessible via menu bar → Settings or Cmd+, shortcut
-    - [ ] Tab navigation: LLM, Models, Claude Code, Testing, Editor, Git
+    - [ ] Tab navigation: Editor, Claude Code, Testing, Git
     - [ ] Global vs Project scope toggle
-    - [ ] LLM tab: add/remove providers, env var names for API keys, "Test connection" button
-    - [ ] Models tab: task-to-model routing, fallback chain ordering
     - [ ] Editor tab: grid snap, auto-save interval, theme (light/dark/system), font size
     - [ ] Settings persist to ~/.ddd-tool/settings.json (global) and .ddd/config.yaml (project)
-    - [ ] API keys stored as env var names, never raw values
 
-46. **First-Run Experience**
+29. **First-Run Experience**
     - [ ] First-run detected when ~/.ddd-tool/ directory doesn't exist
-    - [ ] 3-step wizard: Connect LLM → Claude Code detection → First project
-    - [ ] "Skip for now" option on LLM step
+    - [ ] 2-step wizard: Claude Code detection → Get Started
     - [ ] Claude Code auto-detection: checks if `claude` is in PATH
     - [ ] "Explore with sample project" option opens bundled read-only example
     - [ ] Creates ~/.ddd-tool/ with settings.json and recent-projects.json
     - [ ] Subsequent launches go straight to Project Launcher
 
-47. **Error Handling**
+30. **Error Handling**
     - [ ] Error toasts appear in bottom-right corner
     - [ ] Info severity auto-dismisses after 5 seconds
     - [ ] Warning/error severity requires manual dismiss
     - [ ] Fatal severity shows modal blocking all actions
     - [ ] YAML parse errors show line number and revert to last valid state
-    - [ ] LLM errors auto-retry with exponential backoff (3 attempts)
-    - [ ] LLM provider down → auto-fallback to next model in chain
     - [ ] PTY crash → "Reconnect" / "New session" buttons
     - [ ] Auto-save writes to .ddd/autosave/ (not real spec files)
     - [ ] Crash recovery dialog on next launch if autosave data exists
     - [ ] All errors logged to ~/.ddd-tool/logs/ddd-tool.log
 
-48. **Undo/Redo**
+31. **Undo/Redo**
     - [ ] Cmd+Z undoes last canvas action, Cmd+Shift+Z redoes
     - [ ] Undo/redo is per-flow (each flow has its own history stack)
-    - [ ] Undoable: add/delete/move node, connect/disconnect, edit spec field, apply ghost preview
-    - [ ] NOT undoable: git commit, claude code implementation, file save, chat messages
+    - [ ] Undoable: add/delete/move node, connect/disconnect, edit spec field
+    - [ ] NOT undoable: git commit, claude code implementation, file save
     - [ ] History coalesces rapid changes (typing in same field < 500ms apart)
     - [ ] Max 100 snapshots per flow (oldest dropped when exceeded)
     - [ ] Undo/redo buttons in toolbar with tooltip showing what will be undone/redone
     - [ ] Buttons grayed out when stack is empty
     - [ ] Stack cleared when flow is closed
 
-49. **Flow-Level Validation**
+32. **Flow-Level Validation**
     - [ ] Graph completeness: trigger exists, all paths reach terminal, no orphaned nodes
     - [ ] Dead-end detection: non-terminal nodes with no outgoing connections flagged as error
     - [ ] Decision branches: both true and false must be connected
@@ -13482,12 +9693,12 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Agent validation: agent_loop exists, tools connected, terminal tool exists, max_iterations
     - [ ] Orchestration validation: agents assigned, strategy defined, rules defined, targets exist
 
-50. **Domain-Level Validation**
+33. **Domain-Level Validation**
     - [ ] Duplicate flow IDs detected within a domain
     - [ ] Duplicate HTTP endpoints detected within a domain
     - [ ] Domain.yaml flow list matches actual flow files on disk
 
-51. **System-Level Validation (Cross-Domain Wiring)**
+34. **System-Level Validation (Cross-Domain Wiring)**
     - [ ] Consumed events have at least one publisher (error if missing)
     - [ ] Published events have at least one consumer (warning if unused)
     - [ ] Event payload shapes match between publisher and consumer
@@ -13496,11 +9707,11 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Circular orchestration dependencies detected (A→B→A)
     - [ ] Cross-domain API dependencies verified (service_call targets exist)
 
-52. **Validation UI and Gate**
+35. **Validation UI and Gate**
     - [ ] Real-time canvas indicators: green/amber/red borders on nodes, red dot for errors
     - [ ] Validation panel accessible from toolbar (Level 1/2/3)
     - [ ] Issues show message, suggestion, and "Select node" link
-    - [ ] "Fix all with AI" sends issues to Design Assistant for ghost-preview fixes
+    - [ ] Issues show actionable suggestions for manual fixing
     - [ ] Implementation gate: 3-step (validate → prompt → run)
     - [ ] Errors block implementation — button disabled
     - [ ] Warnings allow "Implement anyway" with warning count
@@ -13515,12 +9726,11 @@ import { ImplementGate } from '../Validation/ImplementGate';
 
 1. **State Management**
    - Use Zustand for all state
-   - Keep stores focused (sheet, flow, project, ui, git, llm, implementation, app, undo, validation, generator)
+   - Keep stores focused (sheet, flow, project, ui, git, implementation, app, undo, validation)
+   - No LLM or memory stores — AI assistance is provided via Claude Code CLI
    - `sheet-store` owns navigation state (current level, breadcrumbs, history)
    - `project-store` owns domain configs parsed from domain.yaml files
    - `flow-store` owns current flow being edited (Level 3 only)
-   - `llm-store` owns chat state, ghost previews, LLM config
-   - `memory-store` owns project memory layers, refresh triggers, decisions
    - `implementation-store` owns panel state, PTY session, queue, test results, mappings
    - `app-store` owns app-level view state, recent projects, global settings, errors, auto-save
    - `undo-store` owns per-flow undo/redo stacks with immutable snapshots
@@ -13528,7 +9738,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
    - Never mutate state directly
 
 2. **Tauri Commands**
-   - All file/git/LLM/memory/PTY/test operations go through Tauri
+   - All file/git/PTY/test operations go through Tauri
    - Use async/await pattern
    - Handle errors gracefully
    - PTY commands manage Claude Code terminal sessions (spawn, read, write, wait, kill)
@@ -13575,63 +9785,43 @@ import { ImplementGate } from '../Validation/ImplementGate';
 11. **Do** derive Level 2 orchestration visuals from flow YAML automatically
 12. **Do** make sure Git integration works
 13. **Do** validate YAML output format (traditional, agent, and orchestration)
-14. **Don't** store API keys in `.ddd/config.yaml` — only store the env var name
-15. **Don't** auto-apply LLM suggestions — always show ghost preview first
-16. **Do** scope chat threads per flow — switching flows should switch threads
-17. **Do** include full project context in every LLM request (system, domain, flow, schemas, error codes)
-18. **Do** support fallback chain across models (e.g., Sonnet → GPT-4o → Llama local)
-19. **Do** route fast tasks (suggest_spec, explain) to cheap/fast models and complex tasks (review, generate) to powerful models
-20. **Don't** hard-code any provider — use the unified `call_model` dispatcher that routes by provider type
-21. **Do** return token counts from every LLM call for accurate cost tracking
-22. **Do** refresh memory layers when specs change (project load + save)
-23. **Do** keep context budget under ~5,500 tokens — summarize, don't dump raw YAML
-24. **Don't** gitignore `decisions.md` — design decisions are team knowledge
-25. **Do** include connected flows from Flow Map in LLM context so it knows about upstream/downstream impact
-26. **Don't** auto-commit after Claude Code finishes — always let the user review generated code first
-27. **Don't** run Claude Code in headless/non-interactive mode — the user must be able to approve file operations
-28. **Do** cache spec files at implementation time in `.ddd/cache/` for accurate stale diffs later
-29. **Do** include only referenced schemas in prompts (resolve from `$ref` and `data_store` model), not all schemas
-30. **Do** preserve the `<!-- CUSTOM -->` section when regenerating CLAUDE.md — users add project-specific instructions there
-31. **Don't** parse test output from raw text in production — use JSON reporters (`--json-report` for pytest, `--json` for jest) for accurate test results
-32. **Do** always include the Implementation Report instruction in prompts — without it, reverse drift detection has no structured data to parse
-33. **Don't** auto-accept reconciliation items without user review — always show the report and let the user decide accept/remove/ignore
-34. **Do** store accepted deviations in mapping.yaml so they don't re-trigger drift warnings on every reconciliation
-35. **Don't** run reconciliation with the full codebase — only send the files listed in the flow's mapping, not the entire project
-36. **Do** regenerate OpenAPI when any HTTP flow trigger changes — stale API docs are worse than no docs
-37. **Don't** include non-HTTP flows (event, scheduled) in OpenAPI — they don't have REST endpoints
-38. **Do** always include the spec-code sync check step in CI — it catches drift before deployment
-39. **Do** cache schemas at migration time (like flow specs) so future diffs are accurate
-40. **Don't** generate destructive migrations (DROP COLUMN) without user confirmation — add nullable columns, copy data, then drop
-41. **Do** include sensitive_fields in logging config — accidentally logging passwords or tokens is a security incident
-42. **Do** generate observability infrastructure before business logic — logging and health checks should exist from the first flow implementation
-43. **Do** derive tests deterministically from the graph (DFS path enumeration) — don't use the LLM for path analysis, only for test code generation
-44. **Don't** modify derived test assertions when including in Claude Code prompt — they are the executable spec, changing them defeats the purpose
-45. **Do** generate boundary tests for every validation field, not just required fields — min/max boundaries catch off-by-one errors that manual testing misses
-46. **Don't** run spec compliance check before tests pass — compliance compares expected vs actual, which is meaningless if tests are failing for other reasons
-47. **Do** persist derived test counts in mapping.yaml — the coverage badge needs this data without re-deriving on every load
-48. **Do** launch to Project Launcher, not directly into canvas — users need to choose/create a project first
-49. **Don't** store raw API keys anywhere on disk — store only env var names in config, read from `process.env` at runtime, or use OS keychain
-50. **Do** validate DDD project folders on open — check for `specs/system.yaml` or `.ddd/config.yaml` before attempting to load
-51. **Don't** auto-save directly to spec files — auto-save writes to `.ddd/autosave/` to prevent corrupting specs on crash
-52. **Do** use `structuredClone` for undo snapshots — shallow copies will share references and corrupt history
-53. **Do** coalesce undo snapshots for rapid keystrokes (< 500ms same field) — otherwise typing a word creates 5 undo entries
-54. **Don't** include undo/redo for side-effects (git, file writes, LLM calls) — only canvas and spec mutations are undoable
-55. **Do** prune recent projects on load — removing entries where the folder no longer exists prevents confusing dead links
-56. **Do** show the first-run wizard only once — set a flag in `~/.ddd-tool/settings.json` after completion
-57. **Do** debounce flow validation (500ms) — validating on every keystroke will lag the canvas
-58. **Don't** block the canvas while validation runs — validate async and update indicators when done
-59. **Do** validate before implementation, not just during editing — the gate is the last line of defense
-60. **Don't** allow "Fix all with AI" to auto-apply fixes — always show as ghost preview for user review
-61. **Do** validate cross-domain event payloads structurally (field names + types), not just by event name — two domains consuming the same event name but expecting different shapes is a common bug
-62. **Do** re-run system validation after git pull — specs may have changed on disk
-63. **Don't** validate deleted/orphaned spec files — only validate flows that exist in the current project index
-64. **Do** update system.yaml atomically with domain directory operations — a domain directory without a system.yaml entry (or vice versa) is a corrupt state
-65. **Don't** allow renaming a domain/flow to an existing name — check for duplicates before invoking the Tauri command
-66. **Do** update all cross-domain references when renaming a domain — event wiring, portal targets, orchestration agent refs, and mapping.yaml entries all contain domain names
-67. **Don't** silently delete domains with flows — always show a confirmation dialog with flow count before deleting
-68. **Do** reload the full project after any entity CRUD operation — partial state updates are error-prone; a full reload from disk is safer and simpler
-69. **Don't** allow moving a flow to its current domain — filter out the source domain from the "Move to..." submenu
-70. **Do** warn users when changing flow type will lose type-specific data (agent_loop, orchestrator sections) — show a confirmation before destructive type conversion
+14. **Don't** auto-commit after Claude Code finishes — always let the user review generated code first
+15. **Don't** run Claude Code in headless/non-interactive mode — the user must be able to approve file operations
+16. **Do** cache spec files at implementation time in `.ddd/cache/` for accurate stale diffs later
+17. **Do** include only referenced schemas in prompts (resolve from `$ref` and `data_store` model), not all schemas
+18. **Do** preserve the `<!-- CUSTOM -->` section when regenerating CLAUDE.md — users add project-specific instructions there
+19. **Don't** parse test output from raw text in production — use JSON reporters (`--json-report` for pytest, `--json` for jest) for accurate test results
+20. **Do** always include the Implementation Report instruction in prompts — without it, reverse drift detection has no structured data to parse
+21. **Don't** auto-accept reconciliation items without user review — always show the report and let the user decide accept/remove/ignore
+22. **Do** store accepted deviations in mapping.yaml so they don't re-trigger drift warnings on every reconciliation
+23. **Don't** run reconciliation with the full codebase — only send the files listed in the flow's mapping, not the entire project
+24. **Do** derive tests deterministically from the graph (DFS path enumeration) — don't use Claude Code for path analysis, only for test code generation
+25. **Don't** modify derived test assertions when including in Claude Code prompt — they are the executable spec, changing them defeats the purpose
+26. **Do** generate boundary tests for every validation field, not just required fields — min/max boundaries catch off-by-one errors that manual testing misses
+27. **Don't** run spec compliance check before tests pass — compliance compares expected vs actual, which is meaningless if tests are failing for other reasons
+28. **Do** persist derived test counts in mapping.yaml — the coverage badge needs this data without re-deriving on every load
+29. **Do** launch to Project Launcher, not directly into canvas — users need to choose/create a project first
+30. **Don't** store raw API keys anywhere on disk — store only env var names in config, read from `process.env` at runtime, or use OS keychain
+31. **Do** validate DDD project folders on open — check for `specs/system.yaml` or `.ddd/config.yaml` before attempting to load
+32. **Don't** auto-save directly to spec files — auto-save writes to `.ddd/autosave/` to prevent corrupting specs on crash
+33. **Do** use `structuredClone` for undo snapshots — shallow copies will share references and corrupt history
+34. **Do** coalesce undo snapshots for rapid keystrokes (< 500ms same field) — otherwise typing a word creates 5 undo entries
+35. **Don't** include undo/redo for side-effects (git, file writes) — only canvas and spec mutations are undoable
+36. **Do** prune recent projects on load — removing entries where the folder no longer exists prevents confusing dead links
+37. **Do** show the first-run wizard only once — set a flag in `~/.ddd-tool/settings.json` after completion
+38. **Do** debounce flow validation (500ms) — validating on every keystroke will lag the canvas
+39. **Don't** block the canvas while validation runs — validate async and update indicators when done
+40. **Do** validate before implementation, not just during editing — the gate is the last line of defense
+41. **Do** validate cross-domain event payloads structurally (field names + types), not just by event name — two domains consuming the same event name but expecting different shapes is a common bug
+42. **Do** re-run system validation after git pull — specs may have changed on disk
+43. **Don't** validate deleted/orphaned spec files — only validate flows that exist in the current project index
+44. **Do** update system.yaml atomically with domain directory operations — a domain directory without a system.yaml entry (or vice versa) is a corrupt state
+45. **Don't** allow renaming a domain/flow to an existing name — check for duplicates before invoking the Tauri command
+46. **Do** update all cross-domain references when renaming a domain — event wiring, portal targets, orchestration agent refs, and mapping.yaml entries all contain domain names
+47. **Don't** silently delete domains with flows — always show a confirmation dialog with flow count before deleting
+48. **Do** reload the full project after any entity CRUD operation — partial state updates are error-prone; a full reload from disk is safer and simpler
+49. **Don't** allow moving a flow to its current domain — filter out the source domain from the "Move to..." submenu
+50. **Do** warn users when changing flow type will lose type-specific data (agent_loop, orchestrator sections) — show a confirmation before destructive type conversion
 
 ### Null-Safety Conventions
 
@@ -13658,7 +9848,6 @@ npx tailwindcss init -p
 # In src-tauri/Cargo.toml, add:
 # [dependencies]
 # git2 = "0.18"
-# reqwest = { version = "0.12", features = ["json"] }
 # serde_json = "1.0"
 # portable-pty = "0.8"
 # sha2 = "0.10"
@@ -13735,39 +9924,6 @@ npm run tauri dev
 - [ ] YAML format matches specification
 - [ ] Domain configs (domain.yaml) are parsed to populate L1/L2
 
-### LLM Design Assistant
-- [ ] Chat Panel opens/closes with Cmd+L and shows conversation
-- [ ] Chat sends messages to configured LLM provider and displays responses
-- [ ] LLM context includes system, domain, flow, and selected nodes automatically
-- [ ] Generated YAML appears as ghost nodes on canvas with Apply/Discard
-- [ ] Ghost nodes visually distinct (dashed borders, reduced opacity)
-- [ ] Apply converts ghost nodes to real nodes in flow store
-- [ ] Inline assist context menu appears on right-click with level-appropriate actions
-- [ ] Node-level: Suggest spec, Complete spec, Explain, Add error handling, Generate tests
-- [ ] Canvas-level: Generate flow, Review flow, Suggest wiring, Import from description
-- [ ] Domain-level (L2): Suggest flows, Suggest events, Generate domain
-- [ ] System-level (L1): Suggest domains, Review architecture, Generate from description
-- [ ] Model registry supports Anthropic, OpenAI, Ollama, and any OpenAI-compatible endpoint
-- [ ] Task-to-model routing sends fast tasks to cheap models and complex tasks to powerful models
-- [ ] Model picker in chat header switches active model instantly
-- [ ] Fallback chain tries next model when primary fails
-- [ ] Cost tracking shows per-session and per-period usage with budget warnings
-- [ ] Usage bar visible at bottom of app with active model indicator
-- [ ] Chat threads scoped per flow, switchable
-- [ ] API key read from env var, never stored in config files
-
-### Project Memory
-- [ ] 5 memory layers stored in .ddd/memory/ (summary.md, spec-index.yaml, decisions.md, flow-map.yaml, status.yaml)
-- [ ] Auto-generated layers (1, 2, 4, 5) rebuild when specs change
-- [ ] Decision log (Layer 3) is user-editable and version-controlled
-- [ ] Project Summary always included in LLM context (~1,500 tokens)
-- [ ] Connected flows from Flow Map included in LLM context on Level 3
-- [ ] Relevant decisions filtered and included in LLM context
-- [ ] Implementation status of current flow included in LLM context
-- [ ] Memory Panel toggles with Cmd+M and shows all layers
-- [ ] LLM auto-detects design rationale in chat and offers to save as decision
-- [ ] Context budget stays within ~4,000-5,500 tokens total
-
 ### Claude Code Integration
 - [ ] Implementation Panel opens/closes with Cmd+I and shows current state (idle/prompt/running/done/failed)
 - [ ] Prompt Builder auto-generates prompt from flow spec with correct file references
@@ -13794,10 +9950,10 @@ npm run tauri dev
 - [ ] Prompt includes Implementation Report instruction requesting structured deviation notes
 - [ ] Terminal output parsed for `## Implementation Notes` section
 - [ ] Auto-reconciliation triggers after implementation (configurable via reconciliation.auto_run)
-- [ ] Reconciliation sends spec + code to Design Assistant LLM for structured comparison
+- [ ] Reconciliation compares spec vs code using hash-based structural analysis
 - [ ] Reconciliation report shows matching, code-only, and spec-only items
 - [ ] Sync score (0-100%) calculated from matching vs total items
-- [ ] "Accept into spec" uses LLM to generate updated spec YAML including the addition
+- [ ] "Accept into spec" builds a Claude Code prompt to update the spec YAML
 - [ ] "Remove from code" builds targeted Claude Code prompt to remove the item
 - [ ] "Ignore" stores accepted deviation in mapping.yaml (won't warn again)
 - [ ] Sync score badge displayed on L2 flow blocks (green/yellow/amber/red)
@@ -13806,33 +9962,13 @@ npm run tauri dev
 - [ ] Accepted deviations tracked and excluded from future reconciliation warnings
 - [ ] Reconciliation available manually via "Reconcile" button in Implementation Panel
 
-### Production Infrastructure
-- [ ] OpenAPI generator produces valid OpenAPI 3.0 YAML from HTTP flow specs
-- [ ] OpenAPI includes all paths, request/response schemas, error responses
-- [ ] CI/CD generator produces GitHub Actions workflow with correct language setup and services
-- [ ] CI pipeline includes spec-code sync validation step
-- [ ] CI pipeline includes dependency scanning when security config enables it
-- [ ] Schema migration tracker detects schema hash changes
-- [ ] Schema migration prompt includes change details and ORM-specific instructions
-- [ ] Schemas cached at migration time for future diffing
-- [ ] Observability section in architecture.yaml generates logging/tracing/metrics/health infrastructure
-- [ ] Logging includes sensitive field redaction
-- [ ] Per-flow node logging added automatically (node.start, node.complete)
-- [ ] Security section in architecture.yaml generates rate limiting, CORS, headers, sanitization, audit middleware
-- [ ] Audit logging tracks configured events with actor, resource, and changes
-- [ ] Dockerfile generated with multi-stage build and health check
-- [ ] docker-compose generated with all service dependencies
-- [ ] Kubernetes manifests generated when enabled (deployment, service, ingress, HPA)
-- [ ] Production tab in Sidebar shows all generated artifacts with Generate buttons
-- [ ] Schema changes notification shown in Production tab
-
 ### Diagram-Derived Test Generation
 - [ ] "Derive tests" walks flow graph and enumerates all paths from trigger to terminal
 - [ ] Path types correctly classified (happy_path, error_path, edge_case)
 - [ ] Boundary tests derived from every input node field with validation rules
 - [ ] Agent tests derived (tool success/failure, guardrail, max iterations, human gate)
 - [ ] Orchestration tests derived (routing rules, fallback, circuit breaker, handoff)
-- [ ] Test code generation calls Design Assistant LLM with derived spec + flow YAML
+- [ ] Test code generation uses Claude Code with derived spec + flow YAML
 - [ ] Generated test code uses project's test framework from architecture.yaml
 - [ ] Generated tests reference exact error messages and status codes from spec
 - [ ] "Include in prompt" appends tests to Claude Code prompt with instructions
@@ -13847,13 +9983,11 @@ npm run tauri dev
 - [ ] Recent projects load from ~/.ddd-tool/recent-projects.json with pruning
 - [ ] New Project wizard creates specs/, system.yaml, architecture.yaml, domain.yaml, .ddd/, Git init
 - [ ] Open Existing validates folder is a DDD project (checks specs/system.yaml or .ddd/config.yaml)
-- [ ] Settings dialog opens via Cmd+, with tab navigation (LLM, Models, Claude Code, Testing, Editor, Git)
+- [ ] Settings dialog opens via Cmd+, with tab navigation (Editor, Claude Code, Testing, Git)
 - [ ] Global vs project scope toggle in settings
-- [ ] API keys stored as env var names (never raw), "Test connection" verifies
-- [ ] First-run wizard detects missing ~/.ddd-tool/ and guides through LLM + Claude Code + project setup
+- [ ] First-run wizard detects missing ~/.ddd-tool/ and guides through Claude Code + Get Started
 - [ ] Sample project available as read-only exploration (bundled in app)
 - [ ] Error toasts with severity-based auto-dismiss (info=5s, warning/error=manual, fatal=modal)
-- [ ] LLM errors auto-retry with exponential backoff, auto-fallback to next provider
 - [ ] Auto-save to .ddd/autosave/ every 30s (configurable), crash recovery dialog on relaunch
 - [ ] Undo/redo per-flow with Cmd+Z / Cmd+Shift+Z, max 100 snapshots, coalescing rapid changes
 - [ ] Undo/redo toolbar buttons with tooltips, grayed when empty
@@ -13867,7 +10001,7 @@ npm run tauri dev
 - [ ] System-level: consumed events have publishers, payload shapes match, naming consistency
 - [ ] System-level: portal targets exist, no circular orchestration, cross-domain API targets verified
 - [ ] Canvas real-time indicators: node borders (green/amber/red), error dots, hover tooltips
-- [ ] Validation panel per scope (flow/domain/system) with grouped issues + "Select node" + "Fix with AI"
+- [ ] Validation panel per scope (flow/domain/system) with grouped issues + "Select node"
 - [ ] Implementation gate blocks on errors, warns on warnings, green on clean
 - [ ] Batch implementation pre-validates all selected flows
 - [ ] Validation badges on Level 1 domain blocks and Level 2 flow blocks
@@ -13891,59 +10025,6 @@ npm run tauri dev
 
 ---
 
-## Session 15: Production Generators
-
-Session 15 adds production infrastructure generators that output deployment artifacts from specs.
-
-### Generator Infrastructure
-
-**Types:** `src/types/generator.ts`
-
-```typescript
-export interface GeneratorInput {
-  projectName: string;
-  domains: Array<{
-    id: string;
-    name: string;
-    flows: Array<{
-      flowId: string;
-      flowName: string;
-      triggerEvent: string;
-      inputs: Array<{ name: string; type: string; required?: boolean }>;
-      processes: Array<{ action?: string; service?: string }>;
-      terminals: Array<{ outcome?: string }>;
-    }>;
-  }>;
-  schemas: Record<string, unknown>;
-  architecture: Record<string, unknown>;
-  system: Record<string, unknown>;
-}
-
-export interface GeneratedFile {
-  relativePath: string;
-  content: string;
-  language: string;
-}
-
-export type GeneratorFunction = (input: GeneratorInput) => GeneratedFile[];
-```
-
-**Store:** `src/stores/generator-store.ts` — manages panel open/close, selected generator, generated files, save-to-disk, and API docs parsing.
-
-**Generators** in `src/utils/generators/`:
-
-| Generator | File | Output |
-|-----------|------|--------|
-| OpenAPI | `openapi.ts` | `openapi.yaml` — OpenAPI 3.0 spec from HTTP flow triggers, schemas, errors |
-| Dockerfile | `dockerfile.ts` | `Dockerfile` + `docker-compose.yaml` from system.yaml + architecture.yaml deployment config |
-| Kubernetes | `kubernetes.ts` | `k8s/deployment.yaml`, `k8s/service.yaml`, `k8s/ingress.yaml`, `k8s/hpa.yaml` |
-| CI/CD | `cicd.ts` | `.github/workflows/ci.yaml` — GitHub Actions pipeline from architecture.yaml |
-| Mermaid | `mermaid.ts` | `generated/mermaid/{domain}/{flow}.md` — flowchart diagrams with embedded Mermaid code blocks |
-
-**Generator Panel UI:** `src/components/GeneratorPanel/` — dropdown selector, preview pane with syntax highlighting, "Save to disk" button, keyboard shortcut `Cmd+G`.
-
----
-
 ## Session 16: First-Run, Settings, Polish
 
 Session 16 adds first-run experience, settings persistence, undo/redo, auto-save, and crash recovery.
@@ -13951,27 +10032,25 @@ Session 16 adds first-run experience, settings persistence, undo/redo, auto-save
 ### Key Components
 
 **First-Run Wizard:** `src/components/FirstRun/FirstRunWizard.tsx`
-- 3-step setup: Connect LLM provider → Detect Claude Code CLI → Create/open/sample project
+- 2-step setup: Detect Claude Code CLI → Get Started
 - Detected when `~/.ddd-tool/` directory doesn't exist
 - "Skip for now" and "Explore with sample project" options
 
 **Settings Dialog:** `src/components/Settings/SettingsDialog.tsx`
-- Tab navigation: LLM, Models, Claude Code, Testing, Editor, Git
+- Tab navigation: Editor, Claude Code, Testing, Git
 - Global scope (`~/.ddd-tool/settings.json`) vs project scope (`.ddd/config.yaml`)
-- API keys stored as env var names, never raw values
-- `ModelSettings.tsx` — task-to-model routing, fallback chain ordering
 - `GitSettings.tsx` — commit message templates, branch naming conventions
 
 **Undo/Redo Store:** `src/stores/undo-store.ts`
 - Per-flow undo/redo stacks with immutable snapshots
 - `Cmd+Z` / `Cmd+Shift+Z` keyboard shortcuts
 - Max 100 snapshots per flow, coalescing rapid changes (<500ms apart)
-- Undoable: add/delete/move node, connect/disconnect, edit spec, apply ghost preview
-- NOT undoable: git commit, implementation, file save, chat messages
+- Undoable: add/delete/move node, connect/disconnect, edit spec
+- NOT undoable: git commit, implementation, file save
 
 **Auto-Save:** Writes to `.ddd/autosave/` every 30s (configurable). Crash recovery dialog on relaunch detects autosave data and offers restore.
 
-**Error Handling:** Error toasts with severity-based auto-dismiss (info=5s, warning/error=manual, fatal=modal). LLM errors auto-retry with exponential backoff. Auto-fallback to next provider in chain.
+**Error Handling:** Error toasts with severity-based auto-dismiss (info=5s, warning/error=manual, fatal=modal).
 
 ---
 
@@ -14110,7 +10189,7 @@ const KNOWN_KEYS: Record<string, Set<string>> = {
 | Feature | Description |
 |---------|-------------|
 | **Validation presets** | Reusable input validation patterns (email, phone, password, URL, UUID) — dropdown in InputNode spec panel |
-| **Mermaid generator** | Generate Mermaid flowchart diagrams from flow specs — available in Generator Panel alongside other generators. Output: `generated/mermaid/{domain}/{flow}.md` with embedded Mermaid code blocks. Implementation: `src/utils/generators/mermaid.ts` |
+| **Mermaid generator** | Generate Mermaid flowchart diagrams from flow specs. Output: `generated/mermaid/{domain}/{flow}.md` with embedded Mermaid code blocks. Implementation: `src/utils/generators/mermaid.ts` |
 | **Minimap toggle** | React Flow minimap on the flow canvas (L3) — toggle with `Cmd+Shift+M`. State managed by `src/stores/ui-store.ts` (Zustand store with `showMinimap` boolean and `toggleMinimap` action) |
 
 ### Flow Templates
@@ -14145,43 +10224,6 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
 
 Each template's `create()` function returns a complete `FlowDocument` with trigger, nodes, connections (including proper `sourceHandle` values), and spec defaults — using `nanoid(8)` for node IDs.
 
-### Generator Store
-
-**File:** `src/stores/generator-store.ts`
-
-Zustand store managing the Generator Panel state:
-
-```typescript
-interface GeneratorStore {
-  // State
-  panelOpen: boolean;
-  selectedGenerator: string | null;
-  generatedFiles: GeneratedFile[];
-  isSaving: boolean;
-  apiDocsOpen: boolean;
-  parsedApiDocs: ParsedApiDocs | null;
-
-  // Actions
-  togglePanel: () => void;
-  selectGenerator: (id: string) => void;
-  generate: (input: GeneratorInput) => void;
-  saveToFile: (file: GeneratedFile) => Promise<void>;
-  parseApiDocs: (content: string) => void;
-}
-```
-
-**Generator types** (`src/types/generator.ts`):
-- `GeneratorInput` — domains, flows, schemas, architecture config
-- `GeneratedFile` — relativePath, content, language
-- `GeneratorFunction` — `(input: GeneratorInput) => GeneratedFile[]`
-
-**Available generators** in `src/utils/generators/`:
-- `openapi.ts` — OpenAPI 3.0 spec from HTTP flow triggers
-- `dockerfile.ts` — Dockerfile + docker-compose from deployment config
-- `kubernetes.ts` — K8s manifests from architecture config
-- `cicd.ts` — GitHub Actions workflow from architecture config
-- `mermaid.ts` — Mermaid flowchart diagrams from flow specs
-
 ### UI Store
 
 **File:** `src/stores/ui-store.ts`
@@ -14196,12 +10238,15 @@ interface UiStore {
 ```
 
 Toggled with `Cmd+Shift+M` keyboard shortcut.
+
+### Future Ideas
+
+| Feature | Description |
+|---------|-------------|
 | **Expert agents** | Pre-built agent archetypes (researcher, coder, reviewer) as templates |
 | **Templates/library** | Reusable flow templates (auth, CRUD, webhook, scheduled job) — "Import template" in Add Flow dialog |
-| **Live agent testing** | Run an agent flow from within DDD Tool with mock inputs, see tool calls and LLM responses in real-time |
 | **Router node** | Multi-output classification visual for agent routing (extends SmartRouter with visual branching) |
 | **Memory node** | Vector store / conversation config visual for agent memory management |
-| **Orchestration observability** | Dashboard showing which agent handled what, latency per step, error rates |
 | **Circuit breaker indicators** | Visual status on routing arrows (closed/open/half-open) |
 
 ### Session 17 Success Criteria

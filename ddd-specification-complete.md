@@ -3094,7 +3094,7 @@ The validator checks:
 | **Rename flow** | Click flow name in toolbar → inline edit → updates flow.id and filename |
 | **Change trigger type** | Click trigger node → spec panel → change type (http/event/scheduled/manual) |
 | **Delete all nodes** | Right-click canvas → "Clear canvas" → confirmation → removes all nodes except trigger |
-| **Import from template** | Right-click canvas → "Import template" → select a template flow → merges nodes into current canvas as ghost preview |
+| **Import from template** | Right-click canvas → "Import template" → select a template flow → merges nodes into current canvas |
 
 ### Flow Templates
 
@@ -3142,9 +3142,6 @@ All read-only output areas across the tool include a **Copy** button for one-cli
 | **FailedView** (Implementation) | Failed implementation error output |
 | **PromptPreview** (Implementation) | Generated implementation prompt text |
 | **TestResults** (Implementation) | Individual test error messages |
-| **ChatMessage** (LLM Assistant) | YAML code suggestions in assistant messages |
-| **ExecutionTimeline** (Agent Testing) | Step input/output JSON |
-| **GeneratorPreview** (Generators) | Generated code (OpenAPI, Dockerfile, etc.) |
 
 **Behavior:**
 - Small "Copy" label with copy icon, positioned in the header or top-right corner of each output area
@@ -3159,1036 +3156,14 @@ All read-only output areas across the tool include a **Copy** button for one-cli
 - Pull/push buttons
 - History view
 
-### Expert Agents
-- Database Designer
-- Application Tester
-- Security Expert
-- DevOps Engineer
-- Performance Engineer
-
-### LLM Design Assistant
-
-The DDD Tool embeds an LLM to help users design flows, fill specs, and get contextual suggestions — without leaving the editor. Two surfaces expose this capability: a **Chat Panel** and **Inline Assist** (context menu).
-
-#### Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ DDD TOOL                                                         │
-│                                                                   │
-│  ┌──────────────────────────────┐  ┌──────────────────────────┐ │
-│  │ CANVAS / SPEC PANEL          │  │ CHAT PANEL (toggleable)  │ │
-│  │                              │  │                          │ │
-│  │  Right-click node            │  │  "Generate a user        │ │
-│  │  ┌──────────────────────┐    │  │   registration flow"     │ │
-│  │  │ ✨ Suggest spec      │    │  │                          │ │
-│  │  │ ✨ Explain this node │    │  │  ┌──────────────────┐   │ │
-│  │  │ ✨ Add error paths   │    │  │  │ Preview:          │   │ │
-│  │  │ ✨ Generate tests    │    │  │  │ ⬡ → ▱ → ◇ → ⌗   │   │ │
-│  │  └──────────────────────┘    │  │  │ → ⬭              │   │ │
-│  │                              │  │  │                    │   │ │
-│  │  Right-click canvas          │  │  │ [Apply] [Edit]    │   │ │
-│  │  ┌──────────────────────┐    │  │  └──────────────────┘   │ │
-│  │  │ ✨ Generate flow…    │    │  │                          │ │
-│  │  │ ✨ Review this flow  │    │  │  Conversation history    │ │
-│  │  │ ✨ Suggest wiring    │    │  │  with context awareness  │ │
-│  │  └──────────────────────┘    │  │                          │ │
-│  └──────────────────────────────┘  └──────────────────────────┘ │
-│                        │                      │                   │
-│                        ▼                      ▼                   │
-│              ┌──────────────────────────────────────┐            │
-│              │ LLM Context Builder                    │            │
-│              │                                        │            │
-│              │ Assembles context from:                │            │
-│              │ • Current sheet level + location       │            │
-│              │ • Selected node(s) + their specs       │            │
-│              │ • Current flow YAML                    │            │
-│              │ • Domain config + event wiring         │            │
-│              │ • system.yaml + architecture.yaml      │            │
-│              │ • Error codes from errors.yaml         │            │
-│              │ • Schema definitions                   │            │
-│              └──────────────┬───────────────────────┘            │
-│                              │                                    │
-│                              ▼                                    │
-│              ┌──────────────────────────────────────┐            │
-│              │ Tauri Backend (Rust)                    │            │
-│              │ LLM API call (Anthropic / OpenAI /     │            │
-│              │ local model via Ollama)                 │            │
-│              └──────────────────────────────────────┘            │
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-#### Chat Panel
-
-A toggleable right-side panel (alongside or replacing the Spec Panel) for open-ended conversations with the LLM about the current project.
-
-**Capabilities:**
-
-| Action | User says | LLM does |
-|--------|-----------|----------|
-| **Generate flow** | "Create a user registration flow with email verification" | Generates complete flow YAML, previews it, user clicks Apply to add to canvas |
-| **Design agent** | "I need a support chatbot that searches KB and escalates" | Generates agent flow with tools, guardrails, memory, and human gate |
-| **Design orchestration** | "Route tickets to billing or technical agents with a supervisor" | Generates orchestrator + smart router + agent flows |
-| **Explain** | "What does this flow do?" | Reads current flow YAML and explains in plain language |
-| **Review** | "Is this flow production-ready?" | Checks for missing error paths, unhandled edges, missing validations, security gaps |
-| **Suggest improvements** | "How can I make this more robust?" | Suggests error handling, retry logic, rate limiting, caching |
-| **Ask architecture** | "Should users and auth be separate domains?" | Advises based on domain boundaries, event patterns, team structure |
-| **Debug** | "This flow fails when email is blank" | Traces through flow nodes, identifies missing validation |
-
-**Context awareness:** The chat panel always knows:
-- Which sheet level you're on (System / Domain / Flow)
-- Which domain and flow are active
-- The full spec of selected nodes
-- The project's tech stack, error codes, schemas
-
-**Output format:** When the LLM generates nodes or flows, it outputs DDD YAML that the tool can parse directly. Users see a preview on canvas (ghost nodes with dashed borders) and click **Apply** to commit or **Discard** to cancel.
-
-**Conversation persistence:** Chat history is saved per-project in `.ddd/chat-history.json`. Context is scoped — starting a chat on a different flow begins a new thread (previous threads are accessible).
-
-#### Inline Assist (Context Menu)
-
-Right-click actions that provide targeted LLM help without opening the chat panel. Results appear as inline popovers or are applied directly.
-
-**Node-level actions (right-click a node):**
-
-| Action | What it does |
-|--------|-------------|
-| **✨ Suggest spec** | Auto-fills the node's spec based on its name and context. E.g., a node named `validate_input` in a registration flow → suggests email, password, name fields with standard validations and error messages |
-| **✨ Complete spec** | Fills in empty/missing fields in an already-partially-filled spec |
-| **✨ Explain node** | Shows a popover explaining what this node does based on its spec |
-| **✨ Add error handling** | Adds failure connections with appropriate error codes from `errors.yaml` |
-| **✨ Generate test cases** | Lists test scenarios for this node (happy path, edge cases, failures) |
-
-**Connection-level actions (right-click a connection):**
-
-| Action | What it does |
-|--------|-------------|
-| **✨ Add node between** | Suggests a node to insert on this connection (e.g., add guardrail before terminal) |
-| **✨ Label connection** | Suggests a label based on source/target node semantics |
-
-**Canvas-level actions (right-click empty canvas):**
-
-| Action | What it does |
-|--------|-------------|
-| **✨ Generate flow…** | Opens a mini-prompt: "Describe what this flow should do" → generates nodes + connections |
-| **✨ Review this flow** | Analyzes the current flow for completeness, missing paths, and best practices |
-| **✨ Suggest wiring** | Looks at unconnected nodes and suggests how to wire them |
-| **✨ Import from description** | Paste a feature description (Jira ticket, user story) → generates flow |
-
-**Domain-level actions (right-click on Level 2):**
-
-| Action | What it does |
-|--------|-------------|
-| **✨ Suggest flows** | Based on domain name and existing flows, suggests missing flows (e.g., "users" domain has register but no login, reset-password, delete-account) |
-| **✨ Suggest events** | Based on domain flows, suggests events to publish/consume |
-| **✨ Generate domain** | "Describe this domain" → generates domain.yaml with flows, events, wiring |
-
-**System-level actions (right-click on Level 1):**
-
-| Action | What it does |
-|--------|-------------|
-| **✨ Suggest domains** | Based on system description and existing domains, suggests missing domains |
-| **✨ Review architecture** | Checks domain boundaries, event wiring completeness, circular dependencies |
-| **✨ Generate from description** | "Describe your application" → generates system.yaml with domains |
-
-#### Project Memory System
-
-The LLM needs more than just what's on screen — it needs cumulative understanding of the entire project. The **Project Memory** system provides five layers of persistent, auto-maintained context that give the LLM full awareness of what's being built, why certain decisions were made, and how everything connects.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ PROJECT MEMORY LAYERS                                            │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │ 1. PROJECT SUMMARY          (.ddd/memory/summary.md)      │  │
-│  │    Auto-maintained plain-language description of the        │  │
-│  │    entire project: what it does, all domains, key patterns  │  │
-│  │    Regenerated when specs change.                           │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │ 2. SPEC INDEX               (.ddd/memory/spec-index.yaml) │  │
-│  │    Condensed index of ALL flows, ALL domains, ALL schemas  │  │
-│  │    — not full YAML, but enough for the LLM to understand   │  │
-│  │    what exists and how things connect.                      │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │ 3. DECISION LOG             (.ddd/memory/decisions.md)     │  │
-│  │    User-authored + LLM-captured design rationale.          │  │
-│  │    "Why did we split auth from users?" stored here.        │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │ 4. CROSS-FLOW MAP           (.ddd/memory/flow-map.yaml)   │  │
-│  │    Derived graph: which flows call which, event wiring,    │  │
-│  │    shared schemas, agent delegations, handoffs.            │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │ 5. IMPLEMENTATION STATUS    (.ddd/memory/status.yaml)      │  │
-│  │    Which specs have code, which are pending, which changed │  │
-│  │    since last code gen. From .ddd/mapping.yaml + git diff. │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-##### Layer 1: Project Summary
-
-Auto-generated plain-language description of the project. Regenerated whenever domain configs or system.yaml change. The LLM can read this to instantly understand the project without parsing every YAML file.
-
-```markdown
-<!-- .ddd/memory/summary.md — auto-generated, do not edit manually -->
-
-# Obligo — Cyber Liability Operating System
-
-A SaaS platform that creates an "Operational Obligations Graph" from contracts.
-Users upload contracts → system extracts obligations → tracks compliance → sends notifications.
-
-## Tech Stack
-Python 3.11 / FastAPI / SQLAlchemy / PostgreSQL / Redis / Celery
-
-## Domains (4)
-
-### ingestion (4 flows)
-Handles contract document intake from multiple sources.
-- **webhook-ingestion**: Receives documents via partner webhooks (POST /webhooks/{source})
-- **scheduled-sync**: Polls external systems on cron schedule
-- **manual-upload**: User uploads documents via UI (POST /api/documents/upload)
-- **email-intake**: Processes documents from email attachments
-- Publishes: contract.ingested, webhook.received, document.uploaded
-
-### analysis (3 flows)
-Extracts obligations and clauses from ingested contracts using LLM.
-- **extract-obligations**: Agent flow — LLM reads contract, extracts structured obligations
-- **classify-risk**: Scores obligations by risk level
-- **generate-summary**: Creates human-readable contract summary
-- Consumes: contract.ingested
-- Publishes: analysis.completed, obligations.extracted
-
-### api (5 flows)
-REST API for frontend and integrations.
-- **user-register**, **user-login**, **user-reset-password**, **get-contracts**, **get-obligations**
-- Consumes: webhook.received
-
-### notification (2 flows)
-Sends alerts when obligations approach deadlines.
-- **deadline-alert**: Agent flow — checks upcoming deadlines, drafts notifications
-- **compliance-report**: Generates periodic compliance reports
-- Consumes: analysis.completed, obligation.deadline_approaching
-
-## Key Patterns
-- Auth: JWT with refresh tokens, RBAC (admin, manager, viewer)
-- Multi-tenancy: organization_id on all models
-- Soft delete: all entities use deleted_at timestamp
-- Event-driven: domains communicate via async events
-```
-
-**When it regenerates:** On project load, and whenever system.yaml, any domain.yaml, or architecture.yaml changes. The LLM itself generates this summary by reading all specs — so it understands the project in its own words.
-
-##### Layer 2: Spec Index
-
-A condensed index of every flow, schema, and domain — not the full YAML, but enough structure for the LLM to know what exists, what each flow does, and how they connect.
-
-```yaml
-# .ddd/memory/spec-index.yaml — auto-generated from specs/
-
-domains:
-  ingestion:
-    description: "Contract document intake from multiple sources"
-    flows:
-      webhook-ingestion:
-        type: traditional
-        trigger: { type: http, method: POST, path: "/webhooks/{source}" }
-        nodes: [validate_signature, rate_limit_check, validate_payload, normalize, store_document, publish_event]
-        publishes: [contract.ingested]
-        schemas_used: [Document, WebhookPayload]
-        error_codes: [INVALID_SIGNATURE, RATE_LIMIT_EXCEEDED, VALIDATION_ERROR]
-
-      scheduled-sync:
-        type: traditional
-        trigger: { type: cron, schedule: "*/15 * * * *" }
-        nodes: [fetch_sources, diff_check, process_new, store_documents, publish_events]
-        publishes: [contract.ingested]
-
-      manual-upload:
-        type: traditional
-        trigger: { type: http, method: POST, path: "/api/documents/upload" }
-        nodes: [auth_check, validate_file, extract_metadata, store_document, publish_event]
-        publishes: [document.uploaded]
-        schemas_used: [Document, UploadRequest]
-
-      email-intake:
-        type: traditional
-        trigger: { type: event, event: email.received }
-        nodes: [parse_email, extract_attachments, validate_documents, store_documents]
-        publishes: [contract.ingested]
-
-  analysis:
-    description: "Extract obligations and clauses from contracts using LLM"
-    flows:
-      extract-obligations:
-        type: agent
-        trigger: { type: event, event: contract.ingested }
-        agent_model: claude-sonnet-4-5-20250929
-        tools: [read_document, extract_clause, classify_obligation, save_obligation]
-        guardrails: [pii_filter, hallucination_check]
-        publishes: [obligations.extracted]
-        schemas_used: [Contract, Obligation, Clause]
-
-      classify-risk:
-        type: traditional
-        trigger: { type: event, event: obligations.extracted }
-        nodes: [load_obligations, score_risk, update_risk_levels, publish_results]
-        publishes: [analysis.completed]
-
-      generate-summary:
-        type: traditional
-        trigger: { type: event, event: obligations.extracted }
-        nodes: [load_contract, llm_summarize, store_summary]
-        schemas_used: [Contract, ContractSummary]
-
-  # ... (api, notification domains similarly indexed)
-
-schemas:
-  Document: { fields: [id, organization_id, filename, content_type, size_bytes, uploaded_by, status, created_at] }
-  Contract: { fields: [id, organization_id, document_id, title, parties, effective_date, expiry_date, status] }
-  Obligation: { fields: [id, contract_id, clause_text, obligation_type, deadline, risk_score, status] }
-  User: { fields: [id, organization_id, email, name, role, created_at] }
-  # ...
-
-events:
-  - contract.ingested: { publisher: ingestion, consumers: [analysis] }
-  - obligations.extracted: { publisher: analysis, consumers: [analysis, notification] }
-  - analysis.completed: { publisher: analysis, consumers: [notification] }
-  - webhook.received: { publisher: ingestion, consumers: [api] }
-  - document.uploaded: { publisher: ingestion, consumers: [] }
-  - obligation.deadline_approaching: { publisher: cron, consumers: [notification] }
-
-shared_error_codes: [VALIDATION_ERROR, NOT_FOUND, UNAUTHORIZED, DUPLICATE_ENTRY, RATE_LIMIT_EXCEEDED, INTERNAL_ERROR]
-```
-
-**When it regenerates:** On project load, and whenever any flow YAML, domain.yaml, schema, or errors.yaml changes. Built by scanning all spec files and extracting the key fields.
-
-##### Layer 3: Decision Log
-
-User-authored and LLM-captured design rationale. When the user explains *why* they made a choice in the chat, the LLM asks if it should save it as a decision. Users can also add decisions manually.
-
-```markdown
-<!-- .ddd/memory/decisions.md -->
-
-## Design Decisions
-
-### 2025-01-15: Separate ingestion from analysis
-**Decision:** Keep document ingestion and obligation extraction as separate domains.
-**Rationale:** Ingestion is I/O-heavy (webhooks, file uploads, email parsing) while analysis is compute-heavy (LLM calls). Different scaling profiles. Also, ingestion should work even if analysis is down — we buffer via events.
-**Affected:** ingestion domain, analysis domain, contract.ingested event
-
-### 2025-01-16: Agent flow for obligation extraction
-**Decision:** Use an agent flow (not traditional) for extract-obligations.
-**Rationale:** Contract formats vary wildly — fixed logic can't handle all cases. The LLM needs to reason about document structure, iterate over clauses, and decide when it's found all obligations. Agent loop with tools is the right pattern.
-**Affected:** analysis/flows/extract-obligations.yaml
-
-### 2025-01-18: JWT over sessions
-**Decision:** Use JWT with refresh tokens for authentication, not server-side sessions.
-**Rationale:** Stateless — works with horizontal scaling without sticky sessions or shared session store. Refresh tokens handle long-lived access.
-**Affected:** architecture.yaml auth section, api domain
-
-### 2025-01-20: Soft delete everywhere
-**Decision:** All entities use soft delete (deleted_at timestamp) instead of hard delete.
-**Rationale:** Compliance requirement — need audit trail. Also allows undo.
-**Affected:** architecture.yaml database section, all schemas
-```
-
-**How decisions are captured:**
-1. **Manually:** User clicks "Add Decision" in the Memory panel or types `/decide` in chat
-2. **LLM-prompted:** When the user explains reasoning in chat (e.g., "I'm splitting these because…"), the LLM detects rationale and asks: *"Should I save this as a design decision?"*
-3. **Inline:** Right-click a domain/flow → "✨ Add design note" → enters decision with context pre-filled
-
-##### Layer 4: Cross-Flow Map
-
-A derived dependency graph showing how every flow connects to every other flow — via events, sub-flow calls, shared schemas, agent delegations, and handoffs.
-
-```yaml
-# .ddd/memory/flow-map.yaml — auto-derived from all flow specs
-
-graph:
-  # Event-based connections (async)
-  events:
-    - from: ingestion/webhook-ingestion
-      to: analysis/extract-obligations
-      via: contract.ingested
-      type: event
-
-    - from: ingestion/manual-upload
-      to: analysis/extract-obligations
-      via: contract.ingested
-      type: event
-
-    - from: analysis/extract-obligations
-      to: analysis/classify-risk
-      via: obligations.extracted
-      type: event
-
-    - from: analysis/extract-obligations
-      to: analysis/generate-summary
-      via: obligations.extracted
-      type: event
-
-    - from: analysis/classify-risk
-      to: notification/deadline-alert
-      via: analysis.completed
-      type: event
-
-  # Direct call connections (sync)
-  # Flows called as sub-flows can define a contract with inputs/outputs
-  # to validate input_mapping/output_mapping at design time
-  sub_flows:
-    - from: api/user-register
-      to: notification/send-welcome-email
-      type: sub_flow
-
-  # Shared schema connections
-  shared_schemas:
-    - schema: Contract
-      used_by: [ingestion/webhook-ingestion, analysis/extract-obligations, analysis/generate-summary]
-    - schema: Obligation
-      used_by: [analysis/extract-obligations, analysis/classify-risk, notification/deadline-alert]
-    - schema: User
-      used_by: [api/user-register, api/user-login, api/user-reset-password]
-
-  # Agent delegations / handoffs
-  agent_connections:
-    - from: support/orchestrator
-      to: support/billing-agent
-      type: orchestrator_manages
-    - from: support/billing-agent
-      to: support/technical-agent
-      type: handoff
-      mode: consult
-
-# Dependency summary per flow
-flow_dependencies:
-  ingestion/webhook-ingestion:
-    depends_on: []
-    depended_on_by: [analysis/extract-obligations]
-    schemas: [Document, WebhookPayload]
-
-  analysis/extract-obligations:
-    depends_on: [ingestion/webhook-ingestion, ingestion/manual-upload, ingestion/email-intake]
-    depended_on_by: [analysis/classify-risk, analysis/generate-summary]
-    schemas: [Contract, Obligation, Clause]
-
-  # ...
-```
-
-**When it regenerates:** On project load, and whenever any flow YAML or domain.yaml changes. Built by scanning all flows for event publications/consumptions, sub-flow references, schema `$ref`s, and orchestrator/handoff nodes.
-
-##### Layer 5: Implementation Status
-
-Tracks which specs have been implemented as code, which are pending, and which changed since last code generation.
-
-```yaml
-# .ddd/memory/status.yaml — derived from .ddd/mapping.yaml + git status
-
-overview:
-  total_flows: 14
-  implemented: 9
-  pending: 3
-  stale: 2          # Spec changed since code was generated
-
-flows:
-  ingestion/webhook-ingestion:
-    status: implemented
-    code_files:
-      - src/domains/ingestion/router.py
-      - src/domains/ingestion/services/webhook.py
-      - tests/unit/domains/ingestion/test_webhook.py
-    last_generated: "2025-01-18T14:30:00Z"
-    spec_changed_since: false
-
-  ingestion/scheduled-sync:
-    status: implemented
-    code_files:
-      - src/domains/ingestion/tasks/sync.py
-    last_generated: "2025-01-18T15:00:00Z"
-    spec_changed_since: true     # ← STALE: spec was modified after code gen
-    changes_since:
-      - "Added rate_limit_check node"
-      - "Changed cron schedule from */30 to */15"
-
-  analysis/extract-obligations:
-    status: implemented
-    code_files:
-      - src/domains/analysis/agents/extract.py
-      - src/domains/analysis/tools/document_tools.py
-    last_generated: "2025-01-19T10:00:00Z"
-    spec_changed_since: false
-
-  notification/compliance-report:
-    status: pending    # ← Not yet implemented
-    code_files: []
-
-  api/get-obligations:
-    status: pending
-    code_files: []
-
-  # ...
-
-schemas:
-  Document:
-    status: implemented
-    migration: "migrations/001_create_documents.py"
-    spec_changed_since: false
-  Obligation:
-    status: implemented
-    migration: "migrations/003_create_obligations.py"
-    spec_changed_since: true    # ← Schema changed, migration needed
-```
-
-**When it updates:** From `.ddd/mapping.yaml` (spec-to-code mapping file) combined with `git diff` to detect spec changes since last code generation timestamp.
-
-##### How Memory Feeds Into LLM Context
-
-The Project Memory layers are integrated into the LLM Context Builder. Not everything is sent with every request — the context is **budgeted** to stay within token limits while maximizing relevance.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ LLM CONTEXT BUDGET                                                │
-│                                                                   │
-│ Priority 1 (always included):                         ~1,500 tok │
-│   ├── Project Summary (summary.md)                               │
-│   └── System config (name, tech stack, domains)                  │
-│                                                                   │
-│ Priority 2 (included on L2/L3):                       ~1,000 tok │
-│   ├── Current domain (flows, events)                             │
-│   └── Related domains (via Cross-Flow Map)                       │
-│                                                                   │
-│ Priority 3 (included on L3):                          ~2,000 tok │
-│   ├── Current flow (full YAML)                                   │
-│   ├── Connected flows (via Cross-Flow Map, condensed)            │
-│   └── Selected node specs                                        │
-│                                                                   │
-│ Priority 4 (included when relevant):                    ~500 tok │
-│   ├── Relevant decisions (from Decision Log)                     │
-│   ├── Implementation status of current flow                      │
-│   └── Error codes + schema definitions                           │
-│                                                                   │
-│ Priority 5 (included on demand):                        ~500 tok │
-│   └── Spec Index (condensed, for cross-project questions)        │
-│                                                                   │
-│ TOTAL BUDGET:                                    ~4,000-5,500 tok │
-│ (leaves room for user message + LLM response within context)     │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Key rules:**
-- **Project Summary** always included — it's the LLM's "big picture" understanding
-- **Cross-Flow Map** tells the LLM what connects to the current flow, so it can warn about breaking changes
-- **Decision Log** filtered to decisions relevant to the current domain/flow
-- **Implementation Status** tells the LLM whether this flow has code, whether the code is stale
-- **Spec Index** only sent for system-level or cross-domain questions
-
-##### Memory Panel UI
-
-A dedicated panel (accessible via sidebar icon or `Cmd+M` / `Ctrl+M`) for viewing and managing Project Memory.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ 🧠 PROJECT MEMORY                                      [Refresh] │
-│                                                                   │
-│ ┌─ Summary ────────────────────────────────────────────────────┐ │
-│ │ Obligo — Cyber Liability Operating System                    │ │
-│ │ 4 domains · 14 flows · 9 implemented · 2 stale              │ │
-│ │ [View full summary]                                          │ │
-│ └──────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│ ┌─ Implementation Status ──────────────────────────────────────┐ │
-│ │ ● ingestion/webhook-ingestion          ✓ implemented         │ │
-│ │ ● ingestion/scheduled-sync             ⚠ stale (2 changes)  │ │
-│ │ ● analysis/extract-obligations         ✓ implemented         │ │
-│ │ ○ notification/compliance-report       ◌ pending             │ │
-│ │ ○ api/get-obligations                  ◌ pending             │ │
-│ └──────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│ ┌─ Decisions (4) ─────────────────────────────────────[+ Add]──┐ │
-│ │ • Separate ingestion from analysis       2025-01-15          │ │
-│ │ • Agent flow for obligation extraction   2025-01-16          │ │
-│ │ • JWT over sessions                      2025-01-18          │ │
-│ │ • Soft delete everywhere                 2025-01-20          │ │
-│ └──────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│ ┌─ Flow Map (current: webhook-ingestion) ──────────────────────┐ │
-│ │ Depends on: (none)                                           │ │
-│ │ Depended on by: analysis/extract-obligations                 │ │
-│ │ Schemas: Document, WebhookPayload                            │ │
-│ │ Events out: contract.ingested                                │ │
-│ └──────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-##### Memory File Storage
-
-All memory files live in `.ddd/memory/` within the project directory:
-
-```
-.ddd/
-├── config.yaml              # DDD Tool settings (LLM provider, etc.)
-├── mapping.yaml             # Spec-to-code mapping
-├── chat-history.json        # Chat threads
-└── memory/
-    ├── summary.md           # Layer 1: Project summary (auto-generated)
-    ├── spec-index.yaml      # Layer 2: Condensed spec index (auto-generated)
-    ├── decisions.md         # Layer 3: Design decisions (user + LLM authored)
-    ├── flow-map.yaml        # Layer 4: Cross-flow dependency graph (auto-generated)
-    └── status.yaml          # Layer 5: Implementation status (auto-generated)
-```
-
-**Git behavior:** Memory files are auto-generated (except `decisions.md`). The `.gitignore` should include auto-generated memory files but NOT `decisions.md` — design decisions are valuable to the team and should be version-controlled.
-
-```gitignore
-# .gitignore
-.ddd/memory/summary.md
-.ddd/memory/spec-index.yaml
-.ddd/memory/flow-map.yaml
-.ddd/memory/status.yaml
-.ddd/chat-history.json
-
-# DO commit: .ddd/memory/decisions.md (design rationale is team knowledge)
-# DO commit: .ddd/config.yaml (shared tool settings, no secrets)
-# DO commit: .ddd/mapping.yaml (spec-to-code mapping)
-```
-
-#### LLM Context Builder
-
-Every LLM request includes structured context assembled from the user's current location, selection, and **Project Memory layers**. The context is automatically budgeted to stay within token limits.
-
-```yaml
-# Context sent with every LLM request
-context:
-  # From Project Memory Layer 1 (always included)
-  project_summary: |
-    Obligo — Cyber Liability Operating System.
-    SaaS for creating Operational Obligations Graph from contracts.
-    4 domains: ingestion, analysis, api, notification.
-    Python 3.11 / FastAPI / PostgreSQL / Redis.
-
-  # From system.yaml (always included)
-  system:
-    name: obligo
-    tech_stack: { language: python, framework: fastapi }
-    domains: [ingestion, analysis, api, notification]
-
-  # Included when on Level 2 or 3
-  current_domain:
-    name: ingestion
-    flows: [webhook-ingestion, scheduled-sync, manual-upload]
-    publishes_events: [contract.ingested, webhook.received]
-    consumes_events: []
-
-  # Included when on Level 3
-  current_flow:
-    id: webhook-ingestion
-    type: traditional
-    yaml: |
-      # Full flow YAML here
-
-  # From Project Memory Layer 4 — connected flows (condensed)
-  connected_flows:
-    downstream:
-      - id: analysis/extract-obligations
-        type: agent
-        via_event: contract.ingested
-        summary: "LLM agent that reads contracts and extracts structured obligations"
-    upstream: []
-
-  # Included when nodes are selected
-  selected_nodes:
-    - id: validate_input
-      type: input
-      spec: { ... }
-
-  # From Project Memory Layer 3 — relevant decisions
-  relevant_decisions:
-    - "Separate ingestion from analysis: different scaling profiles, buffer via events"
-
-  # From Project Memory Layer 5 — implementation status
-  implementation_status:
-    current_flow: implemented
-    spec_changed_since_codegen: false
-
-  # Included from project specs
-  error_codes:
-    - VALIDATION_ERROR
-    - DUPLICATE_ENTRY
-    - NOT_FOUND
-    # ... from errors.yaml
-
-  schemas:
-    - User: { fields: [id, email, name, ...] }
-    # ... from schemas/*.yaml
-```
-
-#### Multi-Model Architecture
-
-DDD supports multiple LLM providers and models simultaneously. Different tasks route to different models — fast/cheap models for quick suggestions, powerful models for complex flow generation. Users can switch models on the fly from the UI.
-
-##### Model Registry
-
-All configured models live in a **model registry**. Each entry defines a provider, model ID, capabilities, and cost tier.
-
-```yaml
-# .ddd/config.yaml
-llm:
-  # Active model for chat (user can switch via UI)
-  active_model: claude-sonnet
-
-  # Model registry — all available models
-  models:
-    claude-sonnet:
-      provider: anthropic
-      model_id: claude-sonnet-4-5-20250929
-      api_key_env: ANTHROPIC_API_KEY
-      label: "Claude Sonnet"               # Display name in UI
-      tier: standard                       # fast | standard | powerful
-      max_tokens: 4096
-      temperature: 0.3
-      cost_per_1k_input: 0.003             # USD per 1K input tokens
-      cost_per_1k_output: 0.015            # USD per 1K output tokens
-
-    claude-opus:
-      provider: anthropic
-      model_id: claude-opus-4-6
-      api_key_env: ANTHROPIC_API_KEY
-      label: "Claude Opus"
-      tier: powerful
-      max_tokens: 4096
-      temperature: 0.3
-      cost_per_1k_input: 0.015
-      cost_per_1k_output: 0.075
-
-    claude-haiku:
-      provider: anthropic
-      model_id: claude-haiku-4-5-20251001
-      api_key_env: ANTHROPIC_API_KEY
-      label: "Claude Haiku"
-      tier: fast
-      max_tokens: 2048
-      temperature: 0.2
-      cost_per_1k_input: 0.0008
-      cost_per_1k_output: 0.004
-
-    gpt-4o:
-      provider: openai
-      model_id: gpt-4o
-      api_key_env: OPENAI_API_KEY
-      label: "GPT-4o"
-      tier: standard
-      max_tokens: 4096
-      temperature: 0.3
-      cost_per_1k_input: 0.0025
-      cost_per_1k_output: 0.01
-
-    gpt-4o-mini:
-      provider: openai
-      model_id: gpt-4o-mini
-      api_key_env: OPENAI_API_KEY
-      label: "GPT-4o Mini"
-      tier: fast
-      max_tokens: 2048
-      temperature: 0.2
-      cost_per_1k_input: 0.00015
-      cost_per_1k_output: 0.0006
-
-    llama-local:
-      provider: ollama
-      model_id: llama3.1
-      base_url: http://localhost:11434
-      label: "Llama 3.1 (Local)"
-      tier: standard
-      max_tokens: 4096
-      temperature: 0.3
-      cost_per_1k_input: 0                 # Free (local)
-      cost_per_1k_output: 0
-
-    deepseek-r1:
-      provider: openai_compatible
-      model_id: deepseek-reasoner
-      base_url: https://api.deepseek.com/v1
-      api_key_env: DEEPSEEK_API_KEY
-      label: "DeepSeek R1"
-      tier: powerful
-      max_tokens: 8192
-      temperature: 0.3
-      cost_per_1k_input: 0.00055
-      cost_per_1k_output: 0.0022
-
-    # Any OpenAI-compatible endpoint works:
-    # Azure OpenAI, Together AI, Groq, Fireworks, Mistral, etc.
-    custom-endpoint:
-      provider: openai_compatible
-      model_id: your-model-id
-      base_url: https://your-endpoint.com/v1
-      api_key_env: CUSTOM_API_KEY
-      label: "Custom Model"
-      tier: standard
-      max_tokens: 4096
-      temperature: 0.3
-      cost_per_1k_input: 0
-      cost_per_1k_output: 0
-
-  # Task-to-model routing — which model handles which task
-  task_routing:
-    # Inline assist (quick, frequent) → fast model
-    suggest_spec: claude-haiku
-    complete_spec: claude-haiku
-    explain_node: claude-haiku
-    label_connection: claude-haiku
-    add_error_handling: claude-haiku
-
-    # Flow generation (complex) → powerful model
-    generate_flow: claude-sonnet
-    generate_domain: claude-sonnet
-    generate_from_description: claude-sonnet
-    import_from_description: claude-sonnet
-
-    # Review / architecture (needs deep reasoning) → powerful model
-    review_flow: claude-sonnet
-    review_architecture: claude-opus
-    suggest_wiring: claude-sonnet
-    suggest_flows: claude-sonnet
-    suggest_domains: claude-sonnet
-
-    # Project summary generation → powerful model
-    generate_summary: claude-opus
-
-    # Chat (uses active_model by default) → user's choice
-    chat: _active                          # Special value: uses active_model
-
-    # Test case generation → standard model
-    generate_test_cases: claude-sonnet
-
-  # Fallback chain — if primary model fails, try next
-  fallback_chain:
-    - claude-sonnet                        # Try first
-    - gpt-4o                               # Then try
-    - llama-local                          # Last resort (offline)
-
-  # Cost tracking
-  cost_tracking:
-    enabled: true
-    reset_period: monthly                  # daily | weekly | monthly
-    budget_warning: 10.00                  # USD — show warning at this threshold
-    budget_limit: 50.00                    # USD — block requests above this (0 = unlimited)
-```
-
-##### Provider Types
-
-| Provider | `provider` value | Auth | Notes |
-|----------|------------------|------|-------|
-| **Anthropic** | `anthropic` | API key via env var | Claude models |
-| **OpenAI** | `openai` | API key via env var | GPT models |
-| **Ollama** | `ollama` | None (local) | Any model pulled locally, offline capable |
-| **OpenAI-Compatible** | `openai_compatible` | API key via env var | Azure OpenAI, Together AI, Groq, Fireworks, DeepSeek, Mistral, or any OpenAI-compatible endpoint |
-
-The `openai_compatible` provider works with any endpoint that follows the OpenAI `/v1/chat/completions` API format. This covers most hosted LLM services.
-
-##### Task-to-Model Routing
-
-Every LLM action in DDD has a **task type**. The task router looks up which model handles that task type from `task_routing` config. This lets users optimize for cost vs. quality per action.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ TASK-TO-MODEL ROUTING                                            │
-│                                                                   │
-│  User Action            Task Type            Routed Model        │
-│  ─────────────          ──────────           ──────────          │
-│  Right-click →          suggest_spec    ──→  claude-haiku (fast) │
-│  "Suggest spec"                                                   │
-│                                                                   │
-│  Right-click →          generate_flow   ──→  claude-sonnet       │
-│  "Generate flow…"                            (standard)          │
-│                                                                   │
-│  Right-click →          review_          ──→  claude-opus         │
-│  "Review architecture"  architecture         (powerful)          │
-│                                                                   │
-│  Chat panel →           chat            ──→  active_model        │
-│  free-form message                           (user's choice)     │
-│                                                                   │
-│  Memory →               generate_       ──→  claude-opus         │
-│  regenerate summary     summary              (powerful)          │
-│                                                                   │
-│         If model fails → try fallback_chain                      │
-│         claude-sonnet → gpt-4o → llama-local                     │
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Model tiers guide routing defaults:**
-
-| Tier | Use for | Token budget | Examples |
-|------|---------|-------------|----------|
-| **fast** | Inline assists, explanations, labels, completions | ~500-1,000 | Haiku, GPT-4o Mini |
-| **standard** | Flow generation, suggestions, chat, test cases | ~2,000-4,000 | Sonnet, GPT-4o, Llama 3.1 |
-| **powerful** | Architecture review, project summary, complex reasoning | ~4,000-8,000 | Opus, DeepSeek R1 |
-
-##### Model Picker UI
-
-A dropdown in the Chat Panel header and a status bar indicator for quickly switching the active model.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ ✨ Design Assistant          [Claude Sonnet ▾]          [✕]     │
-│                               ┌──────────────────────────┐      │
-│ Context: ingestion /          │ ● Claude Sonnet   $0.003 │      │
-│ webhook-ingestion             │ ● Claude Opus     $0.015 │      │
-│                               │ ● Claude Haiku    $0.001 │      │
-│                               │ ─────────────────────── │      │
-│                               │ ● GPT-4o          $0.003 │      │
-│                               │ ● GPT-4o Mini     $0.000 │      │
-│                               │ ─────────────────────── │      │
-│                               │ ● Llama 3.1 (Local) Free│      │
-│                               │ ● DeepSeek R1     $0.001 │      │
-│                               │ ─────────────────────── │      │
-│                               │ ⚙ Manage models…        │      │
-│                               └──────────────────────────┘      │
-│                                                                   │
-│ ...chat messages...                                              │
-│                                                                   │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │ This session: 12.4K tokens · $0.04    [Month: $3.82/$50]  │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Model picker features:**
-- Dropdown shows all registered models with cost-per-1K indicator
-- Green dot = connected, red dot = unavailable
-- "Manage models…" opens settings to add/remove/configure models
-- Switching model applies immediately to the chat thread
-- Inline assist uses the routed model (not the active model), but user can override per-action via right-click → submenu
-
-**Status bar (bottom of app):**
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│ 🟢 Claude Sonnet │ Session: 12.4K tok · $0.04 │ Month: $3.82/$50.00 │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-##### Cost Tracking
-
-Every LLM request tracks input/output tokens and calculates cost based on the model's configured rates. Costs are accumulated per session and per billing period.
-
-```yaml
-# .ddd/memory/usage.yaml — auto-maintained
-usage:
-  current_period:
-    start: "2025-01-01"
-    end: "2025-01-31"
-    total_cost: 3.82
-    total_input_tokens: 245000
-    total_output_tokens: 89000
-    requests: 142
-    by_model:
-      claude-sonnet:
-        requests: 45
-        input_tokens: 120000
-        output_tokens: 52000
-        cost: 2.14
-      claude-haiku:
-        requests: 89
-        input_tokens: 110000
-        output_tokens: 32000
-        cost: 0.22
-      claude-opus:
-        requests: 8
-        input_tokens: 15000
-        output_tokens: 5000
-        cost: 1.46
-    by_task:
-      suggest_spec: { requests: 52, cost: 0.12 }
-      generate_flow: { requests: 18, cost: 1.05 }
-      chat: { requests: 32, cost: 1.44 }
-      review_flow: { requests: 12, cost: 0.48 }
-      generate_summary: { requests: 3, cost: 0.73 }
-
-  history:
-    - period: "2024-12-01/2024-12-31"
-      total_cost: 5.21
-      requests: 198
-```
-
-**Budget enforcement:**
-- At `budget_warning` threshold → yellow banner: "You've used $10 of your $50 monthly budget"
-- At `budget_limit` threshold → requests blocked with option to increase limit or switch to free local model
-- Budget = 0 means unlimited
-
-##### Inline Assist Model Override
-
-When right-clicking for inline assist, the context menu shows which model will handle the action. Users can override via a submenu.
-
-```
-┌──────────────────────────────────────┐
-│ ✨ Suggest spec        (Haiku)       │
-│ ✨ Complete spec       (Haiku)       │
-│ ✨ Explain this node   (Haiku)       │
-│ ✨ Add error handling  (Haiku)       │
-│ ✨ Generate test cases (Sonnet)      │
-│ ──────────────────────────────────── │
-│ ▶ Use different model…               │
-│   ┌────────────────────────────┐     │
-│   │ ● Claude Sonnet            │     │
-│   │ ● Claude Opus              │     │
-│   │ ● GPT-4o                   │     │
-│   └────────────────────────────┘     │
-└──────────────────────────────────────┘
-```
-
-#### Ghost Preview (Apply/Discard Pattern)
-
-When the LLM generates nodes or flows, they appear as **ghost nodes** — visually distinct (dashed borders, reduced opacity) — so the user can review before committing.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Canvas                                                       │
-│                                                               │
-│   ⬡ trigger    →    ▱ validate ─ ─ ─ ▱ validate_input ─ ┐  │
-│   (existing)        (existing)        (ghost - dashed)    │  │
-│                                                            │  │
-│                                       ◇ check_duplicate ─ ┘  │
-│                                       (ghost - dashed)        │
-│                                            │                  │
-│                                       ⌗ create_user          │
-│                                       (ghost - dashed)        │
-│                                            │                  │
-│                                       ⬭ return_success       │
-│                                       (ghost - dashed)        │
-│                                                               │
-│   ┌──────────────────────────────────────────┐               │
-│   │ ✨ LLM generated 4 nodes                 │               │
-│   │                                           │               │
-│   │ [Apply to canvas]  [Edit in chat]  [✕]   │               │
-│   └──────────────────────────────────────────┘               │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
-```
-
-Ghost nodes become real nodes on Apply. The user can also click **Edit in chat** to refine the generation before applying.
-
 #### Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| `Cmd+L` / `Ctrl+L` | Toggle Chat Panel |
-| `Cmd+M` / `Ctrl+M` | Toggle Memory Panel |
-| `Cmd+Shift+G` / `Ctrl+Shift+G` | Generate flow from description (canvas-level) |
-| `Cmd+.` / `Ctrl+.` | Inline assist on selected node (suggest spec) |
 | `Cmd+I` / `Ctrl+I` | Toggle Implementation Panel |
-| `Escape` | Discard ghost preview |
-| `Enter` (in ghost preview) | Apply ghost preview to canvas |
+| `Cmd+Shift+M` / `Ctrl+Shift+M` | Toggle Minimap |
+| `Cmd+Z` / `Ctrl+Z` | Undo |
+| `Cmd+Shift+Z` / `Ctrl+Shift+Z` | Redo |
 
 ### App Shell & User Experience
 
@@ -4304,27 +3279,13 @@ Accessible from Project Launcher (⚙) and from within any project (menu bar →
 │──────────────────────────────────────────────────────────────│
 │                                                                │
 │ ┌──────────┐                                                  │
-│ │ LLM      │  LLM Configuration                              │
-│ │ Models   │                                                  │
-│ │ Claude   │  ┌─────────────────────────────────────────┐    │
-│ │ Testing  │  │ Model Registry                           │    │
-│ │ Editor   │  │                                           │    │
-│ │ Git      │  │ Anthropic                                 │    │
-│ │ Advanced │  │   API Key: [ANTHROPIC_API_KEY   ] (env)  │    │
-│ │          │  │   Models: claude-sonnet-4-5, claude-haiku-4-5      │    │
-│ │          │  │   [Test connection]  ✓ Connected          │    │
-│ │          │  │                                           │    │
-│ │          │  │ OpenAI                                    │    │
-│ │          │  │   API Key: [OPENAI_API_KEY      ] (env)  │    │
-│ │          │  │   Models: gpt-4o, gpt-4o-mini            │    │
-│ │          │  │   [Test connection]  ✓ Connected          │    │
-│ │          │  │                                           │    │
-│ │          │  │ Ollama (Local)                            │    │
-│ │          │  │   URL: [http://localhost:11434  ]         │    │
-│ │          │  │   Models: [Refresh] llama3, codellama    │    │
-│ │          │  │   [Test connection]  ✓ Running            │    │
-│ │          │  │                                           │    │
-│ │          │  │ [+ Add Provider]                          │    │
+│ │ Editor   │  Editor                                          │
+│ │ Claude   │                                                  │
+│ │ Testing  │  ┌─────────────────────────────────────────┐    │
+│ │ Git      │  │ Theme:     [Dark ▾]                      │    │
+│ │          │  │ Font Size: [14   ]                        │    │
+│ │          │  │ Auto-save: [30   ] seconds (0=disable)   │    │
+│ │          │  │ [✓] Snap nodes to grid                   │    │
 │ │          │  └─────────────────────────────────────────┘    │
 │ └──────────┘                                                  │
 │                                           [Cancel] [Save]    │
@@ -4335,25 +3296,14 @@ Accessible from Project Launcher (⚙) and from within any project (menu bar →
 
 | Tab | What it configures |
 |-----|-------------------|
-| **LLM** | Provider API keys (stored as env var names, never raw keys), provider URLs, connection testing |
-| **Models** | Task-to-model routing (which model for generate/review/suggest/explain), fallback chains, cost limits |
+| **Editor** | Canvas grid snap, auto-save interval, theme (light/dark), font size |
 | **Claude Code** | CLI command path, post-implementation actions (run tests, run lint, auto-commit), prompt options |
 | **Testing** | Test command, args, scoped test pattern, auto-run toggle |
-| **Editor** | Canvas grid snap, auto-save interval, theme (light/dark), font size, ghost preview animation toggle |
 | **Git** | Auto-commit messages, branch naming, commit signing |
-| **Advanced** | Reconciliation settings, test generation settings, cache management, debug logging |
-
-**API key security:**
-- Settings UI shows env var names (e.g., `ANTHROPIC_API_KEY`), not raw values
-- Keys are read from environment at runtime: `process.env[key_name]`
-- `.ddd/config.yaml` stores only the env var name, never the secret
-- "Test connection" makes a minimal API call to verify the key works
-- Keys can also be entered directly in a secure input field — stored in OS keychain via Tauri's `keyring` plugin, never written to disk in plain text
 
 **Project-level overrides:**
 - Toggle dropdown: "Global" ↔ "Project: {name}"
 - When on "Project," settings are saved to `.ddd/config.yaml` and override global
-- Example: project A uses Claude for everything, project B uses GPT-4o — set via project-level model routing
 
 **Global settings location:** `~/.ddd-tool/settings.json`
 
@@ -4362,63 +3312,30 @@ Accessible from Project Launcher (⚙) and from within any project (menu bar →
 The very first time a user opens the DDD Tool (no `~/.ddd-tool/` directory exists), they see a guided setup:
 
 ```
+Step 1 of 2: Claude Code
 ┌──────────────────────────────────────────────────────────────┐
+│  Claude Code enables automated implementation from your       │
+│  flow designs.                                                │
 │                                                                │
-│                    Welcome to DDD Tool                        │
-│              Design Driven Development                       │
+│  Claude Code CLI:  [✓ Enable]                                │
+│  Path: [claude                    ] [Detect]                 │
+│  ✓ Found at /usr/local/bin/claude                            │
 │                                                                │
-│  DDD lets you design software visually and have AI            │
-│  implement it. Specs are the source of truth.                 │
-│                                                                │
-│  Let's get you set up:                                        │
-│                                                                │
-│  Step 1 of 3: Connect an LLM                                 │
-│  ──────────────────────────────────────                       │
-│  DDD uses LLMs for design assistance, code generation,       │
-│  and spec review. Set up at least one provider.               │
-│                                                                │
-│  ○ Anthropic (Claude) — recommended                          │
-│    API Key env var: [ANTHROPIC_API_KEY    ]                  │
-│    [Test connection]                                          │
-│                                                                │
-│  ○ OpenAI (GPT-4o)                                           │
-│    API Key env var: [OPENAI_API_KEY       ]                  │
-│                                                                │
-│  ○ Ollama (Local — free, no API key)                         │
-│    URL: [http://localhost:11434    ]                          │
-│    [Detect models]                                            │
-│                                                                │
-│  ○ Skip for now — I'll configure later                       │
-│                                                                │
-│                                              [Next →]        │
+│                          [Skip Setup]   [Next →]             │
 └──────────────────────────────────────────────────────────────┘
 
-Step 2 of 3: Claude Code (optional)
-┌──────────────────────────────────────────────────────────────┐
-│  DDD can send specs directly to Claude Code for              │
-│  implementation. Do you have Claude Code installed?           │
-│                                                                │
-│  [Check] → ✓ Found: claude v1.x at /usr/local/bin/claude   │
-│                                                                │
-│  ○ Yes, use Claude Code for implementation                   │
-│  ○ No, I'll generate prompts and copy them manually          │
-│                                                                │
-│                                   [← Back]   [Next →]       │
-└──────────────────────────────────────────────────────────────┘
-
-Step 3 of 3: Your first project
+Step 2 of 2: Get Started
 ┌──────────────────────────────────────────────────────────────┐
 │  How would you like to start?                                 │
 │                                                                │
-│  ● Create a new project (recommended)                        │
-│    → Opens the New Project wizard                            │
+│  ● New Project                                               │
+│    Create a new DDD project from scratch                     │
 │                                                                │
-│  ○ Open an existing DDD project                              │
-│    → File picker to select a folder with specs/              │
+│  ○ Open Existing                                             │
+│    Open an existing DDD project folder                       │
 │                                                                │
-│  ○ Explore with a sample project                             │
-│    → Opens a pre-built example project (read-only)           │
-│    → Includes a sample domain with 3 flows to click around   │
+│  ○ Explore Sample                                            │
+│    Open a pre-built sample project with 3 domains and 5 flows│
 │                                                                │
 │                                   [← Back]   [Get Started]  │
 └──────────────────────────────────────────────────────────────┘
@@ -4426,7 +3343,7 @@ Step 3 of 3: Your first project
 
 **What first-run creates:**
 - `~/.ddd-tool/` directory
-- `~/.ddd-tool/settings.json` with chosen LLM config
+- `~/.ddd-tool/settings.json` with defaults
 - `~/.ddd-tool/recent-projects.json` (empty)
 - `~/.ddd-tool/first-run-completed: true` flag
 
@@ -4458,17 +3375,6 @@ Every operation in the DDD Tool can fail. Each failure type has a defined behavi
 | Uncommitted changes on pull | Toast: "Cannot pull — uncommitted changes. Commit or stash first." | Offer [Commit now] or [Stash & pull] buttons. |
 | Push rejected | Toast: "Push rejected — remote has new changes. Pull first." | Offer [Pull & retry] button. |
 | Auth failed | Toast: "Git authentication failed. Check your credentials." | Link to Git settings. |
-
-**LLM errors:**
-
-| Error | User sees | Recovery |
-|-------|-----------|----------|
-| API key invalid | Chat panel: "API key invalid for {provider}. Check Settings → LLM." | Link to settings. |
-| Rate limited | Chat panel: "Rate limited by {provider}. Retrying in {seconds}..." | Auto-retry with exponential backoff (3 attempts, 5s/15s/45s). |
-| Timeout (30s) | Chat panel: "Request timed out. The model may be overloaded." | [Retry] button. If repeated, suggest switching model. |
-| Context too long | Chat panel: "Context exceeds model limit. Reducing context..." | Auto-trim: remove oldest chat messages, summarize memory layers, retry. |
-| Provider down | Chat panel: "Cannot reach {provider}." | Auto-fallback to next model in the fallback chain. Toast: "Fell back to {model}." |
-| Malformed response | Chat panel: "Couldn't parse LLM response. Retrying..." | Retry once. If still malformed, show raw response with "Report bug" link. |
 
 **Claude Code / PTY errors:**
 
@@ -4523,7 +3429,6 @@ The DDD Tool supports full undo/redo for all canvas and spec operations. This is
 | Connect nodes | Remove the connection |
 | Disconnect nodes | Restore the connection |
 | Edit spec field | Revert to previous value |
-| Apply ghost preview | Remove all ghost-applied nodes/connections |
 | Accept reconciliation item | Revert spec to pre-accept state |
 | Bulk operations (paste, duplicate) | Remove all pasted/duplicated items |
 
@@ -4534,7 +3439,6 @@ The DDD Tool supports full undo/redo for all canvas and spec operations. This is
 | Git commit | Use `git revert` — Git's own undo |
 | Claude Code implementation | Code is in files — use Git to revert |
 | File save (YAML write) | Previous version in Git history |
-| LLM chat messages | Chat is append-only log |
 | Settings changes | Not flow-level state |
 
 **Implementation approach: Command pattern with immutable snapshots**
@@ -4758,7 +3662,7 @@ The validation panel is accessible from:
 │   • Terminal "return_error" has no response body defined      │
 │     [Select node]                                             │
 │                                                                │
-│ [Fix all with AI ✨]  [Dismiss warnings]                     │
+│ [Dismiss warnings]                                            │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -4794,30 +3698,8 @@ The validation panel is accessible from:
 │ ✓ All referenced schemas exist                                │
 │ ✓ No inline/file schema divergence                           │
 │                                                                │
-│ [Fix all with AI ✨]                                          │
 └──────────────────────────────────────────────────────────────┘
 ```
-
-#### "Fix All with AI" Action
-
-The "Fix all with AI ✨" button sends validation issues to the Design Assistant LLM with context:
-
-```
-The following validation issues were found in flow api/user-register:
-
-1. Error code "USER_EXISTS" not found in errors.yaml
-   Available error codes: VALIDATION_ERROR, NOT_FOUND, DUPLICATE_ENTRY, ...
-
-2. Terminal "return_success" has no status code
-   This is a successful response terminal for a POST endpoint.
-
-3. Input field "name" has max_length: 100 but no error message.
-
-For each issue, suggest a fix. Output as JSON:
-[{ "issue": 1, "fix_type": "update_spec", "node_id": "...", "field": "...", "value": "..." }]
-```
-
-The LLM suggests fixes, shown as ghost changes (same Apply/Discard pattern as other LLM features). The user reviews before accepting.
 
 #### Validation on Canvas (Real-Time Indicators)
 
@@ -5444,7 +4326,7 @@ The DDD Tool parses this structured output from the terminal after Claude Code f
 
 ##### Layer 2: Code → Spec Reconciliation
 
-After implementation, the DDD Tool's Design Assistant (the embedded LLM) reads the generated code files and compares them against the flow spec. It produces a **reconciliation report**:
+After implementation, the DDD Tool reads the generated code files and compares them against the flow spec. It produces a **reconciliation report**:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -5477,8 +4359,8 @@ After implementation, the DDD Tool's Design Assistant (the embedded LLM) reads t
 **How reconciliation works:**
 
 1. The DDD Tool reads all files listed in `.ddd/mapping.yaml` for the flow
-2. It sends both the flow spec YAML and the implementation code to the Design Assistant LLM
-3. The LLM compares them and outputs a structured JSON reconciliation report
+2. It compares the flow spec YAML against the implementation code (via hash comparison and structural analysis)
+3. Differences are identified and categorized (matching, code-only, spec-only)
 4. The DDD Tool displays the report in the Implementation Panel
 
 **Reconciliation actions per item:**
@@ -5489,7 +4371,7 @@ After implementation, the DDD Tool's Design Assistant (the embedded LLM) reads t
 | **Remove from code** | Builds a targeted prompt for Claude Code: "Remove {item} from the implementation — it's not in the spec." |
 | **Ignore** | Marks this item as a known deviation. Stored in `.ddd/mapping.yaml` under `accepted_deviations`. Won't trigger drift warnings again. |
 
-**Accept into spec** is the most powerful action — it reverse-engineers code changes back into the flow diagram. For example, if Claude Code added a `rate_limit` middleware, accepting it adds a process node to the flow with the rate limiting spec filled in. The LLM generates the node spec based on what the code actually does.
+**Accept into spec** is the most powerful action — it reverse-engineers code changes back into the flow diagram. For example, if Claude Code added a `rate_limit` middleware, accepting it adds a process node to the flow with the rate limiting spec filled in.
 
 ##### Layer 3: Sync Score
 
@@ -5721,7 +4603,7 @@ The DDD Tool generates actual test code from the derived test specification. The
 
 1. DDD Tool reads the test specification (Level 1) for the flow
 2. It detects the test framework from architecture.yaml (pytest, jest, go test, etc.)
-3. It generates test code using the Design Assistant LLM, providing:
+3. It generates test code using Claude Code, providing:
    - The test specification (paths + boundary tests)
    - The flow spec YAML (for exact error messages, status codes, field names)
    - The architecture.yaml testing section (for conventions, fixtures, patterns)
@@ -5838,7 +4720,7 @@ After implementation and test execution, the DDD Tool compares actual test resul
 
 1. Tests run (from the Test Runner, section 4)
 2. DDD Tool reads the test output and the derived test specification
-3. The Design Assistant LLM compares:
+3. The DDD Tool compares:
    - Expected outcomes from the spec (status codes, error messages, response shapes)
    - Actual test results (pass/fail, response bodies, error messages)
 4. Produces a spec compliance report
@@ -6118,7 +5000,7 @@ components:
 - Error codes change in `errors.yaml`
 - Schemas change in `specs/schemas/`
 
-**Preview in DDD Tool:** A read-only "API Docs" tab in the Sidebar shows the generated OpenAPI rendered as endpoint documentation. Clicking an endpoint navigates to that flow on the canvas.
+**Preview:** The generated OpenAPI spec can be viewed with any OpenAPI renderer (e.g., Swagger UI, Redoc) or served alongside the application.
 
 ---
 
@@ -6376,7 +5258,7 @@ flow:
         status: "$.response.status"
 ```
 
-**DDD Tool preview:** The Memory Panel shows an "Observability" section listing configured metrics and their current definitions, so the LLM Design Assistant knows about them when suggesting flow changes.
+**DDD Tool integration:** Observability configuration is defined in architecture.yaml and applied by Claude Code during implementation.
 
 ---
 
@@ -6475,7 +5357,7 @@ trigger:
     audit: user.register              # Audit event name
 ```
 
-**DDD Tool integration:** When designing a flow, the Inline Assist knows about the security config. Right-click a trigger node → **✨ Add security** suggests appropriate rate limiting, auth requirements, and audit events based on the flow type and the architecture.yaml security section.
+**DDD Tool integration:** Security configuration is defined in architecture.yaml and applied by Claude Code during implementation. Flow-level security overrides (rate limits, auth requirements, audit events) are specified in the trigger node's spec.
 
 ---
 
@@ -6628,28 +5510,7 @@ flowchart TD
 
 **Output location:** `generated/mermaid/{domain}/{flow}.md`
 
-The Mermaid generator is available in the Generator Panel alongside OpenAPI, Dockerfile, docker-compose, Kubernetes, and CI/CD generators. All generators share the same preview → save workflow.
-
-### Generator Panel
-
-The Generator Panel (`Cmd+G`) provides a unified interface for all production generators:
-
-| Generator | Output | From |
-|-----------|--------|------|
-| OpenAPI | `openapi.yaml` | HTTP flow triggers + schemas + errors |
-| Dockerfile | `Dockerfile` | system.yaml + architecture.yaml deployment |
-| Docker Compose | `docker-compose.yaml` | system.yaml services + deployment config |
-| Kubernetes | `k8s/*.yaml` | architecture.yaml kubernetes section |
-| CI/CD | `.github/workflows/ci.yaml` | architecture.yaml + system.yaml |
-| Mermaid | `generated/mermaid/**/*.md` | Flow nodes + connections |
-
-**Workflow:**
-1. Open Generator Panel (Cmd+G or sidebar button)
-2. Select a generator from the dropdown
-3. Preview the generated output in the panel
-4. Click "Save" to write files to disk in the `generated/` directory
-
-The generator panel is managed by the `generator-store` (Zustand) which tracks panel open/close state, selected generator, generated files, and save status.
+The Mermaid export utility generates diagrams from flow specs and can be triggered from the DDD Tool or via Claude Code commands.
 
 ---
 
@@ -6717,48 +5578,32 @@ The generator panel is managed by the `generator-store` (Zustand) which tracks p
 - Portal nodes for cross-domain navigation
 - Spec panel (basic fields + agent-specific + orchestration panels)
 - YAML export (traditional, agent, and orchestration flow formats)
-- **LLM Design Assistant:** Chat Panel + Inline Assist (context menu) for flow generation, spec auto-fill, review, and suggestions
-- **Ghost Preview:** LLM-generated nodes appear as ghost nodes (dashed borders) with Apply/Discard before committing
-- **Multi-Model Architecture:** Model registry with multiple providers (Anthropic, OpenAI, Ollama, any OpenAI-compatible), task-to-model routing, model picker UI, cost tracking
-- **LLM Context Builder:** Automatically assembles project context (system, domain, flow, schemas, error codes) for every LLM request
-- **Project Memory:** 5-layer persistent memory (project summary, spec index, decision log, cross-flow map, implementation status) with context budgeting
-- **Memory Panel:** UI for viewing project summary, implementation status, design decisions, and flow dependencies
 - **Claude Code Integration:** Implementation Panel with embedded PTY terminal for interactive Claude Code sessions
 - **Prompt Builder:** Auto-constructs optimal prompts from specs (schema resolution, agent detection, update mode)
 - **Stale Detection:** SHA-256 hash comparison to detect spec-vs-code drift with human-readable change summaries
 - **Test Runner:** Auto-runs tests after implementation, displays results linked to flows, fix-and-retest loop
 - **CLAUDE.md Auto-Generation:** Maintains CLAUDE.md with project structure, spec files, domains, rules (preserves custom section)
 - **Implementation Queue:** Batch processing of pending/stale flows with sequential Claude Code invocation
-- **Reverse Drift Detection:** Implementation Report parsing, LLM-powered code→spec reconciliation, sync scores, accept/remove/ignore actions
-- **OpenAPI Generation:** Auto-generate OpenAPI 3.0 spec from HTTP flow triggers, input/output schemas, error codes
-- **CI/CD Pipeline Generation:** Auto-generate GitHub Actions workflow from architecture.yaml (test, lint, type-check, spec-code sync check)
-- **Database Migration Tracking:** Schema hash tracking, change detection, migration prompt generation for Claude Code
-- **Observability Config:** Structured logging, OpenTelemetry tracing, Prometheus metrics, health checks — all defined in architecture.yaml and auto-generated
-- **Security Layer:** Rate limiting, CORS, security headers, input sanitization, audit logging — defined in architecture.yaml and auto-generated
-- **Deployment/IaC Generation:** Auto-generate Dockerfile, docker-compose, Kubernetes manifests from architecture.yaml deployment config
-- **Diagram-Derived Test Generation:** Auto-derive test cases from flow paths + validation boundaries, generate test code (pytest/jest), spec compliance validation after implementation
-- **Project Launcher:** Create new project wizard (3-step), open existing, import from Git, recent projects list
-- **Settings Screen:** Global + per-project settings for LLM providers, models, Claude Code, testing, editor preferences, Git
-- **First-Run Experience:** Guided setup wizard (connect LLM, detect Claude Code, create/open/sample project)
-- **Error Handling:** Defined recovery for file, Git, LLM, PTY, and canvas errors with auto-retry, fallback, and crash recovery
-- **Undo/Redo:** Per-flow command pattern with immutable snapshots (Cmd+Z / Cmd+Shift+Z), 100-level history
+- **Reverse Drift Detection:** Implementation Report parsing, code→spec reconciliation, sync scores, accept/remove/ignore actions
 - **Design Validation:** Flow-level (graph completeness, spec completeness, reference integrity), domain-level (duplicate detection, internal event matching), system-level (cross-domain event wiring, payload shape matching, portal integrity, orchestration cycle detection), real-time canvas indicators, implementation gate
 - **Entity Management:** Add/rename/delete domains (L1), add/rename/delete/duplicate/move flows (L2), rename/clear flows (L3) — all via right-click context menu with file operations and cross-reference updates
 - **Extended Node Types:** 6 additional traditional flow nodes (data_store, service_call, event, loop, parallel, sub_flow) with spec editors, dual output handles (sourceHandle routing), and validation rules
 - **Flow Templates:** Pre-built flow templates for common patterns — 4 traditional (REST API Endpoint, CRUD Entity, Webhook Handler, Event Processor) + 4 agent (RAG Agent, Customer Support Agent, Code Review Agent, Data Pipeline Agent) — insert fully wired node graphs with one click
-- **Mermaid Generator:** Generate Mermaid flowchart diagrams from flow specs, output as markdown files with embedded Mermaid code blocks
-- **Generator Panel:** Unified panel for all generators (OpenAPI, Dockerfile, docker-compose, Kubernetes, CI/CD, Mermaid) with preview, save-to-disk, and API docs parsing
+- **Mermaid Export:** Generate Mermaid flowchart diagrams from flow specs, output as markdown files with embedded Mermaid code blocks
 - **Minimap Toggle:** Cmd+Shift+M to toggle React Flow minimap on the flow canvas
 - **Validation Presets:** InputNode spec editor includes presets for common field patterns (username, email, password)
 - **Claude Code Commands:** 4 slash commands (`/ddd-create`, `/ddd-implement`, `/ddd-update`, `/ddd-sync`) for the full design-implement-iterate-sync workflow
-- LLM prompt generation
+- **Project Launcher:** Create new project, open existing, import from Git, recent projects list
+- **Settings Screen:** Global + per-project settings for Claude Code, testing, editor preferences, Git
+- **First-Run Experience:** Guided setup wizard (detect Claude Code, create/open/sample project)
+- **Error Handling:** Defined recovery for file, Git, PTY, and canvas errors with auto-retry, fallback, and crash recovery
+- **Undo/Redo:** Per-flow command pattern with immutable snapshots (Cmd+Z / Cmd+Shift+Z), 100-level history
 - Single user, local storage
 
 **Excluded (v0.2+):**
 - Real-time collaboration
 - Reverse engineering
 - Community library
-- Live agent testing/debugging (run agent from within DDD Tool)
 
 ## Potential Extensions
 
