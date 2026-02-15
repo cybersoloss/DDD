@@ -16,7 +16,7 @@ You are building **DDD (Design Driven Development)** — a desktop app for visua
 - **Breadcrumb navigation** between sheet levels
 - **Auto-generated** System Map (L1) and Domain Map (L2) from specs
 - **Portal nodes** for cross-domain navigation
-- Canvas with 5 node types (trigger, input, process, decision, terminal)
+- Canvas with 5 basic node types (trigger, input, process, decision, terminal) — extended to 19 traditional + 4 agent + 4 orchestration = 27 total in later sessions
 - Right panel for editing node specs
 - Save/load YAML files
 - Basic Git status display
@@ -408,11 +408,13 @@ export interface DuplicateFlowPayload {
 import type { Position } from './sheet';
 import type { ValidationIssue } from './validation';
 
-// --- Node types (all 19) ---
+// --- Node types (all 27) ---
 
 export type DddNodeType =
   | 'trigger' | 'input' | 'process' | 'decision' | 'terminal'
   | 'data_store' | 'service_call' | 'event' | 'loop' | 'parallel' | 'sub_flow' | 'llm_call'
+  | 'delay' | 'cache' | 'transform'
+  | 'collection' | 'parse' | 'crypto' | 'batch' | 'transaction'
   | 'agent_loop' | 'guardrail' | 'human_gate'
   | 'orchestrator' | 'smart_router' | 'handoff' | 'agent_group';
 
@@ -493,12 +495,14 @@ export interface LoopSpec {
   collection?: string;
   iterator?: string;
   break_condition?: string;
+  on_error?: 'continue' | 'break' | 'fail';
+  accumulate?: { field?: string; strategy?: 'append' | 'merge' | 'sum' | 'last'; output?: string };
   description?: string;
   [key: string]: unknown;
 }
 
 export interface ParallelSpec {
-  branches?: string[];
+  branches?: (string | { label: string; condition?: string })[];
   join?: 'all' | 'any' | 'n_of';
   join_count?: number;
   timeout_ms?: number;
@@ -521,15 +525,19 @@ export interface LlmCallSpec {
   temperature?: number;
   max_tokens?: number;
   structured_output?: Record<string, unknown>;
+  context_sources?: Record<string, { from: string; transform?: string }>;
   retry?: { max_attempts?: number; backoff_ms?: number };
   description?: string;
   [key: string]: unknown;
 }
 
-// Union of all spec types
+// Union of all spec types (27 total)
 export type NodeSpec = TriggerSpec | InputSpec | ProcessSpec | DecisionSpec | TerminalSpec
   | DataStoreSpec | ServiceCallSpec | EventNodeSpec | LoopSpec | ParallelSpec
-  | SubFlowSpec | LlmCallSpec | AgentLoopSpec | GuardrailSpec | HumanGateSpec
+  | SubFlowSpec | LlmCallSpec
+  | DelaySpec | CacheSpec | TransformSpec
+  | CollectionSpec | ParseSpec | CryptoSpec | BatchSpec | TransactionSpec
+  | AgentLoopSpec | GuardrailSpec | HumanGateSpec
   | OrchestratorSpec | SmartRouterSpec | HandoffSpec | AgentGroupSpec;
 
 // --- Flow node (persisted to YAML) ---
@@ -578,6 +586,12 @@ export interface DddNodeData extends Record<string, unknown> {
 | `loop` | `body` / `done` | "Body / Done" (teal / muted) |
 | `parallel` | `branch-0`, `branch-1`, ... / `done` | Dynamic labels (pink / muted) |
 | `smart_router` | Dynamic route names | Route labels (pink) |
+| `cache` | `hit` / `miss` | "Hit / Miss" (amber / muted) |
+| `collection` | `result` / `empty` | "Result / Empty" (cyan / muted) |
+| `parse` | `success` / `error` | "Ok / Err" (lime / red) |
+| `crypto` | `success` / `error` | "Ok / Err" (fuchsia / red) |
+| `batch` | `done` / `error` | "Done / Err" (rose / red) |
+| `transaction` | `committed` / `rolled_back` | "Ok / Rollback" (amber / red) |
 
 // ─── Custom Fields ───
 // All node spec interfaces support extensibility via index signatures:
@@ -13921,7 +13935,7 @@ Session 17 is a post-MVP enhancement session that adds missing node types and qu
 
 ### Extended Node Types
 
-Add 6 traditional flow node types to complete the spec's full set of 11:
+Add 6 traditional flow node types toward the spec's full set of 19:
 
 | Node | Symbol | Purpose | Spec Panel Fields |
 |------|--------|---------|-------------------|
@@ -13932,8 +13946,8 @@ Add 6 traditional flow node types to complete the spec's full set of 11:
 | `parallel` | ═ | Concurrent execution branches | branches (list of node chains), join strategy (all/any/n-of), timeout |
 | `sub_flow` | ⊞ | Call another flow as subroutine | flow_ref (domain/flow-id), input mapping, output mapping |
 
-**Types** — See the consolidated `src/types/flow.ts` section in Phase 3 (Day 1-2). All 19 node types and their spec interfaces are defined there, including:
-- `DddNodeType` union with all 19 types (including `llm_call`)
+**Types** — See the consolidated `src/types/flow.ts` section in Phase 3 (Day 1-2). All 27 node types and their spec interfaces are defined there, including:
+- `DddNodeType` union with all 27 types (19 traditional + 4 agent + 4 orchestration)
 - `DataStoreSpec` with `pagination` and `sort` fields (for read operations)
 - `ServiceCallSpec` with `error_mapping` for HTTP status → error code mapping
 - `TerminalSpec` with `status` (HTTP code) and `body` (response body) fields
@@ -13956,6 +13970,14 @@ import { EventNode } from './EventNode';
 import { LoopNode } from './LoopNode';
 import { ParallelNode } from './ParallelNode';
 import { SubFlowNode } from './SubFlowNode';
+import { DelayNode } from './DelayNode';
+import { CacheNode } from './CacheNode';
+import { TransformNode } from './TransformNode';
+import { CollectionNode } from './CollectionNode';
+import { ParseNode } from './ParseNode';
+import { CryptoNode } from './CryptoNode';
+import { BatchNode } from './BatchNode';
+import { TransactionNode } from './TransactionNode';
 
 export const nodeTypes: NodeTypes = {
   // ... existing 12 nodes ...
@@ -13965,6 +13987,14 @@ export const nodeTypes: NodeTypes = {
   loop: LoopNode,
   parallel: ParallelNode,
   sub_flow: SubFlowNode,
+  delay: DelayNode,
+  cache: CacheNode,
+  transform: TransformNode,
+  collection: CollectionNode,
+  parse: ParseNode,
+  crypto: CryptoNode,
+  batch: BatchNode,
+  transaction: TransactionNode,
 };
 ```
 
@@ -13980,6 +14010,14 @@ const extendedTraditionalNodes = [
   { type: 'loop', label: 'Loop', icon: Repeat },
   { type: 'parallel', label: 'Parallel', icon: Columns },
   { type: 'sub_flow', label: 'Sub-Flow', icon: GitMerge },
+  { type: 'delay', label: 'Delay', icon: Clock },
+  { type: 'cache', label: 'Cache', icon: HardDrive },
+  { type: 'transform', label: 'Transform', icon: Shuffle },
+  { type: 'collection', label: 'Collection', icon: Filter },
+  { type: 'parse', label: 'Parse', icon: FileText },
+  { type: 'crypto', label: 'Crypto', icon: Lock },
+  { type: 'batch', label: 'Batch', icon: Layers },
+  { type: 'transaction', label: 'Transaction', icon: ShieldCheck },
   { type: 'terminal', label: 'Terminal', icon: Square },
 ];
 ```
@@ -13997,17 +14035,26 @@ const extendedTraditionalNodes = [
 
 ```typescript
 const KNOWN_KEYS: Record<string, Set<string>> = {
-  trigger: new Set(['event', 'source', 'description']),
+  trigger: new Set(['event', 'source', 'filter', 'description']),
   input: new Set(['fields', 'validation', 'description']),
-  process: new Set(['action', 'service', 'description']),
+  process: new Set(['action', 'service', 'category', 'inputs', 'outputs', 'description']),
   decision: new Set(['condition', 'trueLabel', 'falseLabel', 'description']),
-  terminal: new Set(['outcome', 'description', 'status', 'body']),
-  data_store: new Set(['operation', 'model', 'data', 'query', 'description', 'pagination', 'sort']),
-  service_call: new Set(['method', 'url', 'headers', 'body', 'timeout_ms', 'retry', 'error_mapping', 'description']),
-  event: new Set(['direction', 'event_name', 'payload', 'async', 'description']),
-  loop: new Set(['collection', 'iterator', 'break_condition', 'description']),
+  terminal: new Set(['outcome', 'description', 'status', 'body', 'response_type', 'headers']),
+  data_store: new Set(['operation', 'model', 'data', 'query', 'description', 'pagination', 'sort', 'batch', 'upsert_key', 'include', 'returning']),
+  service_call: new Set(['method', 'url', 'headers', 'body', 'timeout_ms', 'retry', 'error_mapping', 'request_config', 'description']),
+  event: new Set(['direction', 'event_name', 'payload', 'payload_source', 'async', 'description']),
+  loop: new Set(['collection', 'iterator', 'break_condition', 'on_error', 'accumulate', 'description']),
   parallel: new Set(['branches', 'join', 'join_count', 'timeout_ms', 'description']),
   sub_flow: new Set(['flow_ref', 'input_mapping', 'output_mapping', 'description']),
+  llm_call: new Set(['model', 'system_prompt', 'prompt_template', 'temperature', 'max_tokens', 'structured_output', 'context_sources', 'retry', 'description']),
+  delay: new Set(['min_ms', 'max_ms', 'strategy', 'description']),
+  cache: new Set(['key', 'ttl_ms', 'store', 'description']),
+  transform: new Set(['input_schema', 'output_schema', 'field_mappings', 'description']),
+  collection: new Set(['operation', 'input', 'predicate', 'key', 'direction', 'accumulator', 'output', 'description']),
+  parse: new Set(['format', 'input', 'strategy', 'library', 'output', 'description']),
+  crypto: new Set(['operation', 'algorithm', 'key_source', 'input_fields', 'output_field', 'encoding', 'description']),
+  batch: new Set(['input', 'operation_template', 'concurrency', 'on_error', 'output', 'description']),
+  transaction: new Set(['isolation', 'steps', 'rollback_on_error', 'description']),
   // ... agent and orchestration types similarly
 };
 ```
@@ -14113,8 +14160,9 @@ Toggled with `Cmd+Shift+M` keyboard shortcut.
 
 ### Session 17 Success Criteria
 
-- [ ] All 6 new node types render on canvas with correct icons and badges
-- [ ] All 6 node types have spec panel editors with appropriate fields
+- [ ] All 6 new node types render on canvas with correct icons and badges (Session 17)
+- [ ] All 8 additional node types render correctly (Session 18: delay, cache, transform, collection, parse, crypto, batch, transaction)
+- [ ] All 14 new node types have spec panel editors with appropriate fields
 - [ ] DataStoreNode model selector shows schemas from project
 - [ ] ServiceCallNode supports timeout and retry configuration
 - [ ] EventNode autocompletes event names from domain.yaml
@@ -14124,6 +14172,121 @@ Toggled with `Cmd+Shift+M` keyboard shortcut.
 - [ ] All 6 nodes serialize to/from YAML correctly
 - [ ] NodeToolbar shows extended palette for traditional flows
 - [ ] Validation rules added for new node types (e.g. data_store must have model)
+
+---
+
+## Session 18: Extended Node Types + Field Extensions
+
+Session 18 adds 8 more traditional node types (completing the full set of 19 traditional + 4 agent + 4 orchestration = 27 total) and extends 7 existing node spec interfaces with additional fields from the DDD Usage Guide.
+
+### New Node Types (8)
+
+| Node | Icon | Color | Purpose | Output Handles |
+|------|------|-------|---------|----------------|
+| `delay` | Clock | blue-600 | Wait/throttle with fixed or random strategy | Single output |
+| `cache` | HardDrive | amber-500 | Cache lookup with hit/miss branching | `hit` / `miss` |
+| `transform` | Shuffle | indigo-500 | Field mapping between schemas | Single output |
+| `collection` | Filter | cyan-500 | Filter, sort, deduplicate, merge, group_by, aggregate, reduce, flatten | `result` / `empty` |
+| `parse` | FileText | lime-500 | Structured extraction (RSS, Atom, HTML, XML, JSON, CSV, Markdown) | `success` / `error` |
+| `crypto` | Lock | fuchsia-500 | Encrypt, decrypt, hash, sign, verify, generate key | `success` / `error` |
+| `batch` | Layers | rose-500 | Execute operation template against collection with concurrency control | `done` / `error` |
+| `transaction` | ShieldCheck | amber-600 | Atomic multi-step database operation with rollback on error | `committed` / `rolled_back` |
+
+### Spec Interfaces (new)
+
+```typescript
+export interface DelaySpec {
+  min_ms?: number; max_ms?: number;
+  strategy?: 'random' | 'fixed';
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface CacheSpec {
+  key?: string; ttl_ms?: number;
+  store?: 'redis' | 'memory';
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface TransformSpec {
+  input_schema?: string; output_schema?: string;
+  field_mappings?: Record<string, string>;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface CollectionSpec {
+  operation?: 'filter' | 'sort' | 'deduplicate' | 'merge' | 'group_by' | 'aggregate' | 'reduce' | 'flatten';
+  input?: string; predicate?: string; key?: string;
+  direction?: 'asc' | 'desc'; accumulator?: string; output?: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface ParseSpec {
+  format?: 'rss' | 'atom' | 'html' | 'xml' | 'json' | 'csv' | 'markdown';
+  input?: string; strategy?: 'strict' | 'lenient' | 'streaming';
+  library?: string; output?: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface CryptoSpec {
+  operation?: 'encrypt' | 'decrypt' | 'hash' | 'sign' | 'verify' | 'generate_key';
+  algorithm?: string; key_source?: { env?: string; vault?: string };
+  input_fields?: string[]; output_field?: string;
+  encoding?: 'base64' | 'hex';
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface BatchSpec {
+  input?: string;
+  operation_template?: { type?: string; dispatch_field?: string; configs?: Record<string, unknown> };
+  concurrency?: number; on_error?: 'continue' | 'stop';
+  output?: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface TransactionSpec {
+  isolation?: 'read_committed' | 'repeatable_read' | 'serializable';
+  steps?: Array<{ action: string; rollback?: string }>;
+  rollback_on_error?: boolean;
+  description?: string;
+  [key: string]: unknown;
+}
+```
+
+### Field Extensions (7 existing specs)
+
+| Spec | New Fields |
+|------|-----------|
+| `TriggerSpec` | `filter?: Record<string, unknown>` |
+| `ProcessSpec` | `category?: 'security' \| 'transform' \| 'integration' \| 'business_logic' \| 'infrastructure'`, `inputs?: string[]`, `outputs?: string[]` |
+| `DataStoreSpec` | Extended `operation` union with `'upsert' \| 'create_many' \| 'update_many' \| 'delete_many'`, `include?: Record<string, unknown>`, `returning?: boolean` |
+| `EventNodeSpec` | `payload_source?: string` |
+| `LoopSpec` | `accumulate?: { field?: string; strategy?: 'append' \| 'merge' \| 'sum' \| 'last'; output?: string }` |
+| `ParallelSpec` | `branches` broadened to `(string \| { label: string; condition?: string })[]` |
+| `LlmCallSpec` | `context_sources?: Record<string, { from: string; transform?: string }>` |
+
+### Validation Rules (new)
+
+Added to `checkExtendedNodes()` in `src/utils/flow-validator.ts`:
+- `collection`: error if no operation, error if no input
+- `parse`: error if no format, error if no input
+- `crypto`: error if no operation, error if no algorithm, error if no key_source
+- `batch`: error if no input, error if no operation_template
+- `transaction`: error if steps < 2
+
+### Updated Registrations
+
+- `nodes/index.ts`: 27 entries in `nodeTypes` object
+- `editors/index.ts`: 27 entries in `specEditors` object
+- `ExtraFieldsEditor.tsx`: 27 entries in `KNOWN_KEYS` map (existing entries extended with new field names)
+- `NodeToolbar.tsx`: 8 new items in `TRADITIONAL_ITEMS` palette
+- `flow-store.ts`: `defaultSpec()` and `defaultLabel()` handle all 27 types
 
 ---
 

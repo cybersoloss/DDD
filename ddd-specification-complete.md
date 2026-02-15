@@ -319,6 +319,14 @@ Levels 1 and 2 are **derived views** — their content comes from spec files. Us
 | Loop | ↺ | Iteration |
 | Parallel | ═ | Concurrent execution |
 | Sub-flow | ▢ | Call another flow (navigable link) |
+| Delay | ⏱ | Wait/throttle (fixed or random) |
+| Cache | ⊟ | Cache lookup with hit/miss branching |
+| Transform | ⇌ | Field mapping between schemas |
+| Collection | ⊞ | Filter, sort, deduplicate, merge, group, aggregate, reduce, flatten |
+| Parse | ⊡ | Structured extraction (RSS, Atom, HTML, XML, JSON, CSV, Markdown) |
+| Crypto | 🔒 | Encrypt, decrypt, hash, sign, verify, generate key |
+| Batch | ▤ | Execute operation template against collection with concurrency control |
+| Transaction | ⊛ | Atomic multi-step database operation with rollback on error |
 
 ### Agent Nodes (Level 3) — Agent Flows
 
@@ -326,11 +334,10 @@ Levels 1 and 2 are **derived views** — their content comes from spec files. Us
 |------|------|---------|
 | LLM Call | ◆ | Call an LLM with prompt template, model config, structured output |
 | Agent Loop | ↻ | Reason → select tool → execute → observe → repeat until done |
-| Tool | 🔧 | Tool definition available to an agent (name, description, params) |
-| Memory | ◈ | Vector store read/write, conversation history, context window |
 | Guardrail | ⛨ | Input/output content filter, PII detection, topic restriction |
 | Human Gate | ✋ | Pause flow, notify human, await approval, timeout/escalation |
-| Router | ◇◇ | Semantic routing — LLM classifies intent, routes to sub-agents |
+
+> **Note:** Tool definitions, memory stores, and semantic routing are configured as fields within the Agent Loop spec (tools[], memory[], and via Smart Router), not as standalone canvas nodes. The DDD Tool's `DddNodeType` union has 27 types: 19 traditional + 4 agent (llm_call, agent_loop, guardrail, human_gate) + 4 orchestration.
 
 ### Orchestration Nodes (Level 3) — Multi-Agent Flows
 
@@ -373,6 +380,12 @@ Nodes with multiple output paths use named `sourceHandle` values to distinguish 
 | Loop | `body` / `done` | "Body / Done" labels | Teal / Muted |
 | Parallel | `branch-0`, `branch-1`, ... / `done` | Dynamic branch labels | Pink / Muted |
 | Smart Router | Dynamic route names | Route labels | Pink |
+| Cache | `hit` / `miss` | "Hit / Miss" labels | Amber / Muted |
+| Collection | `result` / `empty` | "Result / Empty" labels | Cyan / Muted |
+| Parse | `success` / `error` | "Ok / Err" labels | Lime / Red |
+| Crypto | `success` / `error` | "Ok / Err" labels | Fuchsia / Red |
+| Batch | `done` / `error` | "Done / Err" labels | Rose / Red |
+| Transaction | `committed` / `rolled_back` | "Ok / Rollback" labels | Amber / Red |
 
 **Connection YAML format with sourceHandle:**
 
@@ -3034,7 +3047,7 @@ The validator checks:
 
 ### Visual Editor (Level 3 — Flow Sheet)
 - Canvas with drag-drop nodes
-- 11 node types (trigger, input, process, decision, service call, data store, event, terminal, loop, parallel, sub-flow)
+- 19 node types (trigger, input, process, decision, service call, data store, event, terminal, loop, parallel, sub-flow, delay, cache, transform, collection, parse, crypto, batch, transaction)
 - Connection drawing between nodes
 - Sub-flow nodes are navigable links to other flow sheets
 
@@ -6695,7 +6708,7 @@ The generator panel is managed by the `generator-store` (Zustand) which tracks p
 **Included:**
 - Multi-level canvas (System Map → Domain Map → Flow Sheet)
 - Breadcrumb navigation between levels
-- Canvas + 5 basic node types for traditional flows (Level 3)
+- Canvas + 19 traditional node types for traditional flows (Level 3)
 - Agent flow support: Agent Loop, Tool, LLM Call, Memory, Guardrail, Human Gate, Router nodes
 - Orchestration support: Orchestrator, Smart Router, Handoff, Agent Group nodes
 - Agent-centric canvas layout for agent flows

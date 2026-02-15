@@ -52,6 +52,14 @@ The root project config. Lists all domains:
 }
 ```
 
+Each domain entry can include an optional `role` field:
+
+```json
+{ "name": "Users", "description": "User management and authentication", "role": "entity" }
+```
+
+Optional `role` values: `entity` (CRUD/data), `process` (automated workflows), `interface` (human-facing). Used by DDD Tool for visual differentiation at L1.
+
 Domain IDs are derived from names: lowercase, spaces replaced with hyphens (e.g., "Users" -> "users").
 
 ---
@@ -96,7 +104,17 @@ layout:
 | `flows` | DomainFlowEntry[] | List of flows in this domain |
 | `publishes_events` | EventWiring[] | Events this domain emits |
 | `consumes_events` | EventWiring[] | Events this domain listens to |
+| `owns_schemas` | string[]? | Schema names this domain owns (e.g., ["User", "Session"]) |
+| `groups` | FlowGroup[]? | Visual grouping of flows at L2 |
 | `layout` | DomainLayout | Canvas positions (managed by DDD Tool) |
+
+### FlowGroup
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Group ID |
+| `name` | string | Display name |
+| `flows` | string[] | Flow IDs in this group |
 
 ### DomainFlowEntry
 
@@ -106,6 +124,9 @@ layout:
 | `name` | string | Display name |
 | `description` | string? | What this flow does |
 | `type` | `'traditional' \| 'agent'` | Flow type |
+| `tags` | string[]? | Custom tags (e.g., ["cron", "internal", "public-api"]) |
+| `criticality` | string? | `'critical' \| 'high' \| 'normal' \| 'low'` — visual priority at L2 |
+| `throughput` | string? | Expected volume (e.g., `"~500 items/day"`) — shown as subtitle at L2 |
 
 ### EventWiring
 
@@ -117,6 +138,26 @@ layout:
 | `handled_by_flow` | string? | Which flow consumes it |
 | `description` | string? | What this event means |
 | `payload` | `Record<string, unknown>?` | Event data shape (field names and types) |
+
+### DomainDependency
+
+Cross-domain data dependencies (beyond event wiring). Shown as dashed arrows at L2.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `domain` | string | Domain ID this domain depends on |
+| `reason` | string | Why the dependency exists |
+| `flows_affected` | string[]? | Which flows in this domain use the dependency |
+
+```yaml
+depends_on:
+  - domain: settings
+    reason: "Reads API keys and social account preferences"
+    flows_affected: [generate-drafts, check-social-sources]
+  - domain: subjects
+    reason: "Reads subject keywords for content scoring"
+    flows_affected: [analyze-content]
+```
 
 ---
 
@@ -153,6 +194,14 @@ environments:
   - name: production
     url: https://api.example.com
 
+zones:
+  - id: discovery-loop
+    name: Discovery Loop
+    domains: [discovery]
+  - id: shared-pipeline
+    name: Shared Pipeline
+    domains: [content, publishing]
+
 integrations:
   twitter_api:
     base_url: "https://api.twitter.com/2"
@@ -167,6 +216,7 @@ integrations:
       backoff_ms: 1000
     headers:
       User-Agent: "my-app/1.0"
+    used_by_domains: [discovery, monitoring, publishing]
 
   stripe:
     base_url: "https://api.stripe.com/v1"
@@ -185,11 +235,117 @@ integrations:
 | `base_url` | string | Base URL for the external API |
 | `auth` | object | `{ method: 'api_key' \| 'oauth2' \| 'bearer', credentials_env: string }` |
 | `rate_limits` | object? | `{ requests_per_second?, requests_per_window?, window_seconds? }` |
-| `retry` | object? | `{ max_attempts?, backoff_ms? }` |
+| `retry` | object? | `{ max_attempts?, backoff_ms?, strategy?: 'fixed' \| 'linear' \| 'exponential', jitter?: boolean }` |
 | `timeout_ms` | number? | Request timeout in milliseconds |
 | `headers` | `Record<string, string>?` | Default headers for all requests |
+| `used_by_domains` | string[]? | Domains that use this integration (shown at L1) |
+
+#### SystemZone
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Zone ID |
+| `name` | string | Display name |
+| `domains` | string[] | Domain IDs in this zone |
 
 > **Note:** `service_call` nodes can reference integrations by name — `/ddd-implement` uses the integration config to set base URL, auth headers, retry, and rate limiting instead of repeating them per node.
+
+#### DataFlow
+
+Inter-zone directed data flow arrows, shown at L1 to visualize high-level architectural data movement.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `from` | string | Source zone or domain ID |
+| `to` | string | Target zone or domain ID |
+| `label` | string | Description of what flows |
+| `volume` | string? | `'low' \| 'medium' \| 'high'` — visual thickness hint |
+| `style` | string? | `'solid' \| 'dashed'` — visual distinction (default: solid) |
+
+```yaml
+data_flows:
+  - from: discovery-loop
+    to: shared-pipeline
+    label: "ContentDiscovered events"
+    volume: high
+  - from: shared-pipeline
+    to: publishing-loop
+    label: "DraftApproved events"
+    volume: medium
+  - from: discovery-loop
+    to: publishing-loop
+    label: "Source suggestions (flywheel)"
+    volume: low
+    style: dashed
+```
+
+#### Schedule
+
+Scheduling topology — surfaces cron schedules at L1 so you can see when flows run.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `frequency` | string | Cron expression |
+| `label` | string | Human-readable schedule description |
+| `flows` | string[] | Flow references in `domain/flow-id` format |
+
+```yaml
+schedules:
+  - frequency: "*/15 * * * *"
+    label: "Every 15 minutes"
+    flows: [monitoring/check-social-sources]
+  - frequency: "0 */4 * * *"
+    label: "Every 4 hours"
+    flows: [discovery/keyword-search]
+  - frequency: "0 2 * * *"
+    label: "Daily at 2am"
+    flows: [discovery/suggest-source, monitoring/full-source-check]
+```
+
+#### Characteristics
+
+System-level badges shown at L1 — high-level properties of the system.
+
+```yaml
+characteristics:
+  - "Event-driven"
+  - "6 cron schedules"
+  - "6 external APIs"
+  - "2-loop flywheel"
+```
+
+#### Pipeline
+
+Cross-domain event chains that trace a complete pipeline across domains. Shown at L2 as a pipeline view.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Pipeline ID |
+| `name` | string | Display name |
+| `description` | string? | What this pipeline does end-to-end |
+| `steps` | PipelineStep[] | Ordered steps across domains |
+| `spans_domains` | string[] | All domains involved |
+
+**PipelineStep fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `domain` | string | Domain ID |
+| `flow` | string | Flow ID within the domain |
+| `event_out` | string? | Event emitted to trigger the next step |
+
+```yaml
+pipelines:
+  - id: content-pipeline
+    name: Content Processing Pipeline
+    description: "End-to-end from discovery to publication"
+    steps:
+      - { domain: monitoring, flow: check-social-sources, event_out: NewContentDiscovered }
+      - { domain: content, flow: analyze-content, event_out: DraftGenerated }
+      - { domain: approval, flow: review-draft, event_out: DraftApproved }
+      - { domain: publishing, flow: publish-to-twitter, event_out: PostPublished }
+    spans_domains: [monitoring, content, approval, publishing]
+```
 
 ### 4.2 architecture.yaml
 
@@ -413,6 +569,7 @@ fields:
   - name: password_hash
     type: string
     required: true
+    encrypted: true
     constraints:
       max_length: 255
   - name: name
@@ -449,6 +606,19 @@ transitions:
   states: []
   on_invalid: reject
 ```
+
+**Schema field options** — each field in a schema's `fields` array supports these properties:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Field name |
+| `type` | string | Data type (string, number, boolean, uuid, datetime, enum, json, decimal) |
+| `required` | boolean? | Whether the field is required |
+| `format` | string? | Format hint (e.g., "email") |
+| `default` | any? | Default value |
+| `values` | string[]? | Allowed values (for enum type) |
+| `constraints` | object? | `{ unique?, max_length?, min?, max? }` |
+| `encrypted` | boolean? | Field value is encrypted at rest |
 
 The optional `transitions:` section defines valid state machine transitions for lifecycle fields:
 
@@ -518,6 +688,56 @@ value_objects:
 | `description` | string? | What this value object represents |
 
 > **Note:** Reference shared enums in schemas with `type: enum, ref: platform` instead of duplicating `values:` arrays. `/ddd-implement` reads this file to generate shared type definitions.
+
+### 4.7 shared/layers.yaml
+
+**Path:** `specs/shared/layers.yaml`
+
+Cross-cutting concern layers that span multiple nodes and domains. Layers define infrastructure behavior (retry policies, stealth config, circuit breakers) that applies to specific node types across specific domains.
+
+```yaml
+layers:
+  - id: stealth
+    name: Stealth / Anti-Detection
+    description: "Rotating user agents, proxy pools, cookie jars, headless browser fallback"
+    applies_to:
+      nodes: [service_call, parse]
+      domains: [monitoring, discovery]
+    config:
+      user_agent_pool: 50
+      proxy_rotation: per_request
+      cookie_jar: per_domain
+      headless_fallback: true
+      rate_limits:
+        twitter: { rpm: 30, daily: 500 }
+        google: { rpm: 10, daily: 100 }
+
+  - id: retry-policy
+    name: Retry Policy
+    description: "Exponential backoff with circuit breaker"
+    applies_to:
+      nodes: [service_call, batch]
+      domains: [monitoring, discovery, publishing]
+    config:
+      max_retries: 3
+      backoff: exponential
+      initial_delay_ms: 1000
+      circuit_breaker:
+        failure_threshold: 5
+        reset_timeout_ms: 60000
+```
+
+#### Layer
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique layer ID |
+| `name` | string | Display name |
+| `description` | string? | What this layer does |
+| `applies_to` | object | `{ nodes: string[], domains: string[] }` — which node types and domains this layer affects |
+| `config` | `Record<string, unknown>` | Layer-specific configuration |
+
+> **Note:** Layers don't change node specs — they're read by `/ddd-implement` to generate infrastructure code (retry wrappers, proxy config, rate limiters). In the DDD Tool, affected nodes show a layer badge.
 
 ---
 
@@ -649,9 +869,11 @@ metadata:
 | `flow` | object | Flow metadata |
 | `flow.id` | string | Unique flow ID |
 | `flow.name` | string | Display name |
-| `flow.type` | `'traditional' \| 'agent'` | Flow category |
+| `flow.type` | `'traditional' \| 'agent'` | Flow category. Flows can be further categorized via `tags` on the DomainFlowEntry |
 | `flow.domain` | string | Parent domain ID |
 | `flow.description` | string? | What this flow does |
+| `flow.template` | boolean? | When `true`, this flow is a template (see Parameterized Flow pattern in Section 16) |
+| `flow.parameters` | `Record<string, FlowParameter>`? | Template parameters (required when `template: true`) |
 | `flow.contract` | object? | Sub-flow input/output contract (see below) |
 | `trigger` | DddFlowNode | The entry point node |
 | `nodes` | DddFlowNode[] | All other nodes |
@@ -664,13 +886,53 @@ Every node has:
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | Unique node ID |
-| `type` | DddNodeType | One of the 19 node types |
+| `type` | DddNodeType | One of the 27 node types |
 | `position` | `{ x, y }` | Canvas position |
-| `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle? }` |
+| `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior? }` |
 | `spec` | object | Type-specific configuration (see below) |
 | `label` | string | Display name on canvas |
 | `observability` | object? | Logging/metrics/tracing config |
 | `security` | object? | Auth/rate-limiting/encryption config |
+
+### Connection Data Annotations
+
+Connections can optionally include a `data` field to document what data flows between nodes. This is purely descriptive — it doesn't affect behavior but enables data shape hover in the DDD Tool.
+
+```yaml
+connections:
+  - targetNodeId: data_store-abc123
+    sourceHandle: valid
+    data:
+      - { name: email, type: string }
+      - { name: password, type: string }
+      - { name: name, type: string }
+```
+
+### Connection Behavior
+
+Connections can optionally include a `behavior` field to distinguish error handling strategies. This helps implementers understand how errors should propagate.
+
+| Value | Description |
+|-------|-------------|
+| `continue` | Log and continue (soft fail) |
+| `stop` | Stop the flow (hard fail) |
+| `retry(n)` | Retry n times before failing |
+| `circuit_break` | Use circuit breaker pattern |
+
+```yaml
+connections:
+  - targetNodeId: terminal-error-001
+    sourceHandle: error
+    behavior: continue
+    label: "Log and skip"
+```
+
+### FlowParameter (for parameterized flows)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Parameter type (`'string'`, `'integration_ref'`, `'number'`, `'boolean'`) |
+| `values` | array? | Allowed values (for string type) |
 
 ---
 
@@ -683,8 +945,9 @@ The entry point of every flow. Exactly one per flow.
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `event` | string | What triggers the flow (see conventions below) |
+| `event` | string \| string[] | What triggers the flow. String or string[] for multi-event triggers (see conventions below) |
 | `source` | string | Where the trigger comes from (e.g., "API Gateway") |
+| `filter` | `Record<string, unknown>`? | Event payload filter — flow only triggers when filter matches (supports dot notation and operators) |
 | `description` | string | Details |
 
 **Trigger type conventions** — use these patterns in the `event` field to communicate trigger semantics:
@@ -734,6 +997,54 @@ spec:
   event: "webhook /stripe/events"
   source: Stripe
   description: Stripe webhook callback
+
+# Multi-event trigger — string array
+spec:
+  event:
+    - "event:ContentDiscovered"
+    - "event:SourceContentFound"
+  source: Message Bus
+  description: Triggered by either content discovery or monitoring
+
+# SSE trigger — Server-Sent Events endpoint
+spec:
+  event: "sse /api/updates"
+  source: API Gateway
+  description: Real-time update stream for dashboard
+
+# WebSocket trigger
+spec:
+  event: "ws /api/live"
+  source: API Gateway
+  description: Bidirectional real-time connection
+
+# Event pattern trigger — fires when a pattern of events occurs
+spec:
+  event: "pattern:ContentAnalyzed"
+  source: Event Aggregator
+  description: Trigger when 3+ relevant items from same author within 7 days
+  pattern:
+    event: ContentAnalyzed
+    group_by: author_name
+    threshold: 3
+    window: "7d"
+
+# Event trigger with payload filter — only trigger when filter matches
+spec:
+  event: "event:DraftApproved"
+  source: approval-domain
+  filter:
+    platform: twitter
+  description: Only triggers when payload.platform is "twitter"
+
+# Filter with operators
+spec:
+  event: "event:OrderCreated"
+  source: orders-domain
+  filter:
+    "payload.amount": { gte: 100 }
+    "payload.status": [pending, confirmed]
+  description: Only high-value pending/confirmed orders
 ```
 
 **job_config** — optional fields for cron triggers to configure the job queue:
@@ -743,9 +1054,12 @@ spec:
 | `queue` | string? | Named queue for the job (e.g., "ingestion", "analytics") |
 | `concurrency` | number? | Max concurrent executions (default: 1) |
 | `timeout_ms` | number? | Job timeout in milliseconds |
-| `retry` | object? | `{ max_attempts?, backoff_ms? }` |
+| `retry` | object? | `{ max_attempts?, backoff_ms?, strategy?: 'fixed' \| 'linear' \| 'exponential', jitter?: boolean }` |
 | `dead_letter` | boolean? | Send failed jobs to dead letter queue |
 | `lock_ttl_ms` | number? | Distributed lock TTL to prevent overlapping runs |
+| `jitter_ms` | number? | Random delay (0 to jitter_ms) before job starts, for staggered execution |
+| `priority` | number? | Job priority (higher = processed first) |
+| `dedup_key` | string? | Deduplication key template (e.g., "source:{sourceId}") |
 
 #### input
 Validates incoming data. Has two output handles: `valid` and `invalid`. Always specify `sourceHandle` on connections.
@@ -772,12 +1086,15 @@ spec:
 ```
 
 #### process
-Business logic step.
+Business logic step. Use specialized node types (collection, parse, crypto, batch, transaction) when they fit — reserve process for genuine business logic.
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
 | `action` | string | What this step does |
 | `service` | string | Service/function to call |
+| `category` | string? | `'security' \| 'transform' \| 'integration' \| 'business_logic' \| 'infrastructure'` — helps implementers understand what kind of code to write |
+| `inputs` | string[]? | Explicit input fields (e.g., `["$.password"]`) |
+| `outputs` | string[]? | Explicit output fields (e.g., `["$.hashed_password"]`) |
 | `description` | string | Details |
 
 #### decision
@@ -799,6 +1116,8 @@ End state. Must have zero outgoing connections. Use custom fields `status` and `
 | `description` | string | What happens at this endpoint |
 | `status` | number? | HTTP status code (custom field for implementation) |
 | `body` | object? | Response body shape (custom field for implementation) |
+| `response_type` | string? | `'json' \| 'stream' \| 'sse' \| 'empty'` (default: 'json') |
+| `headers` | `Record<string, string>?` | Custom response headers |
 
 **Terminal response examples:**
 
@@ -827,6 +1146,16 @@ spec:
   outcome: success
   description: Delete completed
   status: 204
+
+# Streaming response
+spec:
+  outcome: success
+  description: Stream audio from ElevenLabs TTS
+  response_type: stream
+  status: 200
+  headers:
+    Content-Type: audio/mpeg
+    Transfer-Encoding: chunked
 ```
 
 ### 6.2 Extended Traditional Nodes
@@ -836,13 +1165,17 @@ Database operation. Use `sourceHandle` values `"success"` and `"error"` on conne
 
 | Spec Field | Type | Values |
 |------------|------|--------|
-| `operation` | string | `'create' \| 'read' \| 'update' \| 'delete'` |
+| `operation` | string | `'create' \| 'read' \| 'update' \| 'delete' \| 'upsert' \| 'create_many' \| 'update_many' \| 'delete_many'` |
 | `model` | string | Entity/table name (e.g., "User") |
 | `data` | `Record<string, string>` | Fields to write (for create/update) |
 | `query` | `Record<string, string>` | Query conditions (for read/update/delete) |
 | `description` | string | Details |
 | `pagination` | object? | Pagination config (custom field, for list operations) |
 | `sort` | object? | Sort config (custom field, for list operations) |
+| `batch` | boolean? | Batch operation (process entire collection in one DB call) |
+| `upsert_key` | string[]? | Fields for upsert conflict resolution (required when operation is 'upsert') |
+| `include` | IncludeRelation[]? | Eager-load related records (joins) |
+| `returning` | boolean? | Return affected records (for create_many/update_many/delete_many) |
 
 **Pagination and sorting** — for read operations that return lists, add pagination custom fields:
 
@@ -862,6 +1195,43 @@ spec:
   description: List active products with pagination
 ```
 
+**Include (joins)** — eager-load related records instead of multiple sequential reads:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model` | string | Related entity name |
+| `via` | string | Foreign key or relation path (supports dot notation for nested) |
+| `as` | string | Output field name |
+
+```yaml
+# Read with joined relations
+spec:
+  operation: read
+  model: Draft
+  query: { id: "$.draft_id" }
+  include:
+    - model: ContentItem
+      via: content_item_id
+      as: content_item
+    - model: SocialAccount
+      via: content_item.subject_id
+      as: social_account
+  description: Load draft with content item and social account
+```
+
+**Bulk operations:**
+
+```yaml
+# Update many records
+spec:
+  operation: update_many
+  model: ApiKey
+  query: { user_id: "$.user_id" }
+  data: "$.validation_results"
+  returning: true
+  description: Update validation status for all user API keys
+```
+
 #### service_call
 External API call. Use `sourceHandle` values `"success"` and `"error"` on connections for success/error routing. The `error_mapping` field maps HTTP status codes to error code strings that `/ddd-implement` will use in error handlers.
 
@@ -872,8 +1242,10 @@ External API call. Use `sourceHandle` values `"success"` and `"error"` on connec
 | `headers` | `Record<string, string>` | HTTP headers |
 | `body` | `Record<string, unknown>` | Request body |
 | `timeout_ms` | number | Request timeout |
-| `retry` | object | `{ max_attempts?, backoff_ms? }` |
+| `retry` | object | `{ max_attempts?, backoff_ms?, strategy?: 'fixed' \| 'linear' \| 'exponential', jitter?: boolean }` |
 | `error_mapping` | `Record<string, string>` | Status code to error code mapping |
+| `request_config` | RequestConfig? | Outbound request behavior configuration |
+| `integration` | string? | Reference to integration defined in system.yaml |
 | `description` | string | Details |
 
 **Error mapping example:**
@@ -890,6 +1262,17 @@ spec:
   description: Charge customer payment method
 ```
 
+**RequestConfig** — configures outbound HTTP client behavior:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_agent` | string? | `'rotate' \| 'browser' \| 'custom'` — User-Agent strategy |
+| `delay` | object? | `{ min_ms, max_ms, strategy: 'random' \| 'fixed' }` — inter-request delay |
+| `cookie_jar` | string? | `'per_domain' \| 'shared' \| 'none'` |
+| `proxy` | string? | `'pool' \| 'direct' \| 'tor'` |
+| `tls_fingerprint` | string? | `'randomize' \| 'chrome' \| 'firefox' \| 'default'` |
+| `fallback` | string? | `'headless_browser' \| 'none'` — fallback for bot-resistant sites |
+
 #### event
 Publish or subscribe to an event.
 
@@ -897,8 +1280,13 @@ Publish or subscribe to an event.
 |------------|------|--------|
 | `direction` | string | `'emit' \| 'consume'` |
 | `event_name` | string | Event identifier |
-| `payload` | `Record<string, unknown>` | Event data shape |
+| `payload` | `Record<string, unknown>` | Event data shape (static template, also serves as schema documentation) |
+| `payload_source` | string? | Dynamic payload variable reference (overrides static `payload` when present) |
 | `async` | boolean | Fire-and-forget? |
+| `target_queue` | string? | Specific queue name (when using as job enqueue vs domain event) |
+| `priority` | number? | Job priority when enqueueing |
+| `delay_ms` | number? | Delay before processing |
+| `dedup_key` | string? | Deduplication key |
 | `description` | string | Details |
 
 #### loop
@@ -909,18 +1297,63 @@ Iterate over a collection. Has two output paths: `"body"` for the loop body and 
 | `collection` | string | What to iterate (e.g., "users", "$.items") |
 | `iterator` | string | Iterator variable name |
 | `break_condition` | string | When to stop early |
+| `on_error` | string? | `'continue' \| 'break' \| 'fail'` — behavior when iteration fails (default: 'fail') |
+| `accumulate` | AccumulateConfig? | Collect results across iterations |
 | `description` | string | Details |
 
+**AccumulateConfig fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `field` | string | What to collect from each iteration's output |
+| `strategy` | string | `'append' \| 'merge' \| 'sum' \| 'last'` |
+| `output` | string | Variable name available at `"done"` handle |
+
+```yaml
+# Loop with result accumulation
+spec:
+  collection: "$.sources"
+  iterator: source
+  on_error: continue
+  accumulate:
+    field: new_posts
+    strategy: append
+    output: "all_new_posts"
+  description: Check each source and collect new posts
+```
+
 #### parallel
-Run branches concurrently. The `branches` field is descriptive (documents what each branch does). Actual parallel paths are defined by connections using `sourceHandle: "branch-0"`, `"branch-1"`, etc. Use `sourceHandle: "done"` for the join/continuation node.
+Run branches concurrently. The `branches` field documents what each branch does and can optionally include conditions to skip branches. Actual parallel paths are defined by connections using `sourceHandle: "branch-0"`, `"branch-1"`, etc. Use `sourceHandle: "done"` for the join/continuation node.
 
 | Spec Field | Type | Values |
 |------------|------|--------|
-| `branches` | string[] | Branch names/descriptions |
+| `branches` | `ParallelBranch[]` | Branch definitions (see below). Also accepts `string[]` for simple cases |
 | `join` | string | `'all' \| 'any' \| 'n_of'` |
 | `join_count` | number | Required if join is `n_of` |
 | `timeout_ms` | number | Max wait time |
 | `description` | string | Details |
+
+**ParallelBranch fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string? | Branch identifier |
+| `label` | string | Branch description |
+| `condition` | string? | Skip branch if condition evaluates to false |
+
+```yaml
+# Conditional branches — only run branches where condition is true
+spec:
+  branches:
+    - id: twitter-draft
+      label: "Generate Twitter draft"
+      condition: "$.social_accounts.has_twitter"
+    - id: linkedin-draft
+      label: "Generate LinkedIn draft"
+      condition: "$.social_accounts.has_linkedin"
+  join: all
+  description: Generate drafts for available platforms
+```
 
 #### sub_flow
 Reference another flow.
@@ -965,6 +1398,36 @@ flow:
 
 > **Note:** The `contract` section is optional. When present, `/ddd-implement` validates that `sub_flow` nodes' `input_mapping`/`output_mapping` match the target flow's contract.
 
+#### delay
+Introduce a deliberate wait before continuing. Useful for rate limiting, anti-bot patterns, or scheduled pauses.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `min_ms` | number | Minimum delay in milliseconds |
+| `max_ms` | number | Maximum delay (if strategy is random) |
+| `strategy` | string | `'fixed' \| 'random'` |
+| `description` | string | Why this delay exists |
+
+#### cache
+Check cache before expensive operations. Has two output handles: `"hit"` and `"miss"`. Use `sourceHandle` on connections.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `key` | string | Cache key template (e.g., "search:{query}") |
+| `ttl_ms` | number | Time-to-live in milliseconds |
+| `store` | string | `'redis' \| 'memory'` |
+| `description` | string | What is being cached |
+
+#### transform
+Structured data mapping between formats. Prefer over process nodes when the operation is pure data transformation.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `input_schema` | string | Source data format reference |
+| `output_schema` | string | Target data format reference |
+| `field_mappings` | `Record<string, string>` | Output field to input field/expression mapping |
+| `description` | string | What transformation is performed |
+
 #### llm_call
 Single LLM invocation (not an agent loop).
 
@@ -976,8 +1439,202 @@ Single LLM invocation (not an agent loop).
 | `temperature` | number | 0.0 - 1.0 |
 | `max_tokens` | number | Max output tokens |
 | `structured_output` | `Record<string, unknown>` | Expected output schema |
-| `retry` | object | `{ max_attempts?, backoff_ms? }` |
+| `retry` | object | `{ max_attempts?, backoff_ms?, strategy?: 'fixed' \| 'linear' \| 'exponential', jitter?: boolean }` |
+| `context_sources` | `Record<string, ContextSource>`? | Formal variable bindings with optional transforms |
 | `description` | string | Details |
+
+**ContextSource fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `from` | string | Variable path (e.g., `"$.content_item.raw_content"`) |
+| `transform` | string? | Transform function to apply before injection |
+
+**Supported transforms:** `truncate(n)`, `join(sep)`, `lowercase`, `uppercase`, `first(n)`, `last(n)`, `json_stringify`, `strip_html`, `summarize(n)`
+
+```yaml
+# LLM call with explicit context bindings
+spec:
+  model: claude-sonnet
+  system_prompt: "You are a social media expert."
+  prompt_template: "Write a {platform} post about: {content}"
+  context_sources:
+    platform:
+      from: "$.social_account.platform"
+    content:
+      from: "$.content_item.raw_content"
+      transform: truncate(4000)
+    keywords:
+      from: "$.subject.keywords"
+      transform: join(", ")
+```
+
+#### collection
+Collection operations: filter, sort, deduplicate, merge, group_by, aggregate, reduce, flatten. Use instead of process nodes for any collection transformation. Has two output handles: `"result"` (the transformed collection) and `"empty"` (collection is empty after operation).
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `operation` | string | `'filter' \| 'sort' \| 'deduplicate' \| 'merge' \| 'group_by' \| 'aggregate' \| 'reduce' \| 'flatten'` |
+| `input` | string | Input collection reference (e.g., `"$.sources"`) |
+| `predicate` | string? | Filter expression (for `filter`) |
+| `key` | string? | Field key (for `deduplicate`, `sort`, `group_by`) |
+| `direction` | string? | `'asc' \| 'desc'` (for `sort`) |
+| `accumulator` | object? | `{ init: any, expression: string }` (for `reduce`/`aggregate`) |
+| `output` | string | Output variable name |
+| `description` | string | Details |
+
+```yaml
+# Filter example
+spec:
+  operation: filter
+  input: "$.entries"
+  predicate: "item.published_at > $.last_checked_at"
+  output: "new_entries"
+
+# Deduplicate example
+spec:
+  operation: deduplicate
+  input: "$.merged_results"
+  key: "item.url"
+  output: "unique_results"
+
+# Reduce example
+spec:
+  operation: reduce
+  input: "$.batched_items"
+  accumulator:
+    init: []
+    expression: "acc.concat(item.new_posts)"
+  output: "all_posts"
+```
+
+#### parse
+Structured extraction from raw content formats (RSS, HTML, XML, JSON, CSV). Use instead of process nodes for parsing. Has two output handles: `"success"` and `"error"` (malformed content).
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `format` | string | `'rss' \| 'atom' \| 'html' \| 'xml' \| 'json' \| 'csv' \| 'markdown'` |
+| `input` | string | Raw content variable (e.g., `"$.raw_response"`) |
+| `strategy` | string? | `'strict' \| 'lenient' \| 'streaming'` — parsing strictness (default: 'strict') |
+| `library` | string? | Implementation hint (e.g., `'cheerio'`, `'rss-parser'`, `'fast-xml-parser'`) |
+| `output` | string | Output variable name |
+| `description` | string | Details |
+
+```yaml
+# RSS parsing
+spec:
+  format: rss
+  input: "$.raw_feed"
+  strategy: lenient
+      - { name: published, path: "item.pubDate", transform: date }
+  output: "feed_entries"
+
+# HTML scraping
+spec:
+  format: html
+  input: "$.page_html"
+  strategy:
+    selectors:
+      - { name: title, css: "h1.article-title" }
+      - { name: body, css: "article.content", extract: text }
+      - { name: links, css: "a[href]", extract: href, multiple: true }
+  library: cheerio
+  output: "extracted_data"
+```
+
+#### crypto
+Cryptographic operations: encrypt, decrypt, hash, sign, verify, generate_key. Use instead of process nodes for any security operation. Has two output handles: `"success"` and `"error"` (crypto failure).
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `operation` | string | `'encrypt' \| 'decrypt' \| 'hash' \| 'sign' \| 'verify' \| 'generate_key'` |
+| `algorithm` | string | `'aes-256-gcm' \| 'aes-256-cbc' \| 'sha256' \| 'sha512' \| 'hmac-sha256' \| 'rsa-oaep' \| 'ed25519'` |
+| `key_source` | object | Where the key comes from: `{ env: string }` |
+| `input_fields` | string[] | Field(s) to process |
+| `output_field` | string | Result field name |
+| `encoding` | string? | `'base64' \| 'hex'` — output encoding |
+| `description` | string | Details |
+
+```yaml
+spec:
+  operation: encrypt
+  algorithm: aes-256-gcm
+  key_source: { env: "ENCRYPTION_KEY" }
+  input_fields: ["api_key"]
+  output_field: "encrypted_key"
+  encoding: base64
+  description: Encrypt API key for storage
+```
+
+#### batch
+Execute a heterogeneous list of operations against a collection where each item may target a different endpoint, auth method, or response format. Has two output handles: `"done"` (all complete) and `"error"` (if `on_error: stop` and one fails).
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `input` | string | Collection to iterate over (e.g., `"$.api_keys"`) |
+| `operation_template` | object | Per-item operation config (see below) |
+| `concurrency` | number? | Max parallel operations |
+| `on_error` | string? | `'continue' \| 'stop'` — per-item error handling |
+| `output` | string | Output variable (array of `{ item, result, success }`) |
+| `description` | string | Details |
+
+**OperationTemplate fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Operation type (`'service_call'`, `'data_store'`, etc.) |
+| `dispatch_field` | string | Field that determines which config to use |
+| `configs` | `Record<string, object>` | Named configs keyed by dispatch value |
+
+```yaml
+spec:
+  input: "$.api_keys"
+  operation_template:
+    type: service_call
+    dispatch_field: "item.provider"
+    configs:
+      openai:
+        method: GET
+        url: "https://api.openai.com/v1/models"
+        headers: { Authorization: "Bearer {item.key}" }
+        success_check: "response.status == 200"
+      anthropic:
+        method: GET
+        url: "https://api.anthropic.com/v1/models"
+        headers: { x-api-key: "{item.key}" }
+        success_check: "response.status == 200"
+  concurrency: 3
+  on_error: continue
+  output: "validation_results"
+  description: Validate API keys via lightweight test calls
+```
+
+#### transaction
+Atomic multi-step database operations. Groups multiple data operations into a unit — if any step fails, all are rolled back. Has two output handles: `"committed"` and `"rolled_back"`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `isolation` | string? | `'read_committed' \| 'serializable' \| 'repeatable_read'` |
+| `steps` | array | Ordered operations: `[{ action, rollback? }]` |
+| `rollback_on_error` | boolean? | Auto-rollback on any step failure (default: true) |
+| `description` | string | Details |
+
+**Step fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | string | What this step does (e.g., "create source record", "update creator status") |
+| `rollback` | string? | How to undo this step on failure (e.g., "delete created source") |
+
+```yaml
+spec:
+  isolation: read_committed
+  steps:
+    - { action: "Create source record", rollback: "Delete created source" }
+    - { action: "Update creator promoted status", rollback: "Revert creator promoted to false" }
+  rollback_on_error: true
+  description: Create source and update creator atomically
+```
 
 ### 6.3 Agent Nodes (for `type: agent` flows)
 
@@ -1201,6 +1858,15 @@ connections:
     sourceHandle: "done"
 ```
 
+### Cache hit/miss
+```yaml
+connections:
+  - targetNodeId: use-cached-value-id
+    sourceHandle: "hit"
+  - targetNodeId: fetch-fresh-data-id
+    sourceHandle: "miss"
+```
+
 ### Smart Router (multiple outputs)
 ```yaml
 connections:
@@ -1208,6 +1874,51 @@ connections:
     sourceHandle: "route-a"
   - targetNodeId: route-b-id
     sourceHandle: "route-b"
+```
+
+### Collection result/empty
+```yaml
+connections:
+  - targetNodeId: next-step-id
+    sourceHandle: "result"
+  - targetNodeId: empty-handler-id
+    sourceHandle: "empty"
+```
+
+### Parse success/error
+```yaml
+connections:
+  - targetNodeId: next-step-id
+    sourceHandle: "success"
+  - targetNodeId: parse-error-id
+    sourceHandle: "error"
+```
+
+### Crypto success/error
+```yaml
+connections:
+  - targetNodeId: next-step-id
+    sourceHandle: "success"
+  - targetNodeId: crypto-error-id
+    sourceHandle: "error"
+```
+
+### Batch done/error
+```yaml
+connections:
+  - targetNodeId: next-step-id
+    sourceHandle: "done"
+  - targetNodeId: batch-error-id
+    sourceHandle: "error"
+```
+
+### Transaction committed/rolled_back
+```yaml
+connections:
+  - targetNodeId: success-path-id
+    sourceHandle: "committed"
+  - targetNodeId: rollback-handler-id
+    sourceHandle: "rolled_back"
 ```
 
 ---
@@ -1240,7 +1951,8 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 
 ### Orchestration (Error)
 - Orchestrator must have 2+ agents and a strategy
-- Smart Router must have rules defined
+- Smart Router must have rules defined or LLM routing enabled
+- Smart Router with empty `fallback_chain` and no LLM routing — warning
 - Handoff must have a target flow
 - Agent Group must have 2+ members
 
@@ -1252,9 +1964,18 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 - Parallel must have 2+ branches
 - Sub-flow must have flow_ref
 - LLM Call must have model
+- Cache must have key and store
+- Transform must have input_schema and output_schema
+- Delay must have min_ms
+- Collection must have operation and input
+- Parse must have format and input
+- Crypto must have operation, algorithm, and key_source
+- Batch must have input and operation_template
+- Transaction must have steps with at least 2 entries
 
 ### Domain-Level
 - No duplicate flow IDs within a domain
+- Multiple flows may publish the same event name with different `from_flow` values — this is valid (dual-purpose events)
 
 ### System-Level
 - Events consumed by a domain must be published by some domain
@@ -1375,6 +2096,31 @@ Synchronizes specs with implementation state.
 | `--fix-drift` | Re-implement flows where specs have drifted |
 | `--full` | All of the above |
 
+### /ddd-reverse
+
+Reverse-engineers DDD specs from an existing codebase. Points at source code and generates domain, flow, and schema YAML files.
+
+| Argument | Scope | Example |
+|----------|-------|---------|
+| `--path {dir}` | Codebase root to analyze | `/ddd-reverse --path ./src` |
+| `--domain {name}` | Reverse a single domain | `/ddd-reverse --domain users` |
+| `--strategy {mode}` | Detection approach | `/ddd-reverse --strategy routes` |
+| *(empty)* | Interactive mode | `/ddd-reverse` |
+
+**Strategies:**
+- `routes` — Detect domains from route/controller files
+- `services` — Detect from service/business logic layer
+- `models` — Detect from data models and their relationships
+- `auto` *(default)* — Combine all strategies and cross-reference
+
+**What it does:**
+1. Scans the codebase for route handlers, services, models, and event handlers
+2. Groups related code into candidate domains
+3. Detects flow patterns (request → validate → process → respond)
+4. Infers schemas from model definitions
+5. Generates draft YAML specs in `specs/` for review
+6. Opens in DDD Tool for visual verification and adjustment
+
 ---
 
 ## 12. mapping.yaml
@@ -1416,6 +2162,9 @@ When creating a flow in the DDD Tool, these templates are available:
 | CRUD Entity | 6 | Trigger -> Input -> Decision -> Data Store -> Terminal |
 | Webhook Handler | 5 | Trigger -> Input -> Process -> Service Call -> Terminal |
 | Event Processor | 5 | Trigger -> Event (consume) -> Process -> Event (emit) -> Terminal |
+| Cached API Call | 6 | Trigger -> Input -> Cache -> Service Call -> Transform -> Terminal |
+| Collection Processing | 6 | Trigger -> Loop -> Collection (filter) -> Event (emit) -> Terminal |
+| Data Import with Parsing | 6 | Trigger -> Service Call -> Parse -> Collection (deduplicate) -> Data Store -> Terminal |
 
 ### Agent Templates
 | Template | Nodes | Pattern |
@@ -1942,14 +2691,20 @@ metadata:
 8. **Node IDs must be unique** within a flow — use a prefix matching the type (e.g., `input-001`, `process-002`)
 9. **Position doesn't affect logic** — positions are for canvas layout only, connections define the actual flow
 10. **Cross-cutting concerns are optional** — only add observability/security when needed for implementation hints
-11. **Always use sourceHandle on branching nodes** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), loop (body/done), parallel (branch-N/done)
+11. **Always use sourceHandle on branching nodes** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), loop (body/done), parallel (branch-N/done), cache (hit/miss)
 12. **Create supplementary specs early** — system.yaml, architecture.yaml, config.yaml, errors.yaml, and schemas give `/ddd-implement` the context it needs to generate correct code
-13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, or `manual` to communicate trigger type
+13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, `manual`, `sse`, `ws`, or `pattern:` to communicate trigger type
 14. **Add status and body to terminals** — custom fields on terminal specs tell `/ddd-implement` exactly what HTTP response to generate
 15. **Define integrations in system.yaml** — `service_call` nodes reference integration names instead of repeating URL/auth/retry config
 16. **Use shared/types.yaml for enums used across schemas** — avoids duplicating `values:` arrays in multiple schema files
 17. **Add state transitions to schemas with lifecycle fields** — makes valid state changes explicit and `/ddd-implement` generates validation logic
 18. **Use smart_router for 3+ way branching** — it works in traditional flows too, not just agent flows
+19. **Use `collection` nodes for filter/sort/deduplicate** — instead of process nodes with vague descriptions like "Filter items" or "Merge and deduplicate results"
+20. **Use `parse` nodes for RSS/HTML/XML extraction** — instead of process workarounds like "Parse RSS entries" or "Extract with cheerio"
+21. **Use `crypto` nodes for encryption/hashing** — instead of free-text process descriptions like "Encrypt key value with AES-256"
+22. **Use trigger `filter` to avoid unnecessary decision nodes** — if you only need to check event payload fields, add a `filter` on the trigger instead of a decision node after it
+23. **Use `accumulate` on loops to collect results** — instead of relying on implicit variables, use the `accumulate` field to formally collect and name iteration results
+24. **Use `include` on data_store for joins** — instead of multiple sequential data_store reads, use the `include` field to eager-load related records in a single operation
 
 ---
 
@@ -2102,3 +2857,165 @@ Decision nodes are binary (true/false). When you need 3+ branches, use `smart_ro
 ```
 
 > **Note:** `smart_router` is listed under Orchestration Nodes but can be used in traditional flows for multi-way routing. Use it instead of chaining decision nodes when you have 3+ branches.
+
+### Collection Pipeline
+
+Process a collection through multiple stages: fetch → parse → filter → iterate → reduce → emit.
+
+```yaml
+# Fetch raw data
+- id: sc-001
+  type: service_call
+  connections:
+    - targetNodeId: parse-001
+      sourceHandle: "success"
+  spec:
+    method: GET
+    url: "https://api.example.com/feed"
+
+# Parse raw response
+- id: parse-001
+  type: parse
+  connections:
+    - targetNodeId: coll-filter
+      sourceHandle: "success"
+  spec:
+    format: rss
+    input: "$.raw_response"
+    output: "entries"
+
+# Filter relevant entries
+- id: coll-filter
+  type: collection
+  connections:
+    - targetNodeId: loop-001
+      sourceHandle: "result"
+    - targetNodeId: terminal-empty
+      sourceHandle: "empty"
+  spec:
+    operation: filter
+    input: "$.entries"
+    predicate: "item.published_at > $.last_checked_at"
+    output: "new_entries"
+
+# Iterate and process each entry
+- id: loop-001
+  type: loop
+  connections:
+    - targetNodeId: process-item
+      sourceHandle: "body"
+    - targetNodeId: coll-reduce
+      sourceHandle: "done"
+  spec:
+    collection: "$.new_entries"
+    iterator: entry
+    accumulate:
+      field: processed_items
+      strategy: append
+      output: "all_processed"
+
+# Reduce results
+- id: coll-reduce
+  type: collection
+  connections:
+    - targetNodeId: event-001
+      sourceHandle: "result"
+  spec:
+    operation: deduplicate
+    input: "$.all_processed"
+    key: "item.url"
+    output: "unique_items"
+
+# Emit event with results
+- id: event-001
+  type: event
+  connections:
+    - targetNodeId: terminal-done
+  spec:
+    direction: emit
+    event_name: NewContentDiscovered
+    payload_source: "$.unique_items"
+```
+
+### Parameterized Flow
+
+Define a flow template once, instantiate per-configuration in domain.yaml. Eliminates near-duplicate flows.
+
+```yaml
+# specs/domains/publishing/flows/publish-to-platform.yaml
+flow:
+  id: publish-to-platform
+  name: Publish to Platform
+  type: traditional
+  domain: publishing
+  template: true
+  parameters:
+    platform:
+      type: string
+      values: [twitter, linkedin, facebook]
+    api_integration:
+      type: integration_ref
+    publish_endpoint:
+      type: string
+
+# In specs/domains/publishing/domain.yaml — instantiate:
+flows:
+  - id: publish-to-twitter
+    template: publish-to-platform
+    parameters:
+      platform: twitter
+      api_integration: twitter-api-v2
+      publish_endpoint: /2/tweets
+  - id: publish-to-linkedin
+    template: publish-to-platform
+    parameters:
+      platform: linkedin
+      api_integration: linkedin-api
+      publish_endpoint: /v2/ugcPosts
+```
+
+### Cross-Cutting Layers
+
+Define infrastructure layers (retry policies, stealth config, circuit breakers) in `specs/shared/layers.yaml` and reference them from nodes. See Section 4.7 for the full layers.yaml format.
+
+```yaml
+# In specs/shared/layers.yaml
+layers:
+  - id: retry-policy
+    name: Retry Policy
+    applies_to:
+      nodes: [service_call, batch]
+      domains: [monitoring, publishing]
+    config:
+      max_retries: 3
+      backoff: exponential
+      circuit_breaker:
+        failure_threshold: 5
+        reset_timeout_ms: 60000
+```
+
+Nodes affected by a layer don't need to repeat the config — `/ddd-implement` reads layers.yaml and applies it automatically. In the DDD Tool, affected nodes show a layer badge.
+
+### Trigger Event Filtering
+
+Use the `filter` field on trigger nodes to filter incoming events by payload fields. This eliminates unnecessary decision nodes immediately after event triggers.
+
+```yaml
+# Instead of: trigger → decision (check platform) → process
+# Use: trigger with filter → process
+trigger:
+  spec:
+    event: "event:DraftApproved"
+    source: approval-domain
+    filter:
+      platform: twitter
+    description: Only triggers when payload.platform is "twitter"
+```
+
+Supports dot notation and operators:
+
+```yaml
+filter:
+  "payload.amount": { gte: 100 }       # greater-than-or-equal
+  "payload.status": [active, pending]   # in-list
+```
