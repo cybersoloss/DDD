@@ -18,6 +18,7 @@ my-project/
     system-layout.yaml           # L1 canvas positions (auto-managed by DDD Tool)
     shared/
       errors.yaml                # Error codes with HTTP status mappings
+      types.yaml                 # Shared enums and value objects
     schemas/
       _base.yaml                 # Base model (id, timestamps, soft delete)
       {model}.yaml               # Data model definitions
@@ -115,6 +116,7 @@ layout:
 | `from_flow` | string? | Which flow publishes it |
 | `handled_by_flow` | string? | Which flow consumes it |
 | `description` | string? | What this event means |
+| `payload` | `Record<string, unknown>?` | Event data shape (field names and types) |
 
 ---
 
@@ -150,7 +152,44 @@ environments:
     url: https://staging.example.com
   - name: production
     url: https://api.example.com
+
+integrations:
+  twitter_api:
+    base_url: "https://api.twitter.com/2"
+    auth:
+      method: oauth2
+      credentials_env: TWITTER_BEARER_TOKEN
+    rate_limits:
+      requests_per_window: 300
+      window_seconds: 900
+    retry:
+      max_attempts: 3
+      backoff_ms: 1000
+    headers:
+      User-Agent: "my-app/1.0"
+
+  stripe:
+    base_url: "https://api.stripe.com/v1"
+    auth:
+      method: api_key
+      credentials_env: STRIPE_SECRET_KEY
+    rate_limits:
+      requests_per_second: 25
+    timeout_ms: 30000
 ```
+
+#### IntegrationConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `base_url` | string | Base URL for the external API |
+| `auth` | object | `{ method: 'api_key' \| 'oauth2' \| 'bearer', credentials_env: string }` |
+| `rate_limits` | object? | `{ requests_per_second?, requests_per_window?, window_seconds? }` |
+| `retry` | object? | `{ max_attempts?, backoff_ms? }` |
+| `timeout_ms` | number? | Request timeout in milliseconds |
+| `headers` | `Record<string, string>?` | Default headers for all requests |
+
+> **Note:** `service_call` nodes can reference integrations by name — `/ddd-implement` uses the integration config to set base URL, auth headers, retry, and rate limiting instead of repeating them per node.
 
 ### 4.2 architecture.yaml
 
@@ -404,7 +443,81 @@ relationships:
     type: has_many
     target: Order
     foreign_key: user_id
+
+transitions:
+  field: role
+  states: []
+  on_invalid: reject
 ```
+
+The optional `transitions:` section defines valid state machine transitions for lifecycle fields:
+
+```yaml
+# Example: Order status lifecycle
+transitions:
+  field: status
+  states:
+    - from: pending
+      to: [confirmed, cancelled]
+    - from: confirmed
+      to: [shipped, cancelled]
+    - from: shipped
+      to: [delivered]
+  on_invalid: reject   # reject | warn | log
+```
+
+#### Transitions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `field` | string | The enum field this state machine applies to |
+| `states` | `Array<{ from: string, to: string[] }>` | Valid transitions |
+| `on_invalid` | `'reject' \| 'warn' \| 'log'` | What happens on invalid transition attempt |
+
+> **Note:** When a schema has `transitions`, `/ddd-implement` generates validation logic that enforces valid state changes and rejects (or warns/logs) invalid ones.
+
+### 4.6 shared/types.yaml
+
+**Path:** `specs/shared/types.yaml`
+
+Shared enums and value objects used across multiple schemas:
+
+```yaml
+# specs/shared/types.yaml
+enums:
+  platform:
+    values: [twitter, linkedin, medium, rss, web]
+    description: Supported content platforms
+
+  content_status:
+    values: [pending, analyzed, relevant, irrelevant, error]
+    description: Content processing lifecycle
+
+value_objects:
+  money:
+    fields:
+      - name: amount
+        type: decimal
+      - name: currency
+        type: string
+    description: Monetary amount with currency
+```
+
+#### Enum Definition
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `values` | string[] | Allowed values |
+| `description` | string? | What this enum represents |
+
+#### Value Object Definition
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fields` | `Array<{ name, type }>` | Component fields |
+| `description` | string? | What this value object represents |
+
+> **Note:** Reference shared enums in schemas with `type: enum, ref: platform` instead of duplicating `values:` arrays. `/ddd-implement` reads this file to generate shared type definitions.
 
 ---
 
@@ -539,6 +652,7 @@ metadata:
 | `flow.type` | `'traditional' \| 'agent'` | Flow category |
 | `flow.domain` | string | Parent domain ID |
 | `flow.description` | string? | What this flow does |
+| `flow.contract` | object? | Sub-flow input/output contract (see below) |
 | `trigger` | DddFlowNode | The entry point node |
 | `nodes` | DddFlowNode[] | All other nodes |
 | `metadata` | object | `{ created, modified }` ISO timestamps |
@@ -588,6 +702,21 @@ spec:
   source: Scheduler
   description: Runs every 30 minutes
 
+# Scheduled trigger with job configuration
+spec:
+  event: "cron */15 * * * *"
+  source: Scheduler
+  description: Check sources every 15 minutes
+  job_config:
+    queue: ingestion
+    concurrency: 1
+    timeout_ms: 300000
+    retry:
+      max_attempts: 3
+      backoff_ms: 5000
+    dead_letter: true
+    lock_ttl_ms: 60000
+
 # Event trigger — "event:{EventName}"
 spec:
   event: "event:UserRegistered"
@@ -606,6 +735,17 @@ spec:
   source: Stripe
   description: Stripe webhook callback
 ```
+
+**job_config** — optional fields for cron triggers to configure the job queue:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `queue` | string? | Named queue for the job (e.g., "ingestion", "analytics") |
+| `concurrency` | number? | Max concurrent executions (default: 1) |
+| `timeout_ms` | number? | Job timeout in milliseconds |
+| `retry` | object? | `{ max_attempts?, backoff_ms? }` |
+| `dead_letter` | boolean? | Send failed jobs to dead letter queue |
+| `lock_ttl_ms` | number? | Distributed lock TTL to prevent overlapping runs |
 
 #### input
 Validates incoming data. Has two output handles: `valid` and `invalid`. Always specify `sourceHandle` on connections.
@@ -791,6 +931,39 @@ Reference another flow.
 | `input_mapping` | `Record<string, string>` | Input parameter mapping |
 | `output_mapping` | `Record<string, string>` | Output parameter mapping |
 | `description` | string | Details |
+
+**Sub-flow contracts** — flows that are called as sub-flows can define a `contract` in their flow metadata:
+
+```yaml
+# In the flow YAML that acts as a sub-flow:
+flow:
+  id: normalize-content
+  name: Normalize Content
+  type: traditional
+  domain: ingestion
+  description: Normalize raw content into standard format
+  contract:
+    inputs:
+      - name: raw_content
+        type: string
+        required: true
+      - name: platform
+        type: enum
+        ref: platform
+        required: true
+    outputs:
+      - name: content_item_id
+        type: uuid
+      - name: is_duplicate
+        type: boolean
+```
+
+| Contract Field | Type | Description |
+|----------------|------|-------------|
+| `inputs` | `Array<{ name, type, required?, ref? }>` | Expected input parameters |
+| `outputs` | `Array<{ name, type }>` | Returned output values |
+
+> **Note:** The `contract` section is optional. When present, `/ddd-implement` validates that `sub_flow` nodes' `input_mapping`/`output_mapping` match the target flow's contract.
 
 #### llm_call
 Single LLM invocation (not an agent loop).
@@ -1057,6 +1230,8 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 - Terminal nodes should not have outgoing connections
 - Process nodes should have a description or action
 - Agent loops should have `max_iterations` and `model` set
+- Sub-flow `input_mapping` keys should match target flow's contract inputs (if contract defined)
+- Sub-flow `output_mapping` keys should match target flow's contract outputs (if contract defined)
 
 ### Agent-Specific (Error)
 - Agent flow must have at least one `agent_loop` node
@@ -1084,6 +1259,7 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 ### System-Level
 - Events consumed by a domain must be published by some domain
 - Events published should be consumed by at least one domain (warning)
+- Event `payload` fields should match between publisher and consumer across domains (warning)
 
 The DDD Tool validates event wiring across domains automatically (system-level validation). If a domain consumes an event that no domain publishes, the tool flags it as an error. If a domain publishes an event that nothing consumes, it flags a warning.
 
@@ -1770,6 +1946,10 @@ metadata:
 12. **Create supplementary specs early** — system.yaml, architecture.yaml, config.yaml, errors.yaml, and schemas give `/ddd-implement` the context it needs to generate correct code
 13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, or `manual` to communicate trigger type
 14. **Add status and body to terminals** — custom fields on terminal specs tell `/ddd-implement` exactly what HTTP response to generate
+15. **Define integrations in system.yaml** — `service_call` nodes reference integration names instead of repeating URL/auth/retry config
+16. **Use shared/types.yaml for enums used across schemas** — avoids duplicating `values:` arrays in multiple schema files
+17. **Add state transitions to schemas with lifecycle fields** — makes valid state changes explicit and `/ddd-implement` generates validation logic
+18. **Use smart_router for 3+ way branching** — it works in traditional flows too, not just agent flows
 
 ---
 
@@ -1891,3 +2071,34 @@ Parallel branches run concurrently. The `branches` field is descriptive only —
     timeout_ms: 10000
     description: Run payment and inventory checks in parallel
 ```
+
+### Multi-Way Routing in Traditional Flows
+
+Decision nodes are binary (true/false). When you need 3+ branches, use `smart_router` — it works in traditional flows too, not just agent flows:
+
+```yaml
+# Use smart_router for multi-way branching in traditional flows
+- id: router-001
+  type: smart_router
+  connections:
+    - targetNodeId: handle-twitter
+      sourceHandle: "twitter"
+    - targetNodeId: handle-linkedin
+      sourceHandle: "linkedin"
+    - targetNodeId: handle-medium
+      sourceHandle: "medium"
+  spec:
+    rules:
+      - id: twitter
+        condition: "platform === 'twitter'"
+        route: twitter
+      - id: linkedin
+        condition: "platform === 'linkedin'"
+        route: linkedin
+      - id: medium
+        condition: "platform === 'medium'"
+        route: medium
+    fallback_chain: [medium]
+```
+
+> **Note:** `smart_router` is listed under Orchestration Nodes but can be used in traditional flows for multi-way routing. Use it instead of chaining decision nodes when you have 3+ branches.

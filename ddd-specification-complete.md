@@ -1943,7 +1943,8 @@ specs/
 │   ├── auth.yaml            # Authentication/authorization spec
 │   ├── middleware.yaml      # Middleware stack spec
 │   ├── errors.yaml          # Error codes and response format (incl. agent errors)
-│   └── api.yaml             # API conventions (pagination, filtering)
+│   ├── api.yaml             # API conventions (pagination, filtering)
+│   └── types.yaml           # Shared enums and value objects (optional)
 └── domains/
     └── {domain}/
         ├── domain.yaml      # Domain info, flows, events, L2 layout positions
@@ -1979,7 +1980,24 @@ system:
       description: REST API for frontend and integrations
     - name: notification
       description: Email, Slack, and webhook notifications
+
+  # Optional: External API integration configs
+  # service_call nodes can reference these by name
+  integrations:
+    clm_provider_api:
+      base_url: "https://api.clmprovider.com/v1"
+      auth:
+        method: api_key
+        credentials_env: CLM_API_KEY
+      rate_limits:
+        requests_per_second: 10
+      retry:
+        max_attempts: 3
+        backoff_ms: 1000
+      timeout_ms: 30000
 ```
+
+> **Note:** The `integrations` section is optional. When present, `service_call` nodes can reference an integration by name, and `/ddd-implement` uses the integration's auth, retry, rate limit, and timeout config instead of repeating them per node.
 
 ## Domain Config (Drives Level 1 & Level 2 Sheets)
 
@@ -2004,9 +2022,17 @@ domain:
     - event: contract.ingested
       from_flow: webhook-ingestion
       description: Fired when a new contract is received via webhook
+      payload:
+        contract_id: uuid
+        provider: string
+        ingested_at: datetime
     - event: contract.synced
       from_flow: scheduled-sync
       description: Fired when a contract is synced from provider API
+      payload:
+        contract_id: uuid
+        provider: string
+        sync_type: string
 
   # Events this domain consumes (incoming arrows on System Map)
   consumes_events:
@@ -2908,10 +2934,26 @@ schema:
     - fields: [provider, status]
     - fields: [created_at]
 
+  # Optional: State machine transitions for lifecycle fields
+  transitions:
+    field: status
+    states:
+      - from: created
+        to: [updated, signed]
+      - from: updated
+        to: [signed]
+      - from: signed
+        to: [executed]
+    on_invalid: reject   # reject | warn | log
+
   used_by:
     - webhook-ingestion
     - extract-obligations
 ```
+
+> **Note:** The `transitions` section is optional. When present, it defines valid state machine transitions for enum fields with lifecycle semantics. `/ddd-implement` generates validation logic that enforces valid state changes.
+
+> **Note:** Schemas can reference shared enums from `specs/shared/types.yaml` using `type: enum, ref: {enum_name}` instead of duplicating `enum:` arrays.
 
 ---
 
@@ -3488,6 +3530,8 @@ graph:
       type: event
 
   # Direct call connections (sync)
+  # Flows called as sub-flows can define a contract with inputs/outputs
+  # to validate input_mapping/output_mapping at design time
   sub_flows:
     - from: api/user-register
       to: notification/send-welcome-email
