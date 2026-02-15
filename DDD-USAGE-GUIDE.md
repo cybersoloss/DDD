@@ -927,6 +927,19 @@ connections:
     label: "Log and skip"
 ```
 
+### Connection Format Compatibility
+
+The DDD Tool normalizes several alternative field names on import, so specs from different sources are accepted:
+
+| You write | Normalized to |
+|-----------|---------------|
+| `target`, `targetId`, or `targetNodeId` | `targetNodeId` |
+| `sourceHandle: "default"` | unnamed handle (omitted) |
+| `spec`, `properties`, or `config` | `spec` |
+| `label` or `name` | `label` |
+
+You should prefer the canonical names (`targetNodeId`, `spec`, `label`) in new specs. The aliases exist for backward compatibility and interoperability with external generators.
+
 ### FlowParameter (for parameterized flows)
 
 | Field | Type | Description |
@@ -1327,7 +1340,7 @@ Run branches concurrently. The `branches` field documents what each branch does 
 
 | Spec Field | Type | Values |
 |------------|------|--------|
-| `branches` | `ParallelBranch[]` | Branch definitions (see below). Also accepts `string[]` for simple cases |
+| `branches` | `ParallelBranch[]` | Branch definitions (see below). Also accepts `string[]` for simple cases, or a `number` (e.g., `branches: 3`) — the DDD Tool coerces numbers into generated labels (`"Branch 1"`, `"Branch 2"`, etc.) |
 | `join` | string | `'all' \| 'any' \| 'n_of'` |
 | `join_count` | number | Required if join is `n_of` |
 | `timeout_ms` | number | Max wait time |
@@ -1929,6 +1942,28 @@ connections:
   - targetNodeId: blocked-handler-id
     sourceHandle: "block"
 ```
+
+> **Alias:** Guardrail also accepts `"valid"`/`"invalid"` as aliases for `"pass"`/`"block"`. The DDD Tool normalizes both forms.
+
+### Agent Loop done/error
+```yaml
+connections:
+  - targetNodeId: next-node-id
+    sourceHandle: "done"
+  - targetNodeId: error-handler-id
+    sourceHandle: "error"
+```
+
+### LLM Call success/error
+```yaml
+connections:
+  - targetNodeId: next-node-id
+    sourceHandle: "success"
+  - targetNodeId: error-handler-id
+    sourceHandle: "error"
+```
+
+> **Note:** `llm_call` also works with an unnamed handle (no `sourceHandle`) for the success path. The DDD Tool treats an unnamed handle and `"success"` as equivalent.
 
 ### Human Gate (dynamic per approval_options)
 ```yaml
