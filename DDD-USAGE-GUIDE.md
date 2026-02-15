@@ -2135,8 +2135,10 @@ This generates the complete spec structure — `ddd-project.json`, supplementary
 
 1. **Design** — Run `/ddd-create` with a project description (Session A)
 2. **Review** — Open the project in DDD Tool to visualize, validate, and refine specs on the canvas
-3. **Implement** — Run `/ddd-implement --all` to generate code from specs (Session B)
-4. **Iterate** — Use `/ddd-update` to modify specs, `/ddd-sync` to reconcile drift
+3. **Scaffold** — Run `/ddd-scaffold` to set up project skeleton from specs (Session B first step)
+4. **Implement** — Run `/ddd-implement --all` to generate flow code + tests (Session B)
+5. **Test** — Run `/ddd-test --all` to verify all tests pass
+6. **Iterate** — Use `/ddd-status` to check state, `/ddd-update` to modify specs, `/ddd-implement` to update code, `/ddd-sync` to reconcile drift
 
 ### Alternative: Manual spec creation
 
@@ -2147,7 +2149,8 @@ You can also create specs by hand:
 3. Create domain YAML files: `specs/domains/{domain}/domain.yaml` (see Section 3)
 4. Create flow YAML files: `specs/domains/{domain}/flows/{flow}.yaml` (see Section 5)
 5. Open in DDD Tool to visualize and validate
-6. Run `/ddd-implement` to generate code
+6. Run `/ddd-scaffold` to set up project infrastructure
+7. Run `/ddd-implement` to generate flow code
 
 ---
 
@@ -2184,7 +2187,24 @@ Generates a complete DDD project from a natural-language description.
 **After running:**
 1. Open the project in DDD Tool to review visually
 2. Refine flows on the canvas if needed
-3. Run `/ddd-implement --all` to generate code
+3. Run `/ddd-scaffold` to set up project infrastructure
+4. Run `/ddd-implement --all` to generate flow code
+
+### /ddd-scaffold
+
+Sets up the project skeleton and shared infrastructure from specs. This is the first step of Session B — run it before `/ddd-implement`.
+
+**Usage:** `/ddd-scaffold`
+
+**What it does:**
+1. Reads system.yaml, architecture.yaml, config.yaml, errors.yaml, types.yaml, and all schema files
+2. Initializes the project (package.json, tsconfig, dependencies, directory structure)
+3. Generates shared infrastructure: config loader, error handler, database schema, app entry point, integration clients, event bus, test setup
+4. Creates environment files (.env.example, .gitignore)
+5. Verifies build compiles and example test passes
+6. Initializes `.ddd/mapping.yaml`
+
+**After running:** Run `/ddd-implement --all` to generate flow-level code into the scaffolded project.
 
 ### /ddd-implement
 
@@ -2247,6 +2267,43 @@ Synchronizes specs with implementation state.
 | `--discover` | Also discover untracked code and suggest new flow specs |
 | `--fix-drift` | Re-implement flows where specs have drifted |
 | `--full` | All of the above |
+
+### /ddd-status
+
+Quick read-only overview of the project's implementation state. No files are modified.
+
+**Usage:** `/ddd-status [--json]`
+
+**What it does:**
+1. Reads `ddd-project.json`, all domain.yaml files, and `.ddd/mapping.yaml`
+2. For each flow, computes status: **Up to date**, **Drifted**, **Stale**, or **Not implemented**
+3. Checks scaffold state (package.json, entry point, database schema)
+4. Displays a table with domain, flow, status, and implementation date
+5. Suggests next actions (scaffold, implement, fix drift)
+
+Pass `--json` for machine-readable output.
+
+### /ddd-test
+
+Run tests for implemented flows without re-generating code. Use after manual edits, refactoring, or dependency updates.
+
+**Usage:** `/ddd-test [scope] [--coverage]`
+
+| Argument | Scope | Example |
+|----------|-------|---------|
+| `--all` | All implemented flows | `/ddd-test --all` |
+| `{domain}` | All flows in a domain | `/ddd-test users` |
+| `{domain}/{flow}` | Single flow | `/ddd-test users/user-register` |
+| *(empty)* | Interactive mode | `/ddd-test` |
+
+**What it does:**
+1. Reads `.ddd/mapping.yaml` to find test files for scoped flows
+2. Runs the test runner (auto-detected from config files)
+3. Reports pass/fail per flow with failure analysis
+4. Identifies likely cause: spec drift, manual code change, environment issue, or dependency issue
+5. Suggests fix actions per failure
+
+Pass `--coverage` to include coverage reporting.
 
 ### /ddd-reverse
 

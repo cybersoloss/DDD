@@ -9,19 +9,21 @@ DDD is a methodology for building software through visual flow diagrams that out
 ```
  Session A (Architect)          Human Review           Session B (Developer)
 
- Describe your software    ──→  Open DDD Tool     ──→  /ddd-implement --all
- /ddd-create generates          validate on canvas      generates code + tests
- full YAML spec structure       refine, adjust          from specs
+ Describe your software    ──→  Open DDD Tool     ──→  /ddd-scaffold
+ /ddd-create generates          validate on canvas      set up project skeleton
+ full YAML spec structure       refine, adjust              │
+                                                            ▼
+                                                        /ddd-implement --all
+                                                        generate code + tests
                                                             │
                                                             ▼
-                                                        /ddd-update
-                                                        modify specs from
-                                                        natural language
+                                                        /ddd-test --all
+                                                        verify tests pass
                                                             │
                                                             ▼
-                                                        /ddd-sync
-                                                        keep specs & code
-                                                        aligned
+                                                        /ddd-status → /ddd-update
+                                                        → /ddd-implement → /ddd-sync
+                                                        iterate and stay aligned
 ```
 
 ### The Workflow
@@ -30,9 +32,11 @@ DDD is a methodology for building software through visual flow diagrams that out
 
 **Step 2 — Review (Human):** Open the generated specs in the [DDD Tool](https://github.com/mhcandan/ddd-tool) desktop app. Visualize the flow graphs on a 3-level canvas (System Map → Domain Map → Flow Canvas). Validate with 20+ built-in rules. Adjust nodes, connections, and specs directly on the canvas.
 
-**Step 3 — Implement (Session B):** In a fresh Claude session, run `/ddd-implement` to generate working code from the specs. Claude reads all YAML files (flows, schemas, architecture, error codes), follows the node graph from trigger to terminal, generates code for each node, writes tests, runs them, and tracks everything in `.ddd/mapping.yaml`.
+**Step 3 — Scaffold (Session B):** In a fresh Claude session, run `/ddd-scaffold` to set up the project skeleton — package config, database schema, shared infrastructure (config loader, error handler, middleware), and test setup. This creates the foundation that flow implementations build on.
 
-**Step 4 — Iterate (Session B):** As requirements evolve, use `/ddd-update` to modify specs from natural language ("add rate limiting before login"), then `/ddd-implement` to update the code. Use `/ddd-sync` to detect drift between specs and implementation.
+**Step 4 — Implement (Session B):** Run `/ddd-implement` to generate working code from the specs. Claude reads all YAML files (flows, schemas, architecture, error codes), follows the node graph from trigger to terminal, generates code for each node, writes tests, runs them, and tracks everything in `.ddd/mapping.yaml`.
+
+**Step 5 — Test & Iterate (Session B):** Run `/ddd-test` to verify tests pass after implementation or manual edits. Use `/ddd-status` for a quick overview. As requirements evolve, use `/ddd-update` to modify specs, `/ddd-implement` to update code, and `/ddd-sync` to detect drift.
 
 ### Why Two Sessions?
 
@@ -47,12 +51,16 @@ The **specs directory** is the contract between sessions. Both Claude instances 
 
 ## Commands
 
-Four Claude Code slash commands power the workflow:
+Eight Claude Code slash commands power the workflow:
 
 | Command | What it does |
 |---------|-------------|
-| `/ddd-create` | Describe a project in natural language → full DDD spec structure (domains, flows, schemas, config) |
-| `/ddd-implement` | Read specs → generate code + tests, run tests, update mapping |
+| `/ddd-create` | Describe a project in natural language → full DDD spec structure |
+| `/ddd-reverse` | Reverse-engineer existing code → DDD specs |
+| `/ddd-scaffold` | Set up project skeleton from specs (Session B first step) |
+| `/ddd-implement` | Read specs → generate flow code + tests, update mapping |
+| `/ddd-test` | Run tests for implemented flows without re-generating code |
+| `/ddd-status` | Quick read-only overview of project implementation state |
 | `/ddd-update` | Natural language change request → updated YAML specs |
 | `/ddd-sync` | Sync mapping, discover untracked code, fix drifted implementations |
 
