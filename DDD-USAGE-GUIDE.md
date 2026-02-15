@@ -1,6 +1,6 @@
 # DDD Tool — Usage Guide for Claude
 
-This guide teaches you how to create and manage a DDD (Domain-Driven Design) project using the DDD Tool + Claude Code terminal workflow. You will write YAML spec files that the DDD Tool reads, and use `/ddd-implement` to generate implementation code.
+This guide teaches you how to create and manage a DDD (Design Driven Development) project using the DDD Tool + Claude Code terminal workflow. You will write YAML spec files that the DDD Tool reads, and use `/ddd-implement` to generate implementation code.
 
 ---
 

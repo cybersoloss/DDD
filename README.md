@@ -1,4 +1,4 @@
-# Diagram-Driven Development (DDD)
+# Design Driven Development (DDD)
 
 **Design software visually. Let AI implement it.**
 
