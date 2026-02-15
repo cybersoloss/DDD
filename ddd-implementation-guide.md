@@ -197,14 +197,15 @@ ddd-tool/
 │   │   ├── sheet-store.ts     # Active sheet, navigation history, breadcrumbs
 │   │   ├── flow-store.ts      # Current flow state (Level 3)
 │   │   ├── project-store.ts   # Project/file state, domain configs
-│   │   ├── ui-store.ts        # UI state (selection, panels)
+│   │   ├── ui-store.ts        # UI state (minimap visibility)
 │   │   ├── git-store.ts       # Git state
 │   │   ├── llm-store.ts       # Chat state, ghost nodes, LLM config
 │   │   ├── memory-store.ts    # Project memory layers, refresh triggers
 │   │   ├── implementation-store.ts  # Implementation panel state, queue, test results
 │   │   ├── app-store.ts         # App-level state: current view, recent projects, first-run
 │   │   ├── undo-store.ts        # Per-flow undo/redo stacks
-│   │   └── validation-store.ts  # Validation results per flow/domain/system, gate state
+│   │   ├── validation-store.ts  # Validation results per flow/domain/system, gate state
+│   │   └── generator-store.ts   # Generator panel state, generated files, save state
 │   ├── types/
 │   │   ├── sheet.ts           # Sheet levels, navigation, breadcrumb types
 │   │   ├── domain.ts          # Domain config, event wiring, portal types
@@ -217,7 +218,8 @@ ddd-tool/
 │   │   ├── implementation.ts  # Implementation panel, prompt builder, test runner types
 │   │   ├── test-generator.ts  # Derived test cases, test paths, boundary tests, spec compliance
 │   │   ├── app.ts             # App shell types: recent projects, settings, first-run, undo
-│   │   └── validation.ts     # Validation issue types, scopes, severity, gate state
+│   │   ├── validation.ts     # Validation issue types, scopes, severity, gate state
+│   │   └── generator.ts      # Generator input, generated file, generator function types
 │   ├── utils/
 │   │   ├── yaml.ts
 │   │   ├── domain-parser.ts   # Parse domain.yaml → SystemMap/DomainMap data
@@ -231,7 +233,13 @@ ddd-tool/
 │   │   ├── migration-tracker.ts    # Track schema hashes, detect changes, build migration prompts
 │   │   ├── test-case-deriver.ts   # Walk flow graphs, derive test paths + boundary tests
 │   │   ├── flow-validator.ts      # Flow, domain, and system-level validation engine
-│   │   ├── mermaid.ts
+│   │   ├── flow-templates.ts     # Pre-built flow templates (REST API, CRUD, Webhook, Agent, etc.)
+│   │   ├── generators/
+│   │   │   ├── mermaid.ts        # Generate Mermaid flowchart diagrams from flow specs
+│   │   │   ├── openapi.ts        # Generate OpenAPI 3.0 spec
+│   │   │   ├── dockerfile.ts     # Generate Dockerfile + docker-compose
+│   │   │   ├── kubernetes.ts     # Generate K8s manifests
+│   │   │   └── cicd.ts           # Generate CI/CD pipeline
 │   │   └── validation.ts
 │   └── styles/
 │       └── globals.css
@@ -392,87 +400,184 @@ export interface DuplicateFlowPayload {
 }
 ```
 
-**File: `src/types/node.ts`**
+**File: `src/types/flow.ts`** (consolidated — types previously in node.ts are now here)
+
+> **Note:** The actual implementation uses a single `flow.ts` file for all node types, spec shapes, and flow document types. The original `node.ts` types are superseded.
+
 ```typescript
-export type NodeType = 'trigger' | 'input' | 'process' | 'decision' | 'terminal';
+import type { Position } from './sheet';
+import type { ValidationIssue } from './validation';
 
-export interface Position {
-  x: number;
-  y: number;
+// --- Node types (all 19) ---
+
+export type DddNodeType =
+  | 'trigger' | 'input' | 'process' | 'decision' | 'terminal'
+  | 'data_store' | 'service_call' | 'event' | 'loop' | 'parallel' | 'sub_flow' | 'llm_call'
+  | 'agent_loop' | 'guardrail' | 'human_gate'
+  | 'orchestrator' | 'smart_router' | 'handoff' | 'agent_group';
+
+// --- Traditional node spec shapes ---
+
+export interface TriggerSpec {
+  event?: string;
+  source?: string;
+  description?: string;
+  [key: string]: unknown;
 }
 
-export interface NodeConnection {
-  targetNodeId: string;
-  label?: string;  // For decision nodes: "valid", "invalid"
+export interface InputSpec {
+  fields?: Array<{ name: string; type: string; required?: boolean }>;
+  validation?: string;
+  description?: string;
+  [key: string]: unknown;
 }
 
-export interface BaseNode {
+export interface ProcessSpec {
+  action?: string;
+  service?: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface DecisionSpec {
+  condition?: string;
+  trueLabel?: string;
+  falseLabel?: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface TerminalSpec {
+  outcome?: string;
+  description?: string;
+  status?: number;                     // HTTP response status code
+  body?: Record<string, unknown>;      // HTTP response body
+  [key: string]: unknown;
+}
+
+// --- Extended traditional node spec shapes ---
+
+export interface DataStoreSpec {
+  operation?: 'create' | 'read' | 'update' | 'delete';
+  model?: string;
+  data?: Record<string, string>;
+  query?: Record<string, string>;
+  pagination?: Record<string, unknown>;  // { style, default_limit, max_limit }
+  sort?: Record<string, unknown>;        // { default, allowed }
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface ServiceCallSpec {
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  url?: string;
+  headers?: Record<string, string>;
+  body?: Record<string, unknown>;
+  timeout_ms?: number;
+  retry?: { max_attempts?: number; backoff_ms?: number };
+  error_mapping?: Record<string, string>;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface EventNodeSpec {
+  direction?: 'emit' | 'consume';
+  event_name?: string;
+  payload?: Record<string, unknown>;
+  async?: boolean;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface LoopSpec {
+  collection?: string;
+  iterator?: string;
+  break_condition?: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface ParallelSpec {
+  branches?: string[];
+  join?: 'all' | 'any' | 'n_of';
+  join_count?: number;
+  timeout_ms?: number;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface SubFlowSpec {
+  flow_ref?: string;                    // "domain/flowId" format
+  input_mapping?: Record<string, string>;
+  output_mapping?: Record<string, string>;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface LlmCallSpec {
+  model?: string;
+  system_prompt?: string;
+  prompt_template?: string;
+  temperature?: number;
+  max_tokens?: number;
+  structured_output?: Record<string, unknown>;
+  retry?: { max_attempts?: number; backoff_ms?: number };
+  description?: string;
+  [key: string]: unknown;
+}
+
+// Union of all spec types
+export type NodeSpec = TriggerSpec | InputSpec | ProcessSpec | DecisionSpec | TerminalSpec
+  | DataStoreSpec | ServiceCallSpec | EventNodeSpec | LoopSpec | ParallelSpec
+  | SubFlowSpec | LlmCallSpec | AgentLoopSpec | GuardrailSpec | HumanGateSpec
+  | OrchestratorSpec | SmartRouterSpec | HandoffSpec | AgentGroupSpec;
+
+// --- Flow node (persisted to YAML) ---
+
+export interface DddFlowNode {
   id: string;
-  type: NodeType;
+  type: DddNodeType;
   position: Position;
-  connections: Record<string, string>;  // outputName -> targetNodeId
+  connections: Array<{
+    targetNodeId: string;
+    sourceHandle?: string;    // e.g., "valid"/"invalid", "success"/"error", "body"/"done", "branch-0"
+    targetHandle?: string;
+  }>;
+  spec: NodeSpec;
+  label: string;
+  parentId?: string;
 }
 
-export interface TriggerNode extends BaseNode {
-  type: 'trigger';
-  spec: {
-    triggerType: 'http' | 'webhook' | 'cron' | 'event';
-    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-    path?: string;
-    schedule?: string;
-    event?: string;
-  };
+// --- Flow document (YAML shape) ---
+
+export interface FlowDocument {
+  flow: { id: string; name: string; type: 'traditional' | 'agent'; domain: string; description?: string };
+  trigger: DddFlowNode;
+  nodes: DddFlowNode[];
+  metadata: { created: string; modified: string };
 }
 
-export interface InputNode extends BaseNode {
-  type: 'input';
-  spec: {
-    fields: InputField[];
-  };
-}
+// --- React Flow data prop ---
 
-export interface InputField {
-  name: string;
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object';
-  required: boolean;
-  validations: Validation[];
+export interface DddNodeData extends Record<string, unknown> {
+  label: string;
+  spec: NodeSpec;
+  dddType: DddNodeType;
+  validationIssues?: ValidationIssue[];
 }
+```
 
-export interface Validation {
-  type: 'min_length' | 'max_length' | 'pattern' | 'format' | 'min' | 'max' | 'enum';
-  value: any;
-  error: string;
-}
+**sourceHandle routing** — Nodes with multiple output paths use named `sourceHandle` values:
 
-export interface ProcessNode extends BaseNode {
-  type: 'process';
-  spec: {
-    operation: string;
-    description: string;
-    inputs: Record<string, string>;  // name -> jsonpath
-    outputs: Record<string, string>;
-  };
-}
-
-export interface DecisionNode extends BaseNode {
-  type: 'decision';
-  spec: {
-    condition: string;
-    description: string;
-    onTrue: { status?: number; body?: any };
-    onFalse: { status?: number; body?: any };
-  };
-}
-
-export interface TerminalNode extends BaseNode {
-  type: 'terminal';
-  spec: {
-    status: number;
-    body: Record<string, any>;
-  };
-}
-
-export type FlowNode = TriggerNode | InputNode | ProcessNode | DecisionNode | TerminalNode;
+| Node Type | Output Handles | Visual Labels |
+|-----------|---------------|---------------|
+| `input` | `valid` / `invalid` | "Ok / Err" (green / red) |
+| `decision` | `true` / `false` | "Yes / No" (green / red) |
+| `data_store` | `success` / `error` | "Ok / Err" (green / red) |
+| `service_call` | `success` / `error` | "Ok / Err" (green / red) |
+| `loop` | `body` / `done` | "Body / Done" (teal / muted) |
+| `parallel` | `branch-0`, `branch-1`, ... / `done` | Dynamic labels (pink / muted) |
+| `smart_router` | Dynamic route names | Route labels (pink) |
 
 // ─── Custom Fields ───
 // All node spec interfaces support extensibility via index signatures:
@@ -811,74 +916,7 @@ export type OrchestrationNode = OrchestratorNode | SmartRouterNode | HandoffNode
 export type AnyNode = FlowNode | AgentNode | OrchestrationNode;
 ```
 
-**File: `src/types/flow.ts`**
-```typescript
-import { FlowNode, AgentNode, OrchestrationNode, AnyNode, ToolDefinition } from './node';
-
-export type FlowType = 'traditional' | 'agent';
-
-export interface Flow {
-  id: string;
-  name: string;
-  type: FlowType;
-  description?: string;
-  domain: string;
-  trigger: FlowNode;  // First node, must be trigger type
-  nodes: AnyNode[];   // Traditional or agent nodes
-  metadata: {
-    createdAt: string;
-    updatedAt: string;
-    createdBy?: string;
-    completeness: number;  // 0-100
-  };
-}
-
-// Agent-specific flow config (only present when type === 'agent')
-export interface AgentFlowConfig {
-  model: string;
-  system_prompt: string;
-  max_iterations: number;
-  temperature?: number;
-  memory: Array<{
-    name: string;
-    type: 'conversation_history' | 'vector_store' | 'key_value';
-    max_tokens?: number;
-    strategy?: string;
-    [key: string]: any;
-  }>;
-  tools: ToolDefinition[];
-  guardrails: {
-    input: Array<Record<string, any>>;
-    output: Array<Record<string, any>>;
-  };
-}
-
-export interface AgentFlow extends Flow {
-  type: 'agent';
-  agent_config: AgentFlowConfig;
-}
-
-export function isAgentFlow(flow: Flow): flow is AgentFlow {
-  return flow.type === 'agent';
-}
-
-export interface FlowFile {
-  flow: {
-    id: string;
-    name: string;
-    type?: FlowType;
-    description?: string;
-    domain: string;
-  };
-  agent_config?: any;  // Agent-specific config
-  trigger: any;        // Trigger spec
-  nodes: any[];        // Node specs
-  tools?: any[];       // Tool definitions (agent flows only)
-  memory?: any[];      // Memory config (agent flows only)
-  guardrails?: any;    // Guardrail config (agent flows only)
-  metadata: any;
-}
-```
+**Flow types** are now defined in `src/types/flow.ts` (see consolidated types section above). The `FlowDocument` interface is the YAML shape, and `DddFlowNode` is the node type with `sourceHandle` support in its `connections` array.
 
 **File: `src/stores/flow-store.ts`**
 ```typescript
@@ -7050,15 +7088,38 @@ The recommended workflow uses Claude Code's own terminal with custom slash comma
 6. **Sync** — run `/ddd-sync` to update `.ddd/mapping.yaml`
 7. **Reload** in DDD Tool to see updated implementation status
 
-**Custom Claude Code commands** (installed at `~/.claude/commands/`):
+**Custom Claude Code commands** (installed at `~/.claude/commands/`, repo: [mhcandan/claude-commands](https://github.com/mhcandan/claude-commands)):
 
-- `/ddd-implement --all` — Implement all domains and flows
-- `/ddd-implement {domain}` — Implement all flows in one domain
-- `/ddd-implement {domain}/{flow}` — Implement a single flow
-- `/ddd-implement` — Interactive: lists flows with status, asks what to implement
-- `/ddd-sync` — Update `.ddd/mapping.yaml` with current implementation state
-- `/ddd-sync --discover` — Also find untracked code and suggest new flow specs
-- `/ddd-sync --fix-drift` — Re-implement flows where specs have drifted
+| Command | What it does |
+|---------|-------------|
+| `/ddd-create` | Describe project in natural language → generates full spec structure (domains, flows, schemas, config). Fetches the DDD Usage Guide from GitHub at runtime. |
+| `/ddd-implement --all` | Implement all domains and flows |
+| `/ddd-implement {domain}` | Implement all flows in one domain |
+| `/ddd-implement {domain}/{flow}` | Implement a single flow |
+| `/ddd-implement` | Interactive: lists flows with status, asks what to implement |
+| `/ddd-update` | Natural language change request → updated YAML specs |
+| `/ddd-update --add-flow {domain}` | Add a new flow to a domain from description |
+| `/ddd-update --add-domain` | Add a new domain with flows from description |
+| `/ddd-sync` | Update `.ddd/mapping.yaml` with current implementation state |
+| `/ddd-sync --discover` | Also find untracked code and suggest new flow specs |
+| `/ddd-sync --fix-drift` | Re-implement flows where specs have drifted |
+| `/ddd-sync --full` | All of the above |
+
+**Workflow with sessions:**
+
+```
+Session A (Architect):          Human Review:           Session B (Developer):
+  /ddd-create                    Open DDD Tool            /ddd-implement --all
+  generates full spec            validate on canvas       generates code + tests
+  structure                      refine, adjust           from specs
+
+                                                         /ddd-update
+                                                         modify specs from
+                                                         natural language
+
+                                                         /ddd-sync
+                                                         keep specs & code aligned
+```
 
 **Shell execution notes:**
 - Tauri-spawned processes don't inherit user's shell profile — must source `~/.zprofile` and `~/.zshrc`
@@ -13401,7 +13462,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
 
 1. **State Management**
    - Use Zustand for all state
-   - Keep stores focused (sheet, flow, project, ui, git, llm, implementation, app, undo, validation)
+   - Keep stores focused (sheet, flow, project, ui, git, llm, implementation, app, undo, validation, generator)
    - `sheet-store` owns navigation state (current level, breadcrumbs, history)
    - `project-store` owns domain configs parsed from domain.yaml files
    - `flow-store` owns current flow being edited (Level 3 only)
@@ -13770,6 +13831,90 @@ npm run tauri dev
 
 ---
 
+## Session 15: Production Generators
+
+Session 15 adds production infrastructure generators that output deployment artifacts from specs.
+
+### Generator Infrastructure
+
+**Types:** `src/types/generator.ts`
+
+```typescript
+export interface GeneratorInput {
+  projectName: string;
+  domains: Array<{
+    id: string;
+    name: string;
+    flows: Array<{
+      flowId: string;
+      flowName: string;
+      triggerEvent: string;
+      inputs: Array<{ name: string; type: string; required?: boolean }>;
+      processes: Array<{ action?: string; service?: string }>;
+      terminals: Array<{ outcome?: string }>;
+    }>;
+  }>;
+  schemas: Record<string, unknown>;
+  architecture: Record<string, unknown>;
+  system: Record<string, unknown>;
+}
+
+export interface GeneratedFile {
+  relativePath: string;
+  content: string;
+  language: string;
+}
+
+export type GeneratorFunction = (input: GeneratorInput) => GeneratedFile[];
+```
+
+**Store:** `src/stores/generator-store.ts` — manages panel open/close, selected generator, generated files, save-to-disk, and API docs parsing.
+
+**Generators** in `src/utils/generators/`:
+
+| Generator | File | Output |
+|-----------|------|--------|
+| OpenAPI | `openapi.ts` | `openapi.yaml` — OpenAPI 3.0 spec from HTTP flow triggers, schemas, errors |
+| Dockerfile | `dockerfile.ts` | `Dockerfile` + `docker-compose.yaml` from system.yaml + architecture.yaml deployment config |
+| Kubernetes | `kubernetes.ts` | `k8s/deployment.yaml`, `k8s/service.yaml`, `k8s/ingress.yaml`, `k8s/hpa.yaml` |
+| CI/CD | `cicd.ts` | `.github/workflows/ci.yaml` — GitHub Actions pipeline from architecture.yaml |
+| Mermaid | `mermaid.ts` | `generated/mermaid/{domain}/{flow}.md` — flowchart diagrams with embedded Mermaid code blocks |
+
+**Generator Panel UI:** `src/components/GeneratorPanel/` — dropdown selector, preview pane with syntax highlighting, "Save to disk" button, keyboard shortcut `Cmd+G`.
+
+---
+
+## Session 16: First-Run, Settings, Polish
+
+Session 16 adds first-run experience, settings persistence, undo/redo, auto-save, and crash recovery.
+
+### Key Components
+
+**First-Run Wizard:** `src/components/FirstRun/FirstRunWizard.tsx`
+- 3-step setup: Connect LLM provider → Detect Claude Code CLI → Create/open/sample project
+- Detected when `~/.ddd-tool/` directory doesn't exist
+- "Skip for now" and "Explore with sample project" options
+
+**Settings Dialog:** `src/components/Settings/SettingsDialog.tsx`
+- Tab navigation: LLM, Models, Claude Code, Testing, Editor, Git
+- Global scope (`~/.ddd-tool/settings.json`) vs project scope (`.ddd/config.yaml`)
+- API keys stored as env var names, never raw values
+- `ModelSettings.tsx` — task-to-model routing, fallback chain ordering
+- `GitSettings.tsx` — commit message templates, branch naming conventions
+
+**Undo/Redo Store:** `src/stores/undo-store.ts`
+- Per-flow undo/redo stacks with immutable snapshots
+- `Cmd+Z` / `Cmd+Shift+Z` keyboard shortcuts
+- Max 100 snapshots per flow, coalescing rapid changes (<500ms apart)
+- Undoable: add/delete/move node, connect/disconnect, edit spec, apply ghost preview
+- NOT undoable: git commit, implementation, file save, chat messages
+
+**Auto-Save:** Writes to `.ddd/autosave/` every 30s (configurable). Crash recovery dialog on relaunch detects autosave data and offers restore.
+
+**Error Handling:** Error toasts with severity-based auto-dismiss (info=5s, warning/error=manual, fatal=modal). LLM errors auto-retry with exponential backoff. Auto-fallback to next provider in chain.
+
+---
+
 ## Session 17: Extended Nodes + Enhancements
 
 Session 17 is a post-MVP enhancement session that adds missing node types and quality-of-life features.
@@ -13787,74 +13932,21 @@ Add 6 traditional flow node types to complete the spec's full set of 11:
 | `parallel` | ═ | Concurrent execution branches | branches (list of node chains), join strategy (all/any/n-of), timeout |
 | `sub_flow` | ⊞ | Call another flow as subroutine | flow_ref (domain/flow-id), input mapping, output mapping |
 
-**Update `src/types/flow.ts`:**
-```typescript
-export type DddNodeType =
-  | 'trigger' | 'input' | 'process' | 'decision' | 'terminal'
-  | 'data_store' | 'service_call' | 'event' | 'loop' | 'parallel' | 'sub_flow'
-  | 'agent_loop' | 'guardrail' | 'human_gate'
-  | 'orchestrator' | 'smart_router' | 'handoff' | 'agent_group';
-```
+**Types** — See the consolidated `src/types/flow.ts` section in Phase 3 (Day 1-2). All 19 node types and their spec interfaces are defined there, including:
+- `DddNodeType` union with all 19 types (including `llm_call`)
+- `DataStoreSpec` with `pagination` and `sort` fields (for read operations)
+- `ServiceCallSpec` with `error_mapping` for HTTP status → error code mapping
+- `TerminalSpec` with `status` (HTTP code) and `body` (response body) fields
+- `LoopSpec`, `ParallelSpec`, `EventNodeSpec`, `SubFlowSpec`, `LlmCallSpec`
+- All spec interfaces use `[key: string]: unknown` for custom field extensibility
 
-**New node spec interfaces — add to `src/types/flow.ts`:**
-```typescript
-export interface DataStoreSpec {
-  operation: 'create' | 'read' | 'update' | 'delete';
-  model: string;                    // Schema model name (e.g. "User")
-  data?: Record<string, string>;    // Field mappings for create/update (e.g. { email: "$.email" })
-  query?: Record<string, string>;   // Filter conditions for read/update/delete
-  description: string;
-}
-
-export interface ServiceCallSpec {
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-  url: string;                      // URL or service identifier
-  headers?: Record<string, string>;
-  body?: Record<string, string>;    // Body field mappings
-  timeout_ms?: number;
-  retry?: { max_attempts: number; backoff_ms: number };
-  error_mapping?: Record<string, string>;  // HTTP status → error_code
-  description: string;
-}
-
-export interface EventNodeSpec {
-  direction: 'emit' | 'consume';
-  event_name: string;
-  payload: Record<string, string>;  // Field mappings
-  async: boolean;                   // Fire-and-forget or wait for handlers
-  description: string;
-}
-
-export interface LoopSpec {
-  collection: string;               // Expression (e.g. "$.items")
-  iterator: string;                 // Variable name (e.g. "item")
-  break_condition?: string;         // Optional early exit
-  description: string;
-}
-
-export interface ParallelSpec {
-  branches: string[];               // Entry node IDs for each branch
-  join: 'all' | 'any' | 'n_of';    // Wait strategy
-  join_count?: number;              // Required when join = 'n_of'
-  timeout_ms?: number;
-  description: string;
-}
-
-export interface SubFlowSpec {
-  flow_ref: string;                 // "domain/flow-id"
-  input_mapping: Record<string, string>;
-  output_mapping: Record<string, string>;
-  description: string;
-}
-```
-
-**New node components** — create one file per node in `src/components/FlowCanvas/nodes/`:
-- `DataStoreNode.tsx` — database icon, model name, operation badge
-- `ServiceCallNode.tsx` — external link icon, URL preview, method badge
-- `EventNode.tsx` — lightning icon, event name, direction badge (emit/consume)
-- `LoopNode.tsx` — loop icon, collection expression, contains inner nodes
-- `ParallelNode.tsx` — parallel lines icon, branch count, join strategy badge
-- `SubFlowNode.tsx` — nested flow icon, flow reference link (clickable to navigate)
+**New node components** — one file per node in `src/components/FlowCanvas/nodes/`:
+- `DataStoreNode.tsx` — Database icon (emerald), model name, operation badge, **dual handles: success (green, 33%) / error (red, 66%)** with "Ok / Err" labels
+- `ServiceCallNode.tsx` — ExternalLink icon (orange), URL preview, method badge, **dual handles: success (green, 33%) / error (red, 66%)** with "Ok / Err" labels
+- `EventNode.tsx` — Zap icon (purple), event name, direction badge (emit/consume), single output handle
+- `LoopNode.tsx` — Repeat icon (teal), large container with dashed border, collection expression, **dual handles: body (teal, 33%) / done (muted, 66%)** with "Body / Done" labels
+- `ParallelNode.tsx` — Columns icon (pink), branch count, join strategy badge, **dynamic handles: branch-0, branch-1, ... (pink, evenly spaced) + done (muted, rightmost)** — follows SmartRouterNode pattern with `useMemo` for handle array
+- `SubFlowNode.tsx` — GitMerge icon (violet), flow reference (domain/flowId), double-click navigates to referenced flow, ExternalLink indicator when navigatable
 
 **Update `src/components/FlowCanvas/nodes/index.ts`:**
 ```typescript
@@ -13892,21 +13984,125 @@ const extendedTraditionalNodes = [
 ];
 ```
 
-**Update spec panel editors** — add to `src/components/SpecPanel/`:
-- `DataStoreEditor.tsx` — operation dropdown, model selector (from schemas), data mapping table
-- `ServiceCallEditor.tsx` — method dropdown, URL input, headers/body mapping, timeout, retry config
-- `EventEditor.tsx` — direction toggle, event name (autocomplete from domain events), payload mapping
-- `LoopEditor.tsx` — collection expression, iterator name, break condition
-- `ParallelEditor.tsx` — branch list, join strategy dropdown, timeout
-- `SubFlowEditor.tsx` — flow reference picker (browse domains/flows), input/output mapping tables
+**Spec panel editors** — in `src/components/SpecPanel/editors/`:
+- `DataStoreSpecEditor.tsx` — operation dropdown (CRUD), model field with autocomplete, data/query JSON textareas, **conditional pagination/sort fields** (shown only when `operation === 'read'`): pagination JSON textarea (placeholder: `{ "style": "cursor", "default_limit": 20, "max_limit": 100 }`), sort JSON textarea (placeholder: `{ "default": "created_at:desc", "allowed": [] }`)
+- `ServiceCallSpecEditor.tsx` — method dropdown, URL input, headers/body JSON, timeout, retry config, error_mapping JSON
+- `EventSpecEditor.tsx` — direction toggle (emit/consume), event name (autocomplete from domain events), payload mapping, async checkbox
+- `LoopSpecEditor.tsx` — collection expression, iterator name, break condition
+- `ParallelSpecEditor.tsx` — branch list, join strategy dropdown, timeout
+- `SubFlowSpecEditor.tsx` — flow reference picker (browse domains/flows), input/output mapping tables
+- `TerminalSpecEditor.tsx` — outcome field, description, **status** (number input, placeholder "e.g. 200, 201, 400"), **response body** (JSON textarea with try/catch parse)
+
+**ExtraFieldsEditor** (`src/components/SpecPanel/editors/ExtraFieldsEditor.tsx`) — handles custom fields for all node types. Uses a `KNOWN_KEYS` map per node type to identify which fields are "standard" (rendered by the typed editor) vs. "custom" (rendered in a collapsible section):
+
+```typescript
+const KNOWN_KEYS: Record<string, Set<string>> = {
+  trigger: new Set(['event', 'source', 'description']),
+  input: new Set(['fields', 'validation', 'description']),
+  process: new Set(['action', 'service', 'description']),
+  decision: new Set(['condition', 'trueLabel', 'falseLabel', 'description']),
+  terminal: new Set(['outcome', 'description', 'status', 'body']),
+  data_store: new Set(['operation', 'model', 'data', 'query', 'description', 'pagination', 'sort']),
+  service_call: new Set(['method', 'url', 'headers', 'body', 'timeout_ms', 'retry', 'error_mapping', 'description']),
+  event: new Set(['direction', 'event_name', 'payload', 'async', 'description']),
+  loop: new Set(['collection', 'iterator', 'break_condition', 'description']),
+  parallel: new Set(['branches', 'join', 'join_count', 'timeout_ms', 'description']),
+  sub_flow: new Set(['flow_ref', 'input_mapping', 'output_mapping', 'description']),
+  // ... agent and orchestration types similarly
+};
+```
 
 ### Other Enhancements
 
 | Feature | Description |
 |---------|-------------|
 | **Validation presets** | Reusable input validation patterns (email, phone, password, URL, UUID) — dropdown in InputNode spec panel |
-| **Mermaid export** | Generate Mermaid flowchart syntax from any flow — "Export" menu in toolbar |
-| **Minimap** | Small position indicator showing where you are in the L1→L2→L3 hierarchy |
+| **Mermaid generator** | Generate Mermaid flowchart diagrams from flow specs — available in Generator Panel alongside other generators. Output: `generated/mermaid/{domain}/{flow}.md` with embedded Mermaid code blocks. Implementation: `src/utils/generators/mermaid.ts` |
+| **Minimap toggle** | React Flow minimap on the flow canvas (L3) — toggle with `Cmd+Shift+M`. State managed by `src/stores/ui-store.ts` (Zustand store with `showMinimap` boolean and `toggleMinimap` action) |
+
+### Flow Templates
+
+Pre-built flow templates for common patterns. Available when creating a new flow via the Add Flow dialog.
+
+**Implementation:** `src/utils/flow-templates.ts`
+
+```typescript
+export interface FlowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  type: 'traditional' | 'agent';
+  nodeCount: number;
+  create: (flowId: string, flowName: string, domainId: string) => FlowDocument;
+}
+
+export const FLOW_TEMPLATES: FlowTemplate[] = [
+  // Traditional templates
+  { id: 'rest-api', name: 'REST API Endpoint', nodeCount: 5, ... },
+  { id: 'crud-entity', name: 'CRUD Entity', nodeCount: 6, ... },
+  { id: 'webhook-handler', name: 'Webhook Handler', nodeCount: 5, ... },
+  { id: 'event-processor', name: 'Event Processor', nodeCount: 5, ... },
+  // Agent templates
+  { id: 'rag-agent', name: 'RAG Agent', nodeCount: 5, ... },
+  { id: 'support-agent', name: 'Customer Support Agent', nodeCount: 5, ... },
+  { id: 'code-review-agent', name: 'Code Review Agent', nodeCount: 3, ... },
+  { id: 'data-pipeline-agent', name: 'Data Pipeline Agent', nodeCount: 3, ... },
+];
+```
+
+Each template's `create()` function returns a complete `FlowDocument` with trigger, nodes, connections (including proper `sourceHandle` values), and spec defaults — using `nanoid(8)` for node IDs.
+
+### Generator Store
+
+**File:** `src/stores/generator-store.ts`
+
+Zustand store managing the Generator Panel state:
+
+```typescript
+interface GeneratorStore {
+  // State
+  panelOpen: boolean;
+  selectedGenerator: string | null;
+  generatedFiles: GeneratedFile[];
+  isSaving: boolean;
+  apiDocsOpen: boolean;
+  parsedApiDocs: ParsedApiDocs | null;
+
+  // Actions
+  togglePanel: () => void;
+  selectGenerator: (id: string) => void;
+  generate: (input: GeneratorInput) => void;
+  saveToFile: (file: GeneratedFile) => Promise<void>;
+  parseApiDocs: (content: string) => void;
+}
+```
+
+**Generator types** (`src/types/generator.ts`):
+- `GeneratorInput` — domains, flows, schemas, architecture config
+- `GeneratedFile` — relativePath, content, language
+- `GeneratorFunction` — `(input: GeneratorInput) => GeneratedFile[]`
+
+**Available generators** in `src/utils/generators/`:
+- `openapi.ts` — OpenAPI 3.0 spec from HTTP flow triggers
+- `dockerfile.ts` — Dockerfile + docker-compose from deployment config
+- `kubernetes.ts` — K8s manifests from architecture config
+- `cicd.ts` — GitHub Actions workflow from architecture config
+- `mermaid.ts` — Mermaid flowchart diagrams from flow specs
+
+### UI Store
+
+**File:** `src/stores/ui-store.ts`
+
+Simple Zustand store for UI state:
+
+```typescript
+interface UiStore {
+  showMinimap: boolean;
+  toggleMinimap: () => void;
+}
+```
+
+Toggled with `Cmd+Shift+M` keyboard shortcut.
 | **Expert agents** | Pre-built agent archetypes (researcher, coder, reviewer) as templates |
 | **Templates/library** | Reusable flow templates (auth, CRUD, webhook, scheduled job) — "Import template" in Add Flow dialog |
 | **Live agent testing** | Run an agent flow from within DDD Tool with mock inputs, see tool calls and LLM responses in real-time |

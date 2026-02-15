@@ -360,6 +360,71 @@ Levels 1 and 2 are **derived views** — their content comes from spec files. Us
 | Domain Block | ▣ | Represents a domain (shows flow count, double-click to drill in) |
 | Event Arrow | ──▶ | Async event connection between domains |
 
+## Node Output Handles (sourceHandle Routing)
+
+Nodes with multiple output paths use named `sourceHandle` values to distinguish connections. This is critical for both the DDD Tool canvas rendering and for Claude Code implementation routing.
+
+| Node Type | Output Handles | Visual | Color |
+|-----------|---------------|--------|-------|
+| Input | `valid` / `invalid` | "Ok / Err" labels | Green / Red |
+| Decision | `true` / `false` | "Yes / No" labels | Green / Red |
+| Data Store | `success` / `error` | "Ok / Err" labels | Green / Red |
+| Service Call | `success` / `error` | "Ok / Err" labels | Green / Red |
+| Loop | `body` / `done` | "Body / Done" labels | Teal / Muted |
+| Parallel | `branch-0`, `branch-1`, ... / `done` | Dynamic branch labels | Pink / Muted |
+| Smart Router | Dynamic route names | Route labels | Pink |
+
+**Connection YAML format with sourceHandle:**
+
+```yaml
+connections:
+  - from: input-xK9mR2vL
+    to: process-aPq3nW8j
+    sourceHandle: valid        # Valid input → continue
+  - from: input-xK9mR2vL
+    to: terminal-bR7nP4qL
+    sourceHandle: invalid      # Invalid input → error response
+
+  - from: data_store-mN3pK8vR
+    to: process-cQ5tW2xJ
+    sourceHandle: success      # DB operation succeeded
+  - from: data_store-mN3pK8vR
+    to: terminal-eR9nP4qL
+    sourceHandle: error        # DB error → error terminal
+
+  - from: loop-fT2mK7vN
+    to: process-gP4nW8xJ
+    sourceHandle: body         # Loop iteration body
+  - from: loop-fT2mK7vN
+    to: terminal-hR6nP4qL
+    sourceHandle: done         # After loop completes
+
+  - from: parallel-jK8mR2vL
+    to: service_call-kP3nW8xJ
+    sourceHandle: branch-0     # First parallel branch
+  - from: parallel-jK8mR2vL
+    to: service_call-lQ5tW2xJ
+    sourceHandle: branch-1     # Second parallel branch
+  - from: parallel-jK8mR2vL
+    to: process-mR7nP4qL
+    sourceHandle: done         # Join point after all branches
+```
+
+**DDD Tool canvas rendering:**
+- Dual-handle nodes show two labeled output handles at the bottom (positioned at 33% and 66%)
+- Parallel nodes show N+1 handles (one per branch + done), evenly spaced
+- Handle colors match their semantic meaning (green=success, red=error, teal=body, pink=branch)
+
+**Claude Code implementation routing:**
+When implementing a flow, Claude Code uses `sourceHandle` values to determine control flow:
+- `valid`/`success` paths → continue normal execution
+- `invalid`/`error` paths → error handling, early return with error codes from `errors.yaml`
+- `body` → loop iteration logic
+- `done` → post-loop continuation
+- `branch-N` → parallel execution branches (Promise.all, asyncio.gather, etc.)
+
+---
+
 ## Connection Types Between Flows
 
 1. **Event-Based (Async):** Publisher/subscriber via event bus — shown as arrows on Level 1 and Level 2
@@ -2976,6 +3041,30 @@ The validator checks:
 | **Delete all nodes** | Right-click canvas → "Clear canvas" → confirmation → removes all nodes except trigger |
 | **Import from template** | Right-click canvas → "Import template" → select a template flow → merges nodes into current canvas as ghost preview |
 
+### Flow Templates
+
+The DDD Tool includes pre-built flow templates that create fully wired node graphs with one click. Templates are available when creating a new flow or importing from the canvas context menu.
+
+**Traditional Flow Templates:**
+
+| Template | Nodes | Description |
+|----------|-------|-------------|
+| REST API Endpoint | 5 | Trigger → Input → Process → Terminal (success) + Terminal (error) |
+| CRUD Entity | 6 | Trigger → Input → Decision → Data Store → Terminal |
+| Webhook Handler | 5 | Trigger → Input → Process → Service Call → Terminal |
+| Event Processor | 5 | Trigger → Event (consume) → Process → Event (emit) → Terminal |
+
+**Agent Flow Templates:**
+
+| Template | Nodes | Description |
+|----------|-------|-------------|
+| RAG Agent | 5 | Guardrail (input) → Agent Loop (retrieval + answer tools) → Guardrail (output) → Terminal |
+| Customer Support Agent | 5 | Guardrail → Agent Loop (ticket tools) → Human Gate → Terminal |
+| Code Review Agent | 3 | Trigger → Agent Loop (code analysis + diff tools) → Terminal |
+| Data Pipeline Agent | 3 | Trigger → Agent Loop (ETL tools) → Terminal |
+
+Each template creates a complete `FlowDocument` with trigger, nodes, connections, and spec defaults pre-wired using the `{type}-{nanoid(8)}` ID convention.
+
 ### Spec Panel
 - Right sidebar with type-specific fields
 - Dropdown menus (not free text)
@@ -5195,15 +5284,35 @@ The DDD Tool and Claude Code work together through a design-implement-sync loop.
 
 **Custom Claude Code commands** (installed at `~/.claude/commands/`):
 
-| Command | Scope | Example |
-|---------|-------|---------|
+| Command | Scope | What it does |
+|---------|-------|-------------|
+| `/ddd-create` | New project | Describe project in natural language → generates full spec structure (domains, flows, schemas, config) |
 | `/ddd-implement --all` | Whole project | Implements all domains and flows |
 | `/ddd-implement {domain}` | Single domain | `/ddd-implement users` |
 | `/ddd-implement {domain}/{flow}` | Single flow | `/ddd-implement users/user-registration` |
 | `/ddd-implement` | Interactive | Lists flows with status, asks what to implement |
+| `/ddd-update` | Spec modification | Natural language change request → updated YAML specs |
+| `/ddd-update --add-flow {domain}` | Add flow | "Add an order cancellation flow" → new flow spec |
+| `/ddd-update --add-domain` | Add domain | "Add a notifications domain" → new domain + flows |
 | `/ddd-sync` | Sync mapping | Updates `.ddd/mapping.yaml` with implementation state |
 | `/ddd-sync --discover` | Discover | Also finds untracked code and suggests new flow specs |
 | `/ddd-sync --fix-drift` | Fix drift | Re-implements flows where specs have drifted |
+| `/ddd-sync --full` | Full sync | All of the above |
+
+**The `/ddd-create` command** (Session A — design):
+1. Fetches the DDD Usage Guide from GitHub at runtime
+2. Reads the user's project description
+3. Asks clarifying questions if the description is brief
+4. Generates complete spec structure: `ddd-project.json`, `system.yaml`, `architecture.yaml`, `config.yaml`, `errors.yaml`, `schemas/*.yaml`, `domain.yaml` for each domain, and flow YAML files with full node graphs
+5. Wires all connections with proper `sourceHandle` values
+6. Runs quality checks (all paths reach terminal, decision branches wired, etc.)
+
+**The `/ddd-update` command** (Session B — iterate):
+1. Reads the user's natural language change request
+2. Reads existing specs (system, architecture, errors, schemas, domain, flow)
+3. Modifies the YAML spec to reflect the change
+4. Supports: adding/removing/modifying nodes, changing connections, updating specs, adding new flows or domains
+5. Preserves all existing `sourceHandle` wiring and node IDs
 
 The `/ddd-implement` command:
 1. Finds `ddd-project.json` in the project
@@ -6437,6 +6546,53 @@ Claude Code reads all of these sections and generates the corresponding infrastr
 | Docker Compose | architecture.yaml deployment | `docker-compose.yaml` | Services change |
 | K8s manifests | architecture.yaml deployment | `k8s/*.yaml` | K8s config changes |
 | CLAUDE.md | All specs + implementation status | `CLAUDE.md` | Any spec or status changes |
+| Mermaid diagrams | Flow specs (nodes + connections) | `generated/mermaid/{domain}/{flow}.md` | Flow nodes or connections change |
+
+### Mermaid Generator
+
+The DDD Tool generates Mermaid flowchart diagrams from flow specs. Each flow produces a markdown file containing a Mermaid code block with the flow's node graph.
+
+**Generated format:**
+
+```markdown
+# user-register
+
+```mermaid
+flowchart TD
+  user_register_trigger(("HTTP POST /users"))
+  user_register_input["Input: email, password, name"]
+  user_register_trigger --> user_register_input
+  user_register_process_0["Hash Password"]
+  user_register_input --> user_register_process_0
+  user_register_terminal_0[/"Success"/]
+  user_register_process_0 --> user_register_terminal_0
+`` `
+```
+
+**Output location:** `generated/mermaid/{domain}/{flow}.md`
+
+The Mermaid generator is available in the Generator Panel alongside OpenAPI, Dockerfile, docker-compose, Kubernetes, and CI/CD generators. All generators share the same preview → save workflow.
+
+### Generator Panel
+
+The Generator Panel (`Cmd+G`) provides a unified interface for all production generators:
+
+| Generator | Output | From |
+|-----------|--------|------|
+| OpenAPI | `openapi.yaml` | HTTP flow triggers + schemas + errors |
+| Dockerfile | `Dockerfile` | system.yaml + architecture.yaml deployment |
+| Docker Compose | `docker-compose.yaml` | system.yaml services + deployment config |
+| Kubernetes | `k8s/*.yaml` | architecture.yaml kubernetes section |
+| CI/CD | `.github/workflows/ci.yaml` | architecture.yaml + system.yaml |
+| Mermaid | `generated/mermaid/**/*.md` | Flow nodes + connections |
+
+**Workflow:**
+1. Open Generator Panel (Cmd+G or sidebar button)
+2. Select a generator from the dropdown
+3. Preview the generated output in the panel
+4. Click "Save" to write files to disk in the `generated/` directory
+
+The generator panel is managed by the `generator-store` (Zustand) which tracks panel open/close state, selected generator, generated files, and save status.
 
 ---
 
@@ -6531,7 +6687,13 @@ Claude Code reads all of these sections and generates the corresponding infrastr
 - **Undo/Redo:** Per-flow command pattern with immutable snapshots (Cmd+Z / Cmd+Shift+Z), 100-level history
 - **Design Validation:** Flow-level (graph completeness, spec completeness, reference integrity), domain-level (duplicate detection, internal event matching), system-level (cross-domain event wiring, payload shape matching, portal integrity, orchestration cycle detection), real-time canvas indicators, implementation gate
 - **Entity Management:** Add/rename/delete domains (L1), add/rename/delete/duplicate/move flows (L2), rename/clear flows (L3) — all via right-click context menu with file operations and cross-reference updates
-- Mermaid preview
+- **Extended Node Types:** 6 additional traditional flow nodes (data_store, service_call, event, loop, parallel, sub_flow) with spec editors, dual output handles (sourceHandle routing), and validation rules
+- **Flow Templates:** Pre-built flow templates for common patterns — 4 traditional (REST API Endpoint, CRUD Entity, Webhook Handler, Event Processor) + 4 agent (RAG Agent, Customer Support Agent, Code Review Agent, Data Pipeline Agent) — insert fully wired node graphs with one click
+- **Mermaid Generator:** Generate Mermaid flowchart diagrams from flow specs, output as markdown files with embedded Mermaid code blocks
+- **Generator Panel:** Unified panel for all generators (OpenAPI, Dockerfile, docker-compose, Kubernetes, CI/CD, Mermaid) with preview, save-to-disk, and API docs parsing
+- **Minimap Toggle:** Cmd+Shift+M to toggle React Flow minimap on the flow canvas
+- **Validation Presets:** InputNode spec editor includes presets for common field patterns (username, email, password)
+- **Claude Code Commands:** 4 slash commands (`/ddd-create`, `/ddd-implement`, `/ddd-update`, `/ddd-sync`) for the full design-implement-iterate-sync workflow
 - LLM prompt generation
 - Single user, local storage
 
@@ -6831,6 +6993,9 @@ mypy src/
 | **Schema** | Data model definition (reusable across flows) |
 | **Event** | Async message published by one flow, consumed by others |
 | **Sub-flow** | Flow called synchronously from another flow |
+| **sourceHandle** | Named output handle on a branching node (e.g., `valid`/`invalid` on input, `success`/`error` on data_store) |
+| **Flow Template** | Pre-built flow graph that can be inserted as a starting point (e.g., REST API, CRUD Entity, RAG Agent) |
+| **Generator** | Tool that produces production artifacts (OpenAPI, Dockerfile, Mermaid) from specs |
 
 ---
 
@@ -6878,10 +7043,11 @@ Then share the relevant section(s) of this document.
 
 # Document Version
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Created:** 2025-02-04
+**Updated:** 2026-02-15
 **Author:** Murat (with Claude)
-**Context:** Full specification developed over extended conversation
+**Context:** Full specification developed over extended conversation, updated to reflect current DDD Tool implementation (Sessions 1-17 complete)
 
 ---
 
