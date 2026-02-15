@@ -373,9 +373,12 @@ export type DddNodeType =
 // --- Traditional node spec shapes ---
 
 export interface TriggerSpec {
-  event?: string;
+  event?: string | string[];
   source?: string;
+  filter?: Record<string, unknown>;
   description?: string;
+  job_config?: { queue?: string; concurrency?: number; timeout?: number; retry?: number; dead_letter?: string };
+  pattern?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -389,6 +392,9 @@ export interface InputSpec {
 export interface ProcessSpec {
   action?: string;
   service?: string;
+  category?: 'security' | 'transform' | 'integration' | 'business_logic' | 'infrastructure';
+  inputs?: string[];
+  outputs?: string[];
   description?: string;
   [key: string]: unknown;
 }
@@ -406,18 +412,24 @@ export interface TerminalSpec {
   description?: string;
   status?: number;                     // HTTP response status code
   body?: Record<string, unknown>;      // HTTP response body
+  response_type?: 'json' | 'stream' | 'sse' | 'empty';
+  headers?: Record<string, string>;
   [key: string]: unknown;
 }
 
 // --- Extended traditional node spec shapes ---
 
 export interface DataStoreSpec {
-  operation?: 'create' | 'read' | 'update' | 'delete';
+  operation?: 'create' | 'read' | 'update' | 'delete' | 'upsert' | 'create_many' | 'update_many' | 'delete_many';
   model?: string;
   data?: Record<string, string>;
   query?: Record<string, string>;
   pagination?: Record<string, unknown>;  // { style, default_limit, max_limit }
   sort?: Record<string, unknown>;        // { default, allowed }
+  batch?: boolean;
+  upsert_key?: string[];
+  include?: Array<{ relation: string; fields?: string[] }>;
+  returning?: boolean;
   description?: string;
   [key: string]: unknown;
 }
