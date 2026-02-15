@@ -139,26 +139,15 @@ ddd-tool/
 │   │   │   ├── FlowList.tsx
 │   │   │   ├── NodePalette.tsx
 │   │   │   └── GitPanel.tsx
-│   │   ├── ImplementationPanel/
-│   │   │   ├── ImplementationPanel.tsx # Main panel (prompt preview + terminal + test results)
-│   │   │   ├── PromptPreview.tsx       # Editable prompt display with Run button
-│   │   │   ├── TerminalEmbed.tsx       # Embedded PTY terminal for Claude Code
-│   │   │   ├── TestResults.tsx         # Test output display with fix loop
-│   │   │   ├── ImplementationQueue.tsx # Queue view for batch implementation
-│   │   │   ├── StaleBanner.tsx         # Stale detection warning banner
-│   │   │   ├── ReconciliationReport.tsx # Code→spec drift report with accept/remove/ignore
-│   │   │   ├── SyncBadge.tsx           # Sync score badge for flow blocks
-│   │   │   ├── TestGenerator.tsx       # Derived test spec viewer + generate test code
-│   │   │   ├── CoverageBadge.tsx       # Spec test coverage badge for flow blocks
-│   │   │   └── SpecComplianceTab.tsx   # Spec compliance results after test run
+│   │   ├── FlowCanvas/
+│   │   │   └── StaleBanner.tsx         # Stale detection warning banner (Accept + Dismiss)
 │   │   ├── ProjectLauncher/
 │   │   │   ├── ProjectLauncher.tsx    # Main launcher screen (recent projects + actions)
 │   │   │   ├── NewProjectWizard.tsx   # 3-step project creation wizard
 │   │   │   └── RecentProjects.tsx     # Recent projects list with open/remove
 │   │   ├── Settings/
 │   │   │   ├── SettingsDialog.tsx     # Modal settings with tab navigation
-│   │   │   ├── ClaudeCodeSettings.tsx # CLI path, post-implementation options
-│   │   │   ├── TestingSettings.tsx    # Test command, args, auto-run
+│   │   │   ├── ClaudeCodeSettings.tsx # CLI path, enabled toggle
 │   │   │   ├── EditorSettings.tsx     # Grid snap, auto-save, theme, font size
 │   │   │   └── GitSettings.tsx        # Commit messages, branch naming
 │   │   ├── FirstRun/
@@ -179,7 +168,7 @@ ddd-tool/
 │   │   ├── project-store.ts   # Project/file state, domain configs
 │   │   ├── ui-store.ts        # UI state (minimap visibility)
 │   │   ├── git-store.ts       # Git state
-│   │   ├── implementation-store.ts  # Implementation panel state, queue, test results
+│   │   ├── implementation-store.ts  # Drift detection, mapping persistence
 │   │   ├── app-store.ts         # App-level state: current view, recent projects, first-run
 │   │   ├── undo-store.ts        # Per-flow undo/redo stacks
 │   │   └── validation-store.ts  # Validation results per flow/domain/system, gate state
@@ -190,7 +179,7 @@ ddd-tool/
 │   │   ├── node.ts
 │   │   ├── spec.ts
 │   │   ├── project.ts
-│   │   ├── implementation.ts  # Implementation panel, prompt builder, test runner types
+│   │   ├── implementation.ts  # Drift detection, mapping, reconciliation types
 │   │   ├── test-generator.ts  # Derived test cases, test paths, boundary tests, spec compliance
 │   │   ├── app.ts             # App shell types: recent projects, settings, first-run, undo
 │   │   └── validation.ts     # Validation issue types, scopes, severity, gate state
@@ -4287,675 +4276,77 @@ Session A (Architect):          Human Review:           Session B (Developer):
                                                          keep specs & code aligned
 ```
 
-**Shell execution notes:**
-- Tauri-spawned processes don't inherit user's shell profile — must source `~/.zprofile` and `~/.zshrc`
-- Prompt is written to `.ddd/.impl-prompt.md` and piped to claude via `sh -c`
-- `--print` flag for non-interactive output (buffers until completion)
-- `--dangerously-skip-permissions` for auto-accepting file writes during implementation
-
 ---
 
 **File: `src/types/implementation.ts`**
 ```typescript
-/** Panel states */
-export type ImplementationPanelState =
-  | 'idle'
-  | 'prompt_ready'
-  | 'running'
-  | 'done'
-  | 'failed';
-
-/** A single flow's implementation status in the queue */
-export interface QueueItem {
-  flowId: string;          // e.g. "api/user-register"
-  domain: string;
-  flowName: string;
-  status: 'pending' | 'stale' | 'implemented';
-  testResult?: TestSummary;
-  staleChanges?: string[]; // Human-readable list of spec changes
-  selected: boolean;       // For batch operations
-}
-
-/** Prompt built for Claude Code */
-export interface BuiltPrompt {
-  flowId: string;
-  domain: string;
-  content: string;         // The full prompt text
-  specFiles: string[];     // Files referenced in the prompt
-  mode: 'new' | 'update';  // New implementation or update to existing
-  agentFlow: boolean;       // Whether this is an agent flow
-  editedByUser: boolean;    // Whether user has modified the prompt
-}
-
-/** Mapping entry stored in .ddd/mapping.yaml */
 export interface FlowMapping {
-  spec: string;            // Path to spec file
-  spec_hash: string;       // SHA-256 of spec at implementation time
-  files: string[];         // Generated code files
-  implemented_at: string;  // ISO timestamp
-  test_results?: TestSummary;
+  spec: string;
+  specHash: string;
+  files: string[];
+  fileHashes?: Record<string, string>;
+  implementedAt: string;
+  mode: 'new' | 'update';
 }
 
-/** Test execution results */
-export interface TestSummary {
-  total: number;
-  passed: number;
-  failed: number;
-  errors: number;
-  duration_ms: number;
-  tests: TestCase[];
-}
-
-export interface TestCase {
-  name: string;
-  status: 'passed' | 'failed' | 'error' | 'skipped';
-  duration_ms: number;
-  error_message?: string;
-  error_detail?: string;
-}
-
-/** PTY session for embedded terminal */
-export interface PtySession {
-  id: string;
-  running: boolean;
-  exitCode?: number;
-}
-
-/** Stale detection result */
-export interface StaleResult {
-  flowId: string;
+export interface DriftInfo {
+  flowKey: string;
+  flowName: string;
+  domainId: string;
+  specPath: string;
+  previousHash: string;
   currentHash: string;
-  storedHash: string;
-  isStale: boolean;
-  changes: string[];       // Human-readable change descriptions
-  cachedSpecPath?: string;  // Path to spec at implementation time
+  implementedAt: string;
+  detectedAt: string;
+  direction: 'forward' | 'reverse';
 }
 
-/** Implementation config from .ddd/config.yaml */
-export interface ImplementationConfig {
-  claude_code: {
-    enabled: boolean;
-    command: string;
-    post_implement: {
-      run_tests: boolean;
-      run_lint: boolean;
-      auto_commit: boolean;
-      regenerate_claude_md: boolean;
-    };
-    prompt: {
-      include_architecture: boolean;
-      include_errors: boolean;
-      include_schemas: 'all' | 'auto' | 'none';
-    };
-  };
-  testing: {
-    command: string;
-    args: string[];
-    scoped: boolean;
-    scope_pattern: string;
-    auto_run: boolean;
-  };
-  reconciliation: {
-    auto_run: boolean;
-    auto_accept_matching: boolean;
-    notify_on_drift: boolean;
-  };
+export type ReconciliationAction = 'accept' | 'reimpl' | 'ignore';
+
+export interface ReconciliationEntry {
+  flowKey: string;
+  action: ReconciliationAction;
+  previousHash: string;
+  newHash: string;
+  resolvedAt: string;
 }
 
-/** Reconciliation report comparing code vs spec */
 export interface ReconciliationReport {
-  flowId: string;
-  syncScore: number;           // 0-100
-  reconciledAt: string;        // ISO timestamp
-  matching: ReconciliationItem[];    // Spec = Code
-  codeOnly: ReconciliationItem[];    // Code has, spec doesn't
-  specOnly: ReconciliationItem[];    // Spec has, code doesn't
+  id: string;
+  timestamp: string;
+  entries: ReconciliationEntry[];
+  syncScoreBefore: number;
+  syncScoreAfter: number;
 }
 
-export interface ReconciliationItem {
-  id: string;                  // Unique ID for this item
-  description: string;         // Human-readable description
-  category: 'endpoint' | 'validation' | 'error_handling' | 'middleware' | 'schema' | 'response' | 'logic' | 'other';
-  codeLocation?: string;       // e.g. "src/domains/api/services.py:23"
-  specLocation?: string;       // e.g. "nodes[2].spec.fields.email"
-  severity: 'minor' | 'moderate' | 'significant';
-  resolution?: 'accepted' | 'removed' | 'ignored';
-  resolvedAt?: string;
-}
-
-/** Accepted deviation stored in mapping.yaml */
-export interface AcceptedDeviation {
-  description: string;
-  codeLocation: string;
-  acceptedAt: string;
-}
-
-/** Extended flow mapping with reconciliation data */
-export interface FlowMappingExtended extends FlowMapping {
-  sync_score?: number;
-  last_reconciled_at?: string;
-  accepted_deviations?: AcceptedDeviation[];
+export interface SyncScore {
+  total: number;
+  implemented: number;
+  stale: number;
+  pending: number;
+  score: number;
 }
 ```
 
 **File: `src/stores/implementation-store.ts`**
-```typescript
-import { create } from 'zustand';
-import { invoke } from '@tauri-apps/api/core';
-import type {
-  ImplementationPanelState, QueueItem, BuiltPrompt, FlowMapping,
-  TestSummary, PtySession, StaleResult, ImplementationConfig,
-} from '../types/implementation';
-import { buildPrompt } from '../utils/prompt-builder';
-import { generateClaudeMd } from '../utils/claude-md-generator';
 
-interface ImplementationState {
-  // Panel
-  panelOpen: boolean;
-  panelState: ImplementationPanelState;
-  togglePanel: () => void;
-
-  // Prompt
-  currentPrompt: BuiltPrompt | null;
-  buildPromptForFlow: (flowId: string, domain: string) => Promise<void>;
-  updatePromptContent: (content: string) => void;
-
-  // Terminal (PTY)
-  ptySession: PtySession | null;
-  runClaudeCode: () => Promise<void>;
-  stopClaudeCode: () => Promise<void>;
-  sendToPty: (input: string) => Promise<void>;
-
-  // Test runner
-  testResults: TestSummary | null;
-  isRunningTests: boolean;
-  runTests: (flowId: string) => Promise<void>;
-  fixFailingTest: (flowId: string, errorOutput: string) => Promise<void>;
-
-  // Queue
-  queue: QueueItem[];
-  loadQueue: (projectPath: string) => Promise<void>;
-  toggleQueueItem: (flowId: string) => void;
-  selectAllPending: () => void;
-  implementSelected: () => Promise<void>;
-
-  // Stale detection
-  staleResults: Record<string, StaleResult>;
-  checkAllStale: (projectPath: string) => Promise<void>;
-  checkFlowStale: (flowId: string, projectPath: string) => Promise<StaleResult>;
-
-  // Mapping
-  mappings: Record<string, FlowMapping>;
-  loadMappings: (projectPath: string) => Promise<void>;
-  updateMapping: (flowId: string, mapping: FlowMapping, projectPath: string) => Promise<void>;
-
-  // Config
-  config: ImplementationConfig | null;
-  loadConfig: (projectPath: string) => Promise<void>;
-
-  // CLAUDE.md
-  regenerateClaudeMd: (projectPath: string) => Promise<void>;
-
-  // Reconciliation
-  reconciliationReport: ReconciliationReport | null;
-  isReconciling: boolean;
-  reconcileFlow: (flowId: string, projectPath: string) => Promise<void>;
-  resolveReconciliationItem: (flowId: string, itemId: string, resolution: 'accepted' | 'removed' | 'ignored', projectPath: string) => Promise<void>;
-  parseImplementationNotes: (terminalOutput: string) => string[];
-}
-
-export const useImplementationStore = create<ImplementationState>((set, get) => ({
-  panelOpen: false,
-  panelState: 'idle',
-  currentPrompt: null,
-  ptySession: null,
-  testResults: null,
-  reconciliationReport: null,
-  isReconciling: false,
-  isRunningTests: false,
-  queue: [],
-  staleResults: {},
-  mappings: {},
-  config: null,
-
-  togglePanel: () => set(s => ({ panelOpen: !s.panelOpen })),
-
-  buildPromptForFlow: async (flowId, domain) => {
-    const prompt = await buildPrompt(flowId, domain);
-    set({ currentPrompt: prompt, panelState: 'prompt_ready', panelOpen: true });
-  },
-
-  updatePromptContent: (content) => {
-    const current = get().currentPrompt;
-    if (current) {
-      set({ currentPrompt: { ...current, content, editedByUser: true } });
-    }
-  },
-
-  runClaudeCode: async () => {
-    const prompt = get().currentPrompt;
-    if (!prompt) return;
-
-    set({ panelState: 'running' });
-
-    try {
-      // Write prompt to temp file, pipe to claude via shell
-      // Uses sh -c with profile sourcing to inherit user's PATH (e.g. /opt/homebrew/bin/claude)
-      // --print flag for non-interactive output, --dangerously-skip-permissions for auto-accepting file writes
-      const promptPath = `${projectPath}/.ddd/.impl-prompt.md`;
-      await invoke('write_file', { path: promptPath, contents: prompt.content });
-      const shellScript = `. ~/.zprofile 2>/dev/null; . ~/.zshrc 2>/dev/null; cat "${promptPath}" | claude --print --dangerously-skip-permissions 2>&1`;
-      const command = Command.create('sh', ['-c', shellScript], { cwd: projectPath });
-
-      // Alternative: Spawn PTY with claude CLI (original approach)
-      const sessionId = await invoke<string>('pty_spawn', {
-        command: get().config?.claude_code.command ?? 'claude',
-        args: [prompt.content],
-        cwd: await invoke<string>('get_project_path'),
-      });
-
-      set({ ptySession: { id: sessionId, running: true } });
-
-      // Listen for PTY exit
-      const exitCode = await invoke<number>('pty_wait', { sessionId });
-      set(s => ({
-        ptySession: s.ptySession ? { ...s.ptySession, running: false, exitCode } : null,
-        panelState: exitCode === 0 ? 'done' : 'failed',
-      }));
-
-      // Post-implementation actions
-      if (exitCode === 0) {
-        const config = get().config;
-        const flowId = prompt.flowId;
-        const projectPath = await invoke<string>('get_project_path');
-
-        // Update mapping
-        const specHash = await invoke<string>('hash_file', { path: prompt.specFiles[prompt.specFiles.length - 1] });
-        await get().updateMapping(flowId, {
-          spec: prompt.specFiles[prompt.specFiles.length - 1],
-          spec_hash: specHash,
-          files: [], // Will be populated by git diff
-          implemented_at: new Date().toISOString(),
-        }, projectPath);
-
-        // Cache spec at implementation time
-        await invoke('cache_spec', { flowId, specPath: prompt.specFiles[prompt.specFiles.length - 1] });
-
-        // Auto-run tests
-        if (config?.claude_code.post_implement.run_tests) {
-          await get().runTests(flowId);
-        }
-
-        // Regenerate CLAUDE.md
-        if (config?.claude_code.post_implement.regenerate_claude_md) {
-          await get().regenerateClaudeMd(projectPath);
-        }
-
-        // Auto-reconcile (reverse drift detection)
-        if (config?.reconciliation?.auto_run) {
-          await get().reconcileFlow(flowId, projectPath);
-        }
-      }
-    } catch (err) {
-      set({ panelState: 'failed' });
-      console.error('Claude Code execution failed:', err);
-    }
-  },
-
-  stopClaudeCode: async () => {
-    const session = get().ptySession;
-    if (session?.running) {
-      await invoke('pty_kill', { sessionId: session.id });
-      set(s => ({
-        ptySession: s.ptySession ? { ...s.ptySession, running: false } : null,
-        panelState: 'failed',
-      }));
-    }
-  },
-
-  sendToPty: async (input) => {
-    const session = get().ptySession;
-    if (session?.running) {
-      await invoke('pty_write', { sessionId: session.id, data: input });
-    }
-  },
-
-  runTests: async (flowId) => {
-    set({ isRunningTests: true, testResults: null });
-    try {
-      const config = get().config;
-      const projectPath = await invoke<string>('get_project_path');
-      const results = await invoke<TestSummary>('run_tests', {
-        command: config?.testing.command ?? 'pytest',
-        args: config?.testing.args ?? [],
-        scoped: config?.testing.scoped ?? true,
-        scopePattern: config?.testing.scope_pattern?.replace('{flow_id}', flowId.split('/').pop() ?? ''),
-        cwd: projectPath,
-      });
-      set({ testResults: results, isRunningTests: false });
-    } catch (err) {
-      set({ isRunningTests: false });
-      console.error('Test execution failed:', err);
-    }
-  },
-
-  fixFailingTest: async (flowId, errorOutput) => {
-    // Build a fix prompt and send to Claude Code
-    const fixPrompt = `This test is failing after implementing ${flowId}. Fix the implementation to match the spec.\n\nError output:\n${errorOutput}`;
-    set({
-      currentPrompt: {
-        flowId,
-        domain: flowId.split('/')[0],
-        content: fixPrompt,
-        specFiles: [],
-        mode: 'update',
-        agentFlow: false,
-        editedByUser: false,
-      },
-      panelState: 'prompt_ready',
-    });
-  },
-
-  loadQueue: async (projectPath) => {
-    const mappings = get().mappings;
-    const staleResults = get().staleResults;
-
-    // Build queue from project flows + mapping status
-    const allFlows = await invoke<Array<{ flowId: string; domain: string; name: string }>>('list_all_flows', { projectPath });
-
-    const queue: QueueItem[] = allFlows.map(f => {
-      const mapping = mappings[f.flowId];
-      const stale = staleResults[f.flowId];
-
-      let status: QueueItem['status'] = 'pending';
-      if (mapping && !stale?.isStale) status = 'implemented';
-      else if (mapping && stale?.isStale) status = 'stale';
-
-      return {
-        flowId: f.flowId,
-        domain: f.domain,
-        flowName: f.name,
-        status,
-        staleChanges: stale?.changes,
-        selected: false,
-      };
-    });
-
-    set({ queue });
-  },
-
-  toggleQueueItem: (flowId) =>
-    set(s => ({
-      queue: s.queue.map(q => q.flowId === flowId ? { ...q, selected: !q.selected } : q),
-    })),
-
-  selectAllPending: () =>
-    set(s => ({
-      queue: s.queue.map(q => ({
-        ...q,
-        selected: q.status === 'pending' || q.status === 'stale',
-      })),
-    })),
-
-  implementSelected: async () => {
-    const selected = get().queue.filter(q => q.selected);
-    for (const item of selected) {
-      await get().buildPromptForFlow(item.flowId, item.domain);
-      await get().runClaudeCode();
-    }
-    // Reload queue after batch
-    const projectPath = await invoke<string>('get_project_path');
-    await get().loadQueue(projectPath);
-  },
-
-  checkAllStale: async (projectPath) => {
-    const mappings = get().mappings;
-    const results: Record<string, StaleResult> = {};
-
-    for (const [flowId, mapping] of Object.entries(mappings)) {
-      const currentHash = await invoke<string>('hash_file', { path: `${projectPath}/${mapping.spec}` });
-      const isStale = currentHash !== mapping.spec_hash;
-
-      let changes: string[] = [];
-      if (isStale) {
-        changes = await invoke<string[]>('diff_specs', {
-          cachedPath: `${projectPath}/.ddd/cache/specs-at-implementation/${flowId.replace('/', '--')}.yaml`,
-          currentPath: `${projectPath}/${mapping.spec}`,
-        });
-      }
-
-      results[flowId] = {
-        flowId,
-        currentHash,
-        storedHash: mapping.spec_hash,
-        isStale,
-        changes,
-      };
-    }
-
-    set({ staleResults: results });
-  },
-
-  checkFlowStale: async (flowId, projectPath) => {
-    const mapping = get().mappings[flowId];
-    if (!mapping) return { flowId, currentHash: '', storedHash: '', isStale: false, changes: [] };
-
-    const currentHash = await invoke<string>('hash_file', { path: `${projectPath}/${mapping.spec}` });
-    const isStale = currentHash !== mapping.spec_hash;
-
-    let changes: string[] = [];
-    if (isStale) {
-      changes = await invoke<string[]>('diff_specs', {
-        cachedPath: `${projectPath}/.ddd/cache/specs-at-implementation/${flowId.replace('/', '--')}.yaml`,
-        currentPath: `${projectPath}/${mapping.spec}`,
-      });
-    }
-
-    const result = { flowId, currentHash, storedHash: mapping.spec_hash, isStale, changes };
-    set(s => ({ staleResults: { ...s.staleResults, [flowId]: result } }));
-    return result;
-  },
-
-  loadMappings: async (projectPath) => {
-    try {
-      const raw = await invoke<string>('read_file', { path: `${projectPath}/.ddd/mapping.yaml` });
-      const parsed = (await import('yaml')).parse(raw);
-      set({ mappings: parsed.flows ?? {} });
-    } catch {
-      set({ mappings: {} });
-    }
-  },
-
-  updateMapping: async (flowId, mapping, projectPath) => {
-    const mappings = { ...get().mappings, [flowId]: mapping };
-    set({ mappings });
-    const yaml = (await import('yaml')).stringify({ flows: mappings });
-    await invoke('write_file', { path: `${projectPath}/.ddd/mapping.yaml`, content: yaml });
-  },
-
-  loadConfig: async (projectPath) => {
-    try {
-      const raw = await invoke<string>('read_file', { path: `${projectPath}/.ddd/config.yaml` });
-      const parsed = (await import('yaml')).parse(raw);
-      set({ config: parsed });
-    } catch {
-      // Use defaults
-      set({
-        config: {
-          claude_code: {
-            enabled: true,
-            command: 'claude',
-            post_implement: { run_tests: true, run_lint: false, auto_commit: false, regenerate_claude_md: true },
-            prompt: { include_architecture: true, include_errors: true, include_schemas: 'auto' },
-          },
-          testing: {
-            command: 'pytest',
-            args: ['--tb=short', '-q'],
-            scoped: true,
-            scope_pattern: 'tests/**/test_{flow_id}*',
-            auto_run: true,
-          },
-          reconciliation: {
-            auto_run: true,
-            auto_accept_matching: true,
-            notify_on_drift: true,
-          },
-        },
-      });
-    }
-  },
-
-  regenerateClaudeMd: async (projectPath) => {
-    const content = await generateClaudeMd(projectPath);
-    await invoke('write_file', { path: `${projectPath}/CLAUDE.md`, content });
-  },
-
-  reconcileFlow: async (flowId, projectPath) => {
-    set({ isReconciling: true, reconciliationReport: null });
-
-    try {
-      const mapping = get().mappings[flowId];
-      if (!mapping) throw new Error(`No mapping found for ${flowId}`);
-
-      // Read the spec and all implementation files
-      const specContent = await invoke<string>('read_file', { path: `${projectPath}/${mapping.spec}` });
-      const codeContents: Record<string, string> = {};
-      for (const file of mapping.files) {
-        try {
-          codeContents[file] = await invoke<string>('read_file', { path: `${projectPath}/${file}` });
-        } catch { /* file may have been deleted */ }
-      }
-
-      // Compare spec vs code using hash-based comparison and structural analysis
-      const report = buildReconciliationReport(flowId, specContent, codeContents);
-      set({ reconciliationReport: report, isReconciling: false });
-
-      // Update mapping with sync score
-      const updatedMapping = { ...mapping, sync_score: report.syncScore, last_reconciled_at: new Date().toISOString() };
-      await get().updateMapping(flowId, updatedMapping, projectPath);
-    } catch (err) {
-      set({ isReconciling: false });
-      console.error('Reconciliation failed:', err);
-    }
-  },
-
-  resolveReconciliationItem: async (flowId, itemId, resolution, projectPath) => {
-    const report = get().reconciliationReport;
-    if (!report) return;
-
-    // Find and update the item
-    const allItems = [...report.codeOnly, ...report.specOnly];
-    const item = allItems.find(i => i.id === itemId);
-    if (!item) return;
-
-    item.resolution = resolution;
-    item.resolvedAt = new Date().toISOString();
-
-    if (resolution === 'accepted' && report.codeOnly.some(i => i.id === itemId)) {
-      // Accept into spec — build a Claude Code prompt to update the spec
-      const mapping = get().mappings[flowId];
-      const specContent = await invoke<string>('read_file', { path: `${projectPath}/${mapping.spec}` });
-      const acceptPrompt = `The following item exists in code but not in the spec. Update the spec YAML to include this item.\n\nItem: ${item.description}\nCode location: ${item.codeLocation}\n\nCurrent spec:\n${specContent}`;
-      set({
-        currentPrompt: {
-          flowId,
-          domain: flowId.split('/')[0],
-          content: acceptPrompt,
-          specFiles: [mapping.spec],
-          mode: 'update',
-          agentFlow: false,
-          editedByUser: false,
-        },
-        panelState: 'prompt_ready',
-      });
-    } else if (resolution === 'removed') {
-      // Remove from code — build targeted Claude Code prompt
-      const removePrompt = `Remove this from the implementation — it's not in the spec:\n${item.description}\nLocation: ${item.codeLocation}`;
-      set({
-        currentPrompt: {
-          flowId,
-          domain: flowId.split('/')[0],
-          content: removePrompt,
-          specFiles: [],
-          mode: 'update',
-          agentFlow: false,
-          editedByUser: false,
-        },
-        panelState: 'prompt_ready',
-      });
-    } else if (resolution === 'ignored') {
-      // Store as accepted deviation in mapping
-      const mapping = get().mappings[flowId];
-      const deviations = (mapping as any).accepted_deviations ?? [];
-      deviations.push({
-        description: item.description,
-        codeLocation: item.codeLocation ?? '',
-        acceptedAt: new Date().toISOString(),
-      });
-      await get().updateMapping(flowId, { ...mapping, accepted_deviations: deviations } as any, projectPath);
-    }
-
-    // Recalculate sync score
-    const unresolved = [...report.codeOnly, ...report.specOnly].filter(i => !i.resolution);
-    const total = report.matching.length + report.codeOnly.length + report.specOnly.length;
-    const resolved = report.matching.length + (report.codeOnly.length + report.specOnly.length - unresolved.length);
-    report.syncScore = total > 0 ? Math.round((resolved / total) * 100) : 100;
-
-    set({ reconciliationReport: { ...report } });
-  },
-
-  parseImplementationNotes: (terminalOutput) => {
-    // Extract "## Implementation Notes" section from Claude Code output
-    const notesMatch = terminalOutput.match(/## Implementation Notes\n([\s\S]*?)(?=\n##|\n---|\Z)/);
-    if (!notesMatch) return [];
-
-    const notes = notesMatch[1];
-    if (notes.includes('No deviations')) return [];
-
-    // Extract bullet points
-    return notes
-      .split('\n')
-      .filter(line => line.trim().startsWith('-') || line.trim().startsWith('*'))
-      .map(line => line.trim().replace(/^[-*]\s*/, ''));
-  },
-}));
-
-// --- Helper functions for reconciliation ---
-
-function buildReconciliationReport(
-  flowId: string,
-  specContent: string,
-  codeContents: Record<string, string>
-): ReconciliationReport {
-  // Hash-based comparison: parse spec YAML and compare structural elements
-  // against code contents to detect drift
-  const specNodes = extractSpecItems(specContent);
-  const codeItems = extractCodeItems(codeContents);
-
-  const matching = specNodes
-    .filter(s => codeItems.some(c => c.description === s.description))
-    .map((item, i) => ({ id: `match-${i}`, description: item.description, category: item.category, severity: 'minor' as const }));
-
-  const specOnly = specNodes
-    .filter(s => !codeItems.some(c => c.description === s.description))
-    .map((item, i) => ({ id: `spec-${i}`, description: item.description, category: item.category, severity: 'moderate' as const }));
-
-  const codeOnly = codeItems
-    .filter(c => !specNodes.some(s => s.description === c.description))
-    .map((item, i) => ({ id: `code-${i}`, description: item.description, category: item.category, codeLocation: item.location, severity: 'moderate' as const }));
-
-  const total = matching.length + codeOnly.length + specOnly.length;
-  const syncScore = total > 0 ? Math.round((matching.length / total) * 100) : 100;
-
-  return {
-    flowId,
-    syncScore,
-    reconciledAt: new Date().toISOString(),
-    matching,
-    codeOnly,
-    specOnly,
-  };
-}
+The implementation store has been simplified to focus on drift detection and mapping persistence. The in-app Implementation Panel, PTY terminal, test runner, and queue UI have been removed. Implementation is now done via Claude Code CLI (`/ddd-implement`).
+
+**State:**
+- `mappings: Record<string, FlowMapping>` — flow-to-file mappings from `.ddd/mapping.yaml`
+- `driftItems: DriftInfo[]` — detected spec/code drift items
+- `syncScore: SyncScore` — overall project sync score
+- `ignoredDrifts: Set<string>` — flow keys whose drift has been dismissed
+
+**Actions:**
+- `loadMappings(projectPath)` — reads `.ddd/mapping.yaml` and populates mappings
+- `saveMappings(projectPath)` — writes current mappings back to `.ddd/mapping.yaml`
+- `detectDrift(projectPath)` — compares spec hashes against stored hashes, populates driftItems
+- `computeSyncScore()` — calculates total/implemented/stale/pending/score from mappings and drift
+- `resolveFlow(flowKey, action)` — handles drift resolution: `'accept'` updates the stored hash, `'reimpl'` copies `/ddd-implement {flowKey}` to clipboard, `'ignore'` adds to ignoredDrifts
+- `resolveAll(action)` — applies an action to all current drift items
+- `saveReconciliationReport(projectPath, report)` — writes a reconciliation report to `.ddd/reconciliations/`
+- `reset()` — clears all state
 ```
 
 **File: `src/utils/prompt-builder.ts`**
@@ -5486,255 +4877,6 @@ pub async fn diff_specs(cached_path: String, current_path: String) -> Result<Vec
 }
 ```
 
-**File: `src/components/ImplementationPanel/ImplementationPanel.tsx`**
-```tsx
-import { useImplementationStore } from '../../stores/implementation-store';
-import { PromptPreview } from './PromptPreview';
-import { TerminalEmbed } from './TerminalEmbed';
-import { TestResults } from './TestResults';
-import { ImplementationQueue } from './ImplementationQueue';
-import { StaleBanner } from './StaleBanner';
-import { X, Terminal, Play, Square } from 'lucide-react';
-
-export function ImplementationPanel() {
-  const {
-    panelOpen, panelState, currentPrompt, ptySession,
-    testResults, isRunningTests, staleResults,
-    togglePanel, runClaudeCode, stopClaudeCode, runTests,
-  } = useImplementationStore();
-
-  if (!panelOpen) return null;
-
-  return (
-    <div className="w-[480px] border-l border-gray-200 bg-white flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-        <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-blue-500" />
-          <span className="font-medium text-sm">Implementation</span>
-          {panelState === 'running' && (
-            <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Running</span>
-          )}
-          {panelState === 'done' && (
-            <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Done</span>
-          )}
-          {panelState === 'failed' && (
-            <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Failed</span>
-          )}
-        </div>
-        <button onClick={togglePanel} className="p-1 text-gray-400 hover:text-gray-600">
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto flex flex-col">
-        {/* Stale banner */}
-        {currentPrompt && staleResults[currentPrompt.flowId]?.isStale && (
-          <StaleBanner staleResult={staleResults[currentPrompt.flowId]} />
-        )}
-
-        {/* Idle state — show queue */}
-        {panelState === 'idle' && <ImplementationQueue />}
-
-        {/* Prompt preview */}
-        {panelState === 'prompt_ready' && currentPrompt && (
-          <PromptPreview prompt={currentPrompt} onRun={runClaudeCode} />
-        )}
-
-        {/* Running terminal */}
-        {panelState === 'running' && ptySession && (
-          <div className="flex-1 flex flex-col">
-            <TerminalEmbed sessionId={ptySession.id} />
-            <div className="p-2 border-t border-gray-200">
-              <button
-                onClick={stopClaudeCode}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100"
-              >
-                <Square className="w-3 h-3" /> Stop
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Done / Failed — show summary + test results */}
-        {(panelState === 'done' || panelState === 'failed') && (
-          <div className="flex-1 flex flex-col">
-            {panelState === 'done' && (
-              <div className="p-4 bg-green-50 border-b border-green-100 text-sm text-green-700">
-                Implementation complete. {testResults ? '' : 'Running tests...'}
-              </div>
-            )}
-            {panelState === 'failed' && (
-              <div className="p-4 bg-red-50 border-b border-red-100 text-sm text-red-700">
-                Implementation failed. Check terminal output above.
-                <div className="mt-2 flex gap-2">
-                  <button
-                    onClick={runClaudeCode}
-                    className="text-xs px-2 py-1 bg-red-100 rounded hover:bg-red-200"
-                  >
-                    Retry
-                  </button>
-                </div>
-              </div>
-            )}
-            {(testResults || isRunningTests) && currentPrompt && (
-              <TestResults
-                results={testResults}
-                isRunning={isRunningTests}
-                flowId={currentPrompt.flowId}
-              />
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/ImplementationPanel/PromptPreview.tsx`**
-```tsx
-import { useState } from 'react';
-import { useImplementationStore } from '../../stores/implementation-store';
-import type { BuiltPrompt } from '../../types/implementation';
-import { Play, Pencil, FileText } from 'lucide-react';
-
-interface Props {
-  prompt: BuiltPrompt;
-  onRun: () => void;
-}
-
-export function PromptPreview({ prompt, onRun }: Props) {
-  const { updatePromptContent } = useImplementationStore();
-  const [isEditing, setIsEditing] = useState(false);
-
-  return (
-    <div className="flex-1 flex flex-col">
-      {/* Header */}
-      <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <FileText className="w-3 h-3" />
-          <span>{prompt.mode === 'update' ? 'Update' : 'New'}: {prompt.flowId}</span>
-          {prompt.agentFlow && (
-            <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px]">agent</span>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setIsEditing(!isEditing)}
-            className="flex items-center gap-1 text-xs px-2 py-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
-          >
-            <Pencil className="w-3 h-3" /> {isEditing ? 'Preview' : 'Edit'}
-          </button>
-          <button
-            onClick={onRun}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
-          >
-            <Play className="w-3 h-3" /> Run
-          </button>
-        </div>
-      </div>
-
-      {/* Prompt content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {isEditing ? (
-          <textarea
-            value={prompt.content}
-            onChange={(e) => updatePromptContent(e.target.value)}
-            className="w-full h-full font-mono text-xs bg-gray-50 border border-gray-200 rounded p-3 resize-none focus:outline-none focus:border-blue-300"
-          />
-        ) : (
-          <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap">
-            {prompt.content}
-          </pre>
-        )}
-      </div>
-
-      {/* Spec files referenced */}
-      <div className="px-4 py-2 border-t border-gray-100">
-        <div className="text-[10px] text-gray-400 mb-1">Referenced specs:</div>
-        <div className="flex flex-wrap gap-1">
-          {prompt.specFiles.map(f => (
-            <span key={f} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
-              {f.split('/').pop()}
-            </span>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/ImplementationPanel/TerminalEmbed.tsx`**
-```tsx
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { useImplementationStore } from '../../stores/implementation-store';
-
-interface Props {
-  sessionId: string;
-}
-
-export function TerminalEmbed({ sessionId }: Props) {
-  const termRef = useRef<HTMLDivElement>(null);
-  const [output, setOutput] = useState('');
-  const { sendToPty } = useImplementationStore();
-
-  // Poll PTY for output
-  useEffect(() => {
-    let active = true;
-
-    const poll = async () => {
-      while (active) {
-        try {
-          const data = await invoke<string>('pty_read', { sessionId });
-          if (data) {
-            setOutput(prev => prev + data);
-          }
-        } catch {
-          break; // Session ended
-        }
-        await new Promise(r => setTimeout(r, 100));
-      }
-    };
-
-    poll();
-    return () => { active = false; };
-  }, [sessionId]);
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    if (termRef.current) {
-      termRef.current.scrollTop = termRef.current.scrollHeight;
-    }
-  }, [output]);
-
-  // Handle keyboard input
-  const handleKeyDown = useCallback(async (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      await sendToPty('\n');
-    } else if (e.key === 'Backspace') {
-      await sendToPty('\x7f');
-    } else if (e.key.length === 1) {
-      await sendToPty(e.key);
-    }
-  }, [sendToPty]);
-
-  return (
-    <div
-      ref={termRef}
-      className="flex-1 bg-gray-900 text-green-400 font-mono text-xs p-3 overflow-y-auto whitespace-pre-wrap focus:outline-none"
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-    >
-      {output || 'Starting Claude Code...'}
-    </div>
-  );
-}
-```
-
 **File: `src/components/shared/CopyButton.tsx`**
 
 Reusable copy-to-clipboard button used across all output text areas (terminal output, prompt preview, test errors). Uses the browser Clipboard API with visual feedback.
@@ -5780,12 +4922,12 @@ export function CopyButton({ text, className = '' }: Props) {
 
 **Usage patterns:**
 
-1. **In a header bar** (TerminalOutput, PromptPreview): place alongside other actions
+1. **In a header bar**: place alongside other actions
    ```tsx
-   <CopyButton text={stripAnsi(output)} />
+   <CopyButton text={content} />
    ```
 
-2. **Absolute-positioned over a `<pre>` block** (DoneView, FailedView, TestResults):
+2. **Absolute-positioned over a `<pre>` block**:
    ```tsx
    <div className="relative">
      <CopyButton text={content} className="absolute top-1 right-1" />
@@ -5793,7 +4935,7 @@ export function CopyButton({ text, className = '' }: Props) {
    </div>
    ```
 
-3. **Inline with a label** (ExecutionTimeline):
+3. **Inline with a label**:
    ```tsx
    <div className="flex items-center justify-between">
      <p className="text-[10px] font-medium">Output</p>
@@ -5801,9 +4943,9 @@ export function CopyButton({ text, className = '' }: Props) {
    </div>
    ```
 
-**File: `src/components/ImplementationPanel/ClaudeCommandBox.tsx`**
+**File: `src/components/shared/ClaudeCommandBox.tsx`**
 
-Auto-generates the correct Claude Code slash command based on the current navigation scope. Shows a copyable command box with Terminal icon. Used in IdleView, PromptPreview, and DoneView.
+Auto-generates the correct Claude Code slash command based on the current navigation scope. Shows a copyable command box with Terminal icon.
 
 ```tsx
 import { Terminal } from 'lucide-react';
@@ -5844,11 +4986,6 @@ export function ClaudeCommandBox({ command: commandOverride }: Props) {
 }
 ```
 
-**Placement in ImplementationPanel:**
-- **IdleView**: Below the "Ready to implement" message
-- **PromptPreview**: Above the Run Implementation button
-- **DoneView**: Two instances — `/ddd-implement` (scoped) and `/ddd-sync` (override)
-
 ---
 
 **File: `src/components/ProjectLauncher/CloneDialog.tsx`**
@@ -5880,514 +5017,6 @@ if (token.trim()) {
 }
 await invoke('git_clone', { url: cloneUrl, path: destination });
 ```
-
----
-
-**Fix Runtime Error — `implementation-store.ts` action:**
-
-```tsx
-fixRuntimeError: (errorDescription: string) => {
-  const { currentPrompt } = get();
-  if (!currentPrompt) return;
-  const fixPrompt: BuiltPrompt = {
-    ...currentPrompt,
-    title: `Fix runtime error: ${currentPrompt.flowId}`,
-    content: [
-      `# Fix Runtime Error`, '',
-      `Flow: "${currentPrompt.flowId}" in domain "${currentPrompt.domainId}"`, '',
-      `## Error`, '```', errorDescription, '```', '',
-      `## Instructions`,
-      `The implementation for this flow has a runtime error. Read the existing code, identify the root cause, and fix it.`,
-      `- Do NOT rewrite from scratch — fix the existing implementation`,
-      `- Make sure the fix handles edge cases`,
-      `- Run the existing tests after fixing to ensure nothing breaks`,
-      `- If the error is due to missing infrastructure (database, env vars), set up a working local default`,
-    ].join('\n'),
-  };
-  set({ currentPrompt: fixPrompt, panelState: 'prompt_ready', processOutput: '', processExitCode: null, testResults: null });
-},
-```
-
-**UI in DoneView:** "Fix Runtime Error" button reveals a textarea. User pastes error → clicks "Fix It" → calls `fixRuntimeError(errorText)` → transitions to prompt_ready state.
-
-**UI in FailedView:** "Fix Error" button directly calls `fixRuntimeError(processOutput.slice(-1000))` using the last 1000 chars of process output.
-
----
-
-**File: `src/components/ImplementationPanel/TestResults.tsx`**
-```tsx
-import { useImplementationStore } from '../../stores/implementation-store';
-import type { TestSummary } from '../../types/implementation';
-import { CheckCircle, XCircle, Loader2, RotateCw, Wrench } from 'lucide-react';
-
-interface Props {
-  results: TestSummary | null;
-  isRunning: boolean;
-  flowId: string;
-}
-
-export function TestResults({ results, isRunning, flowId }: Props) {
-  const { runTests, fixFailingTest } = useImplementationStore();
-
-  if (isRunning) {
-    return (
-      <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        Running tests...
-      </div>
-    );
-  }
-
-  if (!results) return null;
-
-  const failedTests = results.tests.filter(t => t.status === 'failed');
-
-  return (
-    <div className="border-t border-gray-200">
-      {/* Summary bar */}
-      <div className="px-4 py-2 flex items-center justify-between bg-gray-50 border-b border-gray-100">
-        <div className="text-xs font-medium">
-          {results.passed}/{results.total} passing
-          {results.failed > 0 && <span className="text-red-500 ml-2">{results.failed} failing</span>}
-        </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => runTests(flowId)}
-            className="flex items-center gap-1 text-xs px-2 py-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
-          >
-            <RotateCw className="w-3 h-3" /> Re-run
-          </button>
-          {failedTests.length > 0 && (
-            <button
-              onClick={() => {
-                const errorOutput = failedTests
-                  .map(t => `${t.name}: ${t.error_message ?? 'failed'}`)
-                  .join('\n');
-                fixFailingTest(flowId, errorOutput);
-              }}
-              className="flex items-center gap-1 text-xs px-2 py-1 text-blue-500 hover:text-blue-700 rounded hover:bg-blue-50"
-            >
-              <Wrench className="w-3 h-3" /> Fix failing
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Test list */}
-      <div className="max-h-60 overflow-y-auto">
-        {results.tests.map(test => (
-          <div key={test.name} className="px-4 py-1.5 flex items-start gap-2 text-xs border-b border-gray-50">
-            {test.status === 'passed' ? (
-              <CheckCircle className="w-3.5 h-3.5 text-green-500 mt-0.5 flex-shrink-0" />
-            ) : (
-              <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
-            )}
-            <div className="flex-1 min-w-0">
-              <div className="text-gray-700 truncate">{test.name}</div>
-              {test.error_message && (
-                <div className="text-red-400 mt-0.5 text-[10px] font-mono truncate">
-                  {test.error_message}
-                </div>
-              )}
-            </div>
-            <span className="text-gray-400 text-[10px]">{test.duration_ms.toFixed(0)}ms</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/ImplementationPanel/ImplementationQueue.tsx`**
-```tsx
-import { useImplementationStore } from '../../stores/implementation-store';
-import { CheckCircle, Circle, AlertTriangle, Play } from 'lucide-react';
-
-export function ImplementationQueue() {
-  const {
-    queue, toggleQueueItem, selectAllPending, implementSelected, buildPromptForFlow,
-  } = useImplementationStore();
-
-  const pending = queue.filter(q => q.status === 'pending');
-  const stale = queue.filter(q => q.status === 'stale');
-  const implemented = queue.filter(q => q.status === 'implemented');
-  const hasSelected = queue.some(q => q.selected);
-
-  const renderItem = (item: typeof queue[0]) => (
-    <div key={item.flowId} className="flex items-center gap-2 px-4 py-1.5 hover:bg-gray-50">
-      <input
-        type="checkbox"
-        checked={item.selected}
-        onChange={() => toggleQueueItem(item.flowId)}
-        className="w-3.5 h-3.5 rounded border-gray-300"
-        disabled={item.status === 'implemented'}
-      />
-      {item.status === 'implemented' && <CheckCircle className="w-3.5 h-3.5 text-green-500" />}
-      {item.status === 'pending' && <Circle className="w-3.5 h-3.5 text-gray-300" />}
-      {item.status === 'stale' && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
-      <button
-        onClick={() => buildPromptForFlow(item.flowId, item.domain)}
-        className="text-xs text-gray-700 hover:text-blue-600 truncate flex-1 text-left"
-      >
-        {item.flowId}
-      </button>
-      {item.staleChanges && (
-        <span className="text-[10px] text-amber-500">{item.staleChanges.length} changes</span>
-      )}
-      {item.testResult && (
-        <span className={`text-[10px] ${item.testResult.failed > 0 ? 'text-red-500' : 'text-green-500'}`}>
-          {item.testResult.passed}/{item.testResult.total}
-        </span>
-      )}
-    </div>
-  );
-
-  return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="px-4 py-3 text-xs font-medium text-gray-500 border-b border-gray-100">
-        Implementation Queue
-      </div>
-
-      {pending.length > 0 && (
-        <div className="border-b border-gray-100">
-          <div className="px-4 py-1.5 text-[10px] font-medium text-gray-400 uppercase">Pending</div>
-          {pending.map(renderItem)}
-        </div>
-      )}
-
-      {stale.length > 0 && (
-        <div className="border-b border-gray-100">
-          <div className="px-4 py-1.5 text-[10px] font-medium text-amber-400 uppercase">Stale</div>
-          {stale.map(renderItem)}
-        </div>
-      )}
-
-      {implemented.length > 0 && (
-        <div className="border-b border-gray-100">
-          <div className="px-4 py-1.5 text-[10px] font-medium text-green-400 uppercase">Implemented</div>
-          {implemented.map(renderItem)}
-        </div>
-      )}
-
-      {/* Actions */}
-      <div className="px-4 py-3 flex gap-2 border-t border-gray-200">
-        <button
-          onClick={selectAllPending}
-          className="text-xs px-2 py-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
-        >
-          Select all pending
-        </button>
-        {hasSelected && (
-          <button
-            onClick={implementSelected}
-            className="flex items-center gap-1 text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-          >
-            <Play className="w-3 h-3" /> Implement selected
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/ImplementationPanel/StaleBanner.tsx`**
-```tsx
-import type { StaleResult } from '../../types/implementation';
-import { useImplementationStore } from '../../stores/implementation-store';
-import { AlertTriangle } from 'lucide-react';
-
-interface Props {
-  staleResult: StaleResult;
-}
-
-export function StaleBanner({ staleResult }: Props) {
-  const { buildPromptForFlow } = useImplementationStore();
-
-  return (
-    <div className="px-4 py-3 bg-amber-50 border-b border-amber-100">
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
-        <div className="flex-1">
-          <div className="text-sm font-medium text-amber-800">
-            Spec changed since code was generated
-          </div>
-          <ul className="mt-1 text-xs text-amber-700 space-y-0.5">
-            {staleResult.changes.slice(0, 5).map((change, i) => (
-              <li key={i}>{change}</li>
-            ))}
-            {staleResult.changes.length > 5 && (
-              <li className="text-amber-500">...and {staleResult.changes.length - 5} more</li>
-            )}
-          </ul>
-          <div className="mt-2 flex gap-2">
-            <button
-              onClick={() => buildPromptForFlow(
-                staleResult.flowId,
-                staleResult.flowId.split('/')[0]
-              )}
-              className="text-xs px-2 py-1 bg-amber-100 text-amber-700 rounded hover:bg-amber-200"
-            >
-              Update code
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-```
-
-**File: `src/components/ImplementationPanel/ReconciliationReport.tsx`**
-```tsx
-import { useImplementationStore } from '../../stores/implementation-store';
-import { useProjectStore } from '../../stores/project-store';
-import type { ReconciliationItem } from '../../types/implementation';
-import { CheckCircle, AlertTriangle, XCircle, Loader2, ArrowDownToLine, Trash2, EyeOff } from 'lucide-react';
-
-export function ReconciliationReport() {
-  const { reconciliationReport: report, isReconciling, resolveReconciliationItem } = useImplementationStore();
-  const { projectPath } = useProjectStore();
-
-  if (isReconciling) {
-    return (
-      <div className="p-4 flex items-center gap-2 text-sm text-gray-500">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        Reconciling spec vs code...
-      </div>
-    );
-  }
-
-  if (!report) return null;
-
-  const scoreColor = report.syncScore >= 95 ? 'text-green-600' :
-    report.syncScore >= 80 ? 'text-yellow-600' :
-    report.syncScore >= 50 ? 'text-amber-600' : 'text-red-600';
-
-  const scoreBg = report.syncScore >= 95 ? 'bg-green-50' :
-    report.syncScore >= 80 ? 'bg-yellow-50' :
-    report.syncScore >= 50 ? 'bg-amber-50' : 'bg-red-50';
-
-  const handleResolve = (itemId: string, resolution: 'accepted' | 'removed' | 'ignored') => {
-    resolveReconciliationItem(report.flowId, itemId, resolution, projectPath);
-  };
-
-  const renderItem = (item: ReconciliationItem, type: 'codeOnly' | 'specOnly') => (
-    <div key={item.id} className="px-4 py-2 border-b border-gray-50">
-      <div className="flex items-start gap-2">
-        {type === 'codeOnly' ? (
-          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" />
-        ) : (
-          <XCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 flex-shrink-0" />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="text-xs text-gray-700">{item.description}</div>
-          {item.codeLocation && (
-            <div className="text-[10px] text-gray-400 mt-0.5 font-mono">{item.codeLocation}</div>
-          )}
-          <div className="text-[10px] text-gray-400 mt-0.5">
-            <span className={`px-1 py-0.5 rounded ${
-              item.severity === 'significant' ? 'bg-red-50 text-red-500' :
-              item.severity === 'moderate' ? 'bg-amber-50 text-amber-500' :
-              'bg-gray-50 text-gray-400'
-            }`}>
-              {item.severity}
-            </span>
-            <span className="ml-1">{item.category}</span>
-          </div>
-          {!item.resolution && (
-            <div className="mt-1.5 flex gap-1">
-              {type === 'codeOnly' && (
-                <>
-                  <button
-                    onClick={() => handleResolve(item.id, 'accepted')}
-                    className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 bg-green-50 text-green-600 rounded hover:bg-green-100"
-                  >
-                    <ArrowDownToLine className="w-2.5 h-2.5" /> Accept into spec
-                  </button>
-                  <button
-                    onClick={() => handleResolve(item.id, 'removed')}
-                    className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100"
-                  >
-                    <Trash2 className="w-2.5 h-2.5" /> Remove from code
-                  </button>
-                </>
-              )}
-              <button
-                onClick={() => handleResolve(item.id, 'ignored')}
-                className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 bg-gray-50 text-gray-500 rounded hover:bg-gray-100"
-              >
-                <EyeOff className="w-2.5 h-2.5" /> Ignore
-              </button>
-            </div>
-          )}
-          {item.resolution && (
-            <div className="mt-1 text-[10px] text-gray-400 italic">
-              {item.resolution === 'accepted' ? 'Accepted into spec' :
-               item.resolution === 'removed' ? 'Queued for removal' : 'Ignored'}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="border-t border-gray-200">
-      {/* Sync score header */}
-      <div className={`px-4 py-2 ${scoreBg} border-b border-gray-100 flex items-center justify-between`}>
-        <div className="text-xs font-medium">
-          <span className={scoreColor}>Sync: {report.syncScore}%</span>
-          <span className="text-gray-400 ml-2">
-            {report.matching.length} matching, {report.codeOnly.length} code-only, {report.specOnly.length} spec-only
-          </span>
-        </div>
-      </div>
-
-      {/* Matching items (collapsed by default) */}
-      {report.matching.length > 0 && (
-        <details className="border-b border-gray-100">
-          <summary className="px-4 py-1.5 text-[10px] font-medium text-green-500 cursor-pointer hover:bg-gray-50">
-            Matching ({report.matching.length})
-          </summary>
-          {report.matching.map(item => (
-            <div key={item.id} className="px-4 py-1 flex items-center gap-2 text-xs text-gray-500">
-              <CheckCircle className="w-3 h-3 text-green-400 flex-shrink-0" />
-              {item.description}
-            </div>
-          ))}
-        </details>
-      )}
-
-      {/* Code-only items (drift) */}
-      {report.codeOnly.length > 0 && (
-        <div className="border-b border-gray-100">
-          <div className="px-4 py-1.5 text-[10px] font-medium text-amber-500 uppercase">
-            Code has, spec doesn't ({report.codeOnly.length})
-          </div>
-          {report.codeOnly.map(item => renderItem(item, 'codeOnly'))}
-        </div>
-      )}
-
-      {/* Spec-only items (missing implementation) */}
-      {report.specOnly.length > 0 && (
-        <div className="border-b border-gray-100">
-          <div className="px-4 py-1.5 text-[10px] font-medium text-red-400 uppercase">
-            Spec has, code doesn't ({report.specOnly.length})
-          </div>
-          {report.specOnly.map(item => renderItem(item, 'specOnly'))}
-        </div>
-      )}
-
-      {report.syncScore === 100 && (
-        <div className="px-4 py-3 text-xs text-green-600 text-center">
-          Spec and code are fully in sync.
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-**File: `src/components/ImplementationPanel/SyncBadge.tsx`**
-```tsx
-interface Props {
-  syncScore: number | undefined;
-  onClick?: () => void;
-}
-
-export function SyncBadge({ syncScore, onClick }: Props) {
-  if (syncScore === undefined) return null;
-
-  const color = syncScore >= 95 ? 'text-green-600 bg-green-50' :
-    syncScore >= 80 ? 'text-yellow-600 bg-yellow-50' :
-    syncScore >= 50 ? 'text-amber-600 bg-amber-50' : 'text-red-600 bg-red-50';
-
-  const icon = syncScore >= 95 ? '✓' :
-    syncScore >= 80 ? '~' :
-    syncScore >= 50 ? '⚠' : '✗';
-
-  return (
-    <button
-      onClick={onClick}
-      className={`text-[10px] px-1.5 py-0.5 rounded ${color} hover:opacity-80`}
-      title={`Sync score: ${syncScore}% — click to view reconciliation report`}
-    >
-      {icon} {syncScore}% synced
-    </button>
-  );
-}
-```
-
-**Update `src/components/ImplementationPanel/ImplementationPanel.tsx` — add reconciliation:**
-```tsx
-// Add to imports
-import { ReconciliationReport } from './ReconciliationReport';
-
-// Add after test results in the done/failed state:
-{(panelState === 'done' || panelState === 'failed') && (
-  <div className="flex-1 flex flex-col">
-    {/* ... existing done/failed UI ... */}
-    {(testResults || isRunningTests) && currentPrompt && (
-      <TestResults results={testResults} isRunning={isRunningTests} flowId={currentPrompt.flowId} />
-    )}
-    {/* Reconciliation report — shown after tests */}
-    <ReconciliationReport />
-  </div>
-)}
-```
-
-**Update `src/components/DomainMap/FlowBlock.tsx` — add sync badge:**
-```tsx
-// Add to imports
-import { SyncBadge } from '../ImplementationPanel/SyncBadge';
-import { useImplementationStore } from '../../stores/implementation-store';
-
-// Inside FlowBlock render, after test badge:
-const { mappings, togglePanel, reconcileFlow } = useImplementationStore();
-const mapping = mappings[`${domainId}/${flowId}`];
-
-// In the flow block JSX:
-{mapping?.sync_score !== undefined && (
-  <SyncBadge
-    syncScore={mapping.sync_score}
-    onClick={() => {
-      togglePanel();
-      reconcileFlow(`${domainId}/${flowId}`, projectPath);
-    }}
-  />
-)}
-```
-
-**Update `src/App.tsx` — add Implementation Panel:**
-```tsx
-// Add to imports
-import { ImplementationPanel } from './components/ImplementationPanel/ImplementationPanel';
-
-// Add keyboard shortcut in useEffect:
-// Cmd+I / Ctrl+I → toggle implementation panel
-if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
-  e.preventDefault();
-  useImplementationStore.getState().togglePanel();
-}
-
-// Add to layout — Implementation Panel goes rightmost:
-<div className="flex h-screen">
-  {/* ... existing Sidebar, Canvas, SpecPanel ... */}
-  <ImplementationPanel />
-</div>
-```
-
-**Update `src-tauri/Cargo.toml` — add dependencies:**
-```toml
-[dependencies]
-# ... existing deps ...
-portable-pty = "0.8"
-sha2 = "0.10"
-nanoid = "0.4"
-```
-
 
 ### Diagram-Derived Test Generation
 
@@ -7296,50 +5925,7 @@ export function SpecComplianceTab({ flowId }: { flowId: string }) {
 }
 ```
 
-**Update `ImplementationPanel.tsx`:** Add TestGenerator and SpecComplianceTab as sub-tabs:
-
-```tsx
-// Inside ImplementationPanel, add tab for test generation
-const [activeSubTab, setActiveSubTab] = useState<
-  'prompt' | 'terminal' | 'tests' | 'reconciliation' | 'test-generator' | 'compliance'
->('prompt');
-
-// In the tab bar:
-<button onClick={() => setActiveSubTab('test-generator')}>Test Spec</button>
-<button onClick={() => setActiveSubTab('compliance')}>Compliance</button>
-
-// In the tab content:
-{activeSubTab === 'test-generator' && <TestGenerator flowId={currentFlowId} />}
-{activeSubTab === 'compliance' && <SpecComplianceTab flowId={currentFlowId} />}
-```
-
-**Update `FlowBlock.tsx`:** Add CoverageBadge alongside test and sync badges:
-
-```tsx
-// After sync badge, add coverage badge
-{mapping?.test_generation && (
-  <CoverageBadge
-    specTestCount={mapping.test_generation.derived_test_count}
-    actualTestCount={mapping.test_results?.passed || 0}
-    onClick={() => openTestGenerator(flow.id)}
-  />
-)}
-```
-
-**Update Prompt Builder:** When `include_in_prompt` config is true, append generated tests:
-
-```typescript
-// In prompt-builder.ts, after building the main prompt:
-if (config.test_generation?.include_in_prompt && generatedTestCode) {
-  prompt += `\n\n## Pre-Generated Tests\n\n`;
-  prompt += `The following tests were derived from the flow specification.\n`;
-  prompt += `Implement the flow so that ALL these tests pass.\n`;
-  prompt += `Do NOT modify the test assertions — they reflect the exact spec requirements.\n\n`;
-  prompt += '```' + generatedTestCode.framework + '\n';
-  prompt += generatedTestCode.code;
-  prompt += '\n```';
-}
-```
+**Note:** The TestGenerator, CoverageBadge, and SpecComplianceTab components were previously housed in the ImplementationPanel directory. With the removal of the in-app Implementation Panel, test generation and compliance checking are now done via the Claude Code CLI (`/ddd-implement` includes derived test specs when available).
 
 ---
 
@@ -7380,19 +5966,6 @@ export interface GlobalSettings {
   claudeCode: {
     enabled: boolean;
     command: string;                        // CLI path
-    postImplement: {
-      runTests: boolean;
-      runLint: boolean;
-      autoCommit: boolean;
-      regenerateClaudeMd: boolean;
-    };
-  };
-  testing: {
-    command: string;
-    args: string[];
-    scoped: boolean;
-    scopePattern: string;
-    autoRun: boolean;
   };
   editor: {
     gridSnap: boolean;
@@ -7403,16 +5976,6 @@ export interface GlobalSettings {
   git: {
     autoCommitMessage: string;              // template with {flow_id}, {action}
     branchNaming: string;                   // template
-  };
-  reconciliation: {
-    autoRun: boolean;
-    autoAcceptMatching: boolean;
-    notifyOnDrift: boolean;
-  };
-  testGeneration: {
-    autoDerive: boolean;
-    includeInPrompt: boolean;
-    complianceCheck: boolean;
   };
 }
 
@@ -7689,15 +6252,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
 function getDefaultSettings(): GlobalSettings {
   return {
-    claudeCode: {
-      enabled: false, command: 'claude',
-      postImplement: { runTests: true, runLint: false, autoCommit: false, regenerateClaudeMd: true },
-    },
-    testing: { command: 'pytest', args: ['--tb=short', '-q'], scoped: true, scopePattern: 'tests/**/test_{flow_id}*', autoRun: true },
+    claudeCode: { enabled: false, command: 'claude' },
     editor: { gridSnap: true, autoSaveInterval: 30, theme: 'system', fontSize: 14 },
     git: { autoCommitMessage: 'Update {flow_id}', branchNaming: 'feature/{flow_id}' },
-    reconciliation: { autoRun: true, autoAcceptMatching: true, notifyOnDrift: true },
-    testGeneration: { autoDerive: true, includeInPrompt: true, complianceCheck: true },
   };
 }
 ```
@@ -8061,11 +6618,10 @@ export function NewProjectWizard({ onCancel }: { onCancel: () => void }) {
 import { useState } from 'react';
 import { useAppStore } from '../../stores/app-store';
 import { ClaudeCodeSettings } from './ClaudeCodeSettings';
-import { TestingSettings } from './TestingSettings';
 import { EditorSettings } from './EditorSettings';
 import { GitSettings } from './GitSettings';
 
-const TABS = ['Editor', 'Claude Code', 'Testing', 'Git'] as const;
+const TABS = ['Editor', 'Claude Code', 'Git'] as const;
 type Tab = typeof TABS[number];
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -8102,7 +6658,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </div>
 
           {activeTab === 'Claude Code' && <ClaudeCodeSettings settings={globalSettings} onSave={saveGlobalSettings} />}
-          {activeTab === 'Testing' && <TestingSettings settings={globalSettings} onSave={saveGlobalSettings} />}
           {activeTab === 'Editor' && <EditorSettings settings={globalSettings} onSave={saveGlobalSettings} />}
           {activeTab === 'Git' && <GitSettings settings={globalSettings} onSave={saveGlobalSettings} />}
         </div>
@@ -9415,20 +7970,6 @@ const borderClass = hasErrors ? 'border-red-500 border-2'
 )}
 ```
 
-**Integration: update ImplementationPanel to use gate:**
-```tsx
-// Replace direct "Implement" button with gate:
-import { ImplementGate } from '../Validation/ImplementGate';
-
-// In ImplementationPanel:
-{activeSubTab === 'prompt' && (
-  <>
-    <ImplementGate flowId={currentFlowId} onProceed={() => runClaudeCode()} />
-    <PromptPreview />
-  </>
-)}
-```
-
 ---
 
 ## Phase 4: Testing the MVP
@@ -9532,83 +8073,29 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Changed files listed
     - [ ] Stage/commit works
 
-15. **Implementation Panel**
-    - [ ] Cmd+I / Ctrl+I toggles implementation panel
-    - [ ] Panel shows queue in idle state (pending, stale, implemented flows)
-    - [ ] Click flow in queue → builds prompt and shows prompt preview
-    - [ ] Prompt preview shows auto-generated prompt with spec file references
-    - [ ] Edit button toggles prompt into editable textarea
-    - [ ] Run button spawns Claude Code in embedded PTY terminal
-    - [ ] Terminal shows live Claude Code output with scrolling
-    - [ ] Can type in terminal to respond to Claude Code prompts (y/n, etc.)
-    - [ ] Stop button kills running Claude Code process
-    - [ ] After completion, panel shows Done/Failed state
-    - [ ] "Implement" button on L3 toolbar opens panel with prompt for current flow
-    - [ ] Right-click flow block on L2 → "Implement" opens panel for that flow
+15. **Drift Detection**
+    - [ ] On project load, all flow hashes compared against mapping.yaml
+    - [ ] Stale flows show warning badge on L2 (Domain Map)
+    - [ ] Stale flow sheet shows banner with Accept + Dismiss buttons
+    - [ ] Spec cached at implementation time in .ddd/cache/specs-at-implementation/
+    - [ ] Sync score computed from mappings (total/implemented/stale/pending)
+    - [ ] `resolveFlow('reimpl')` copies `/ddd-implement {flowKey}` to clipboard
+    - [ ] `resolveFlow('accept')` updates stored hash to current
+    - [ ] `resolveFlow('ignore')` adds to ignoredDrifts set
+    - [ ] Reconciliation reports saved to .ddd/reconciliations/
 
 16. **Prompt Builder**
     - [ ] Prompt includes architecture.yaml, errors.yaml, referenced schemas, flow spec
     - [ ] Schema resolution: only schemas referenced by $ref or data_store model are included
     - [ ] Agent flows include agent-specific instructions (tools, guardrails, memory)
     - [ ] Update mode: prompt includes list of spec changes and targets existing code
-    - [ ] User edits to prompt are preserved until a new prompt is built
 
-17. **Stale Detection**
-    - [ ] On project load, all flow hashes compared against mapping.yaml
-    - [ ] Stale flows show warning badge on L2 (Domain Map)
-    - [ ] Stale flow sheet shows banner with list of changes
-    - [ ] "Update code" button builds update prompt automatically
-    - [ ] Spec cached at implementation time in .ddd/cache/specs-at-implementation/
-    - [ ] Human-readable diff computed between cached and current spec
-
-18. **Test Runner**
-    - [ ] Tests auto-run after successful Claude Code completion (if configured)
-    - [ ] Test results displayed with pass/fail per test case
-    - [ ] "Re-run tests" button re-executes test command
-    - [ ] "Fix failing test" sends error output to Claude Code with fix prompt
-    - [ ] Test badges shown on L2 flow blocks (green ✓ or red ✗ with counts)
-    - [ ] Scoped test execution: only runs tests matching the implemented flow
-
-19. **CLAUDE.md Auto-Generation**
+17. **CLAUDE.md Auto-Generation**
     - [ ] CLAUDE.md generated on first implementation
     - [ ] Regenerated when implementation status changes
     - [ ] Includes project name, spec files, domain table, rules, tech stack, commands
     - [ ] Custom section (below `<!-- CUSTOM -->` marker) preserved on regeneration
     - [ ] Domain table shows implementation status (N implemented, M pending)
-
-20. **Implementation Queue**
-    - [ ] Queue shows all flows grouped by status (pending, stale, implemented)
-    - [ ] Can select multiple flows with checkboxes
-    - [ ] "Select all pending" selects all pending + stale flows
-    - [ ] "Implement selected" processes flows sequentially (prompt → run → test → next)
-    - [ ] Implemented flows show test result counts
-
-21. **Reverse Drift Detection — Implementation Report**
-    - [ ] Prompt includes "Implementation Report" instruction asking Claude Code to list deviations
-    - [ ] Terminal output is parsed for `## Implementation Notes` section after Claude Code finishes
-    - [ ] "No deviations" is detected and skips reconciliation
-    - [ ] Non-empty notes trigger auto-reconciliation (if configured)
-
-22. **Reverse Drift Detection — Reconciliation**
-    - [ ] After implementation, reconciliation runs automatically (configurable)
-    - [ ] Reconciliation reads spec YAML and generated code files
-    - [ ] Hash-based comparison of spec vs code produces structured report
-    - [ ] Report shows matching items, code-only items, and spec-only items
-    - [ ] Sync score calculated and displayed (100% = perfect match)
-    - [ ] "Accept into spec" updates flow YAML to include code addition
-    - [ ] "Remove from code" builds targeted Claude Code prompt
-    - [ ] "Ignore" stores accepted deviation in mapping.yaml
-    - [ ] Accepted deviations don't trigger drift warnings again
-    - [ ] Matching items collapsed by default (expandable)
-    - [ ] Each item shows severity (minor/moderate/significant) and category
-
-23. **Reverse Drift Detection — Sync Score**
-    - [ ] Sync score badge shown on L2 flow blocks alongside test badge
-    - [ ] Green (≥95%), yellow (80-94%), amber (50-79%), red (<50%)
-    - [ ] Clicking sync badge opens reconciliation report
-    - [ ] Sync score in toolbar on L3 flow sheet
-    - [ ] Sync score stored in .ddd/mapping.yaml per flow
-    - [ ] Sync score recalculates when items are resolved
 
 24. **Test Case Derivation**
     - [ ] "Derive tests" button walks flow graph and enumerates all paths (trigger → terminal)
@@ -9647,7 +8134,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
 
 28. **Settings Screen**
     - [ ] Accessible via menu bar → Settings or Cmd+, shortcut
-    - [ ] Tab navigation: Editor, Claude Code, Testing, Git
+    - [ ] Tab navigation: Editor, Claude Code, Git
     - [ ] Global vs Project scope toggle
     - [ ] Editor tab: grid snap, auto-save interval, theme (light/dark/system), font size
     - [ ] Settings persist to ~/.ddd-tool/settings.json (global) and .ddd/config.yaml (project)
@@ -9666,7 +8153,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
     - [ ] Warning/error severity requires manual dismiss
     - [ ] Fatal severity shows modal blocking all actions
     - [ ] YAML parse errors show line number and revert to last valid state
-    - [ ] PTY crash → "Reconnect" / "New session" buttons
+    - [ ] Recovery actions available in error toasts (e.g., "Retry", "Revert")
     - [ ] Auto-save writes to .ddd/autosave/ (not real spec files)
     - [ ] Crash recovery dialog on next launch if autosave data exists
     - [ ] All errors logged to ~/.ddd-tool/logs/ddd-tool.log
@@ -9731,7 +8218,7 @@ import { ImplementGate } from '../Validation/ImplementGate';
    - `sheet-store` owns navigation state (current level, breadcrumbs, history)
    - `project-store` owns domain configs parsed from domain.yaml files
    - `flow-store` owns current flow being edited (Level 3 only)
-   - `implementation-store` owns panel state, PTY session, queue, test results, mappings
+   - `implementation-store` owns drift detection, mapping persistence
    - `app-store` owns app-level view state, recent projects, global settings, errors, auto-save
    - `undo-store` owns per-flow undo/redo stacks with immutable snapshots
    - `validation-store` owns per-flow/domain/system validation results and implementation gate
@@ -9924,43 +8411,19 @@ npm run tauri dev
 - [ ] YAML format matches specification
 - [ ] Domain configs (domain.yaml) are parsed to populate L1/L2
 
-### Claude Code Integration
-- [ ] Implementation Panel opens/closes with Cmd+I and shows current state (idle/prompt/running/done/failed)
-- [ ] Prompt Builder auto-generates prompt from flow spec with correct file references
-- [ ] Prompt Builder resolves only referenced schemas (via $ref and data_store model)
-- [ ] Prompt Builder detects agent flows and includes agent-specific instructions
-- [ ] Prompt Builder detects update mode (existing mapping) and includes change list
-- [ ] Prompt is editable before running — user can add custom instructions
-- [ ] Embedded PTY terminal runs Claude Code interactively (user can approve/deny)
-- [ ] Terminal output scrolls automatically and accepts keyboard input
-- [ ] After Claude Code finishes, spec hash saved to .ddd/mapping.yaml
+### Claude Code Integration (Drift Detection + CLI)
+- [ ] Spec hash saved to .ddd/mapping.yaml after implementation via CLI
 - [ ] Spec file cached in .ddd/cache/specs-at-implementation/ for future diff
-- [ ] Tests auto-run after successful implementation (configurable)
-- [ ] Test results displayed with per-test pass/fail and error messages
-- [ ] "Fix failing test" button sends error to Claude Code for automatic fix
 - [ ] Stale detection compares SHA-256 hashes on project load, flow save, and git pull
-- [ ] Stale flows show warning badge on L2 and banner on L3 with change list
+- [ ] Stale flows show warning badge on L2 and banner on L3 with Accept + Dismiss buttons
+- [ ] `resolveFlow('reimpl')` copies `/ddd-implement {flowKey}` to clipboard
+- [ ] `resolveFlow('accept')` updates stored hash to current
+- [ ] `resolveFlow('ignore')` adds to ignoredDrifts set
+- [ ] Sync score computed from mappings (total/implemented/stale/pending)
+- [ ] Reconciliation reports saved to .ddd/reconciliations/
 - [ ] CLAUDE.md auto-generated with project info, domain table, rules, tech stack
 - [ ] CLAUDE.md custom section preserved on regeneration
-- [ ] Implementation Queue shows all flows grouped by status
-- [ ] Batch implementation processes selected flows sequentially
 - [ ] Configuration loaded from .ddd/config.yaml with sensible defaults
-
-### Reverse Drift Detection
-- [ ] Prompt includes Implementation Report instruction requesting structured deviation notes
-- [ ] Terminal output parsed for `## Implementation Notes` section
-- [ ] Auto-reconciliation triggers after implementation (configurable via reconciliation.auto_run)
-- [ ] Reconciliation compares spec vs code using hash-based structural analysis
-- [ ] Reconciliation report shows matching, code-only, and spec-only items
-- [ ] Sync score (0-100%) calculated from matching vs total items
-- [ ] "Accept into spec" builds a Claude Code prompt to update the spec YAML
-- [ ] "Remove from code" builds targeted Claude Code prompt to remove the item
-- [ ] "Ignore" stores accepted deviation in mapping.yaml (won't warn again)
-- [ ] Sync score badge displayed on L2 flow blocks (green/yellow/amber/red)
-- [ ] Clicking sync badge opens reconciliation report in Implementation Panel
-- [ ] Sync score persisted in .ddd/mapping.yaml per flow
-- [ ] Accepted deviations tracked and excluded from future reconciliation warnings
-- [ ] Reconciliation available manually via "Reconcile" button in Implementation Panel
 
 ### Diagram-Derived Test Generation
 - [ ] "Derive tests" walks flow graph and enumerates all paths from trigger to terminal
@@ -9968,22 +8431,16 @@ npm run tauri dev
 - [ ] Boundary tests derived from every input node field with validation rules
 - [ ] Agent tests derived (tool success/failure, guardrail, max iterations, human gate)
 - [ ] Orchestration tests derived (routing rules, fallback, circuit breaker, handoff)
-- [ ] Test code generation uses Claude Code with derived spec + flow YAML
+- [ ] Test code generation uses Claude Code CLI with derived spec + flow YAML
 - [ ] Generated test code uses project's test framework from architecture.yaml
 - [ ] Generated tests reference exact error messages and status codes from spec
-- [ ] "Include in prompt" appends tests to Claude Code prompt with instructions
-- [ ] Coverage badge shown on Level 2 flow blocks (spec tests vs actual tests)
-- [ ] Spec compliance check compares test results against derived expectations
-- [ ] Non-compliant items show expected vs actual with "Fix via Claude Code" button
-- [ ] Compliance score and issues persisted in mapping.yaml
-- [ ] Test Spec and Compliance tabs accessible in Implementation Panel
 
 ### App Shell & UX
 - [ ] App launches to Project Launcher screen (not canvas)
 - [ ] Recent projects load from ~/.ddd-tool/recent-projects.json with pruning
 - [ ] New Project wizard creates specs/, system.yaml, architecture.yaml, domain.yaml, .ddd/, Git init
 - [ ] Open Existing validates folder is a DDD project (checks specs/system.yaml or .ddd/config.yaml)
-- [ ] Settings dialog opens via Cmd+, with tab navigation (Editor, Claude Code, Testing, Git)
+- [ ] Settings dialog opens via Cmd+, with tab navigation (Editor, Claude Code, Git)
 - [ ] Global vs project scope toggle in settings
 - [ ] First-run wizard detects missing ~/.ddd-tool/ and guides through Claude Code + Get Started
 - [ ] Sample project available as read-only exploration (bundled in app)
@@ -10037,7 +8494,7 @@ Session 16 adds first-run experience, settings persistence, undo/redo, auto-save
 - "Skip for now" and "Explore with sample project" options
 
 **Settings Dialog:** `src/components/Settings/SettingsDialog.tsx`
-- Tab navigation: Editor, Claude Code, Testing, Git
+- Tab navigation: Editor, Claude Code, Git
 - Global scope (`~/.ddd-tool/settings.json`) vs project scope (`.ddd/config.yaml`)
 - `GitSettings.tsx` — commit message templates, branch naming conventions
 

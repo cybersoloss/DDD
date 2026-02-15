@@ -3160,7 +3160,6 @@ All read-only output areas across the tool include a **Copy** button for one-cli
 
 | Shortcut | Action |
 |----------|--------|
-| `Cmd+I` / `Ctrl+I` | Toggle Implementation Panel |
 | `Cmd+Shift+M` / `Ctrl+Shift+M` | Toggle Minimap |
 | `Cmd+Z` / `Ctrl+Z` | Undo |
 | `Cmd+Shift+Z` / `Ctrl+Shift+Z` | Redo |
@@ -3632,7 +3631,6 @@ The validation panel is accessible from:
 - **Level 3 toolbar:** ✓ button shows flow-level issues
 - **Level 2 toolbar:** ✓ button shows domain-level issues
 - **Level 1 toolbar:** ✓ button shows system-level issues
-- **Implementation Panel:** validation summary shown before "Implement" button
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -3728,7 +3726,7 @@ Validation runs continuously as the user designs. Invalid nodes show visual indi
 
 #### Implementation Gate
 
-The "Implement" button in the Implementation Panel checks validation before proceeding:
+The validation gate checks flow quality before implementation proceeds (used by the CLI's `/ddd-implement` command):
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -3809,7 +3807,7 @@ Level 2 (Domain Map) — flow blocks show validation status alongside test and s
 
 ### Claude Code Integration
 
-The DDD Tool integrates with Claude Code CLI to turn specs into running code without leaving the application. Five components work together: an **Implementation Panel** with interactive terminal, a **Prompt Builder** that constructs optimal prompts from specs, **Stale Detection** that tracks spec-vs-code drift, a **Test Runner** that shows results linked to flows, and **CLAUDE.md Auto-Generation** that keeps Claude Code instructions in sync with the project.
+The DDD Tool integrates with Claude Code CLI to turn specs into running code. Three components work together: a **Prompt Builder** that constructs optimal prompts from specs (copied to clipboard via "Copy Command"), **Stale Detection** that tracks spec-vs-code drift with visual banners, and **CLAUDE.md Auto-Generation** that keeps Claude Code instructions in sync with the project. Implementation is driven from the CLI via `/ddd-implement`.
 
 #### Architecture
 
@@ -3818,62 +3816,19 @@ The DDD Tool integrates with Claude Code CLI to turn specs into running code wit
 │ DDD TOOL                                                         │
 │                                                                   │
 │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌────────────────────────┐│
-│  │ Canvas  │ │ Spec    │ │ Chat    │ │ Implementation Panel   ││
+│  │ Canvas  │ │ Spec    │ │ Git     │ │ Validation Panel       ││
 │  │         │ │ Panel   │ │ Panel   │ │                        ││
-│  │         │ │         │ │         │ │ ┌────────────────────┐ ││
-│  │         │ │         │ │         │ │ │ Prompt Preview     │ ││
-│  │         │ │         │ │         │ │ │ "Implement user-   │ ││
-│  │         │ │         │ │         │ │ │  register flow..." │ ││
-│  │         │ │         │ │         │ │ │ [▶ Run] [Edit]     │ ││
-│  │         │ │         │ │         │ │ └────────────────────┘ ││
-│  │         │ │         │ │         │ │ ┌────────────────────┐ ││
-│  │         │ │         │ │         │ │ │ Terminal (PTY)     │ ││
-│  │         │ │         │ │         │ │ │                    │ ││
-│  │         │ │         │ │         │ │ │ claude> Creating   │ ││
-│  │         │ │         │ │         │ │ │ router.py...       │ ││
-│  │         │ │         │ │         │ │ │ Allow? (y/n) █     │ ││
-│  │         │ │         │ │         │ │ └────────────────────┘ ││
-│  │         │ │         │ │         │ │ ┌────────────────────┐ ││
-│  │         │ │         │ │         │ │ │ Test Results       │ ││
-│  │         │ │         │ │         │ │ │ ✓ register_success │ ││
-│  │         │ │         │ │         │ │ │ ✓ duplicate_email  │ ││
-│  │         │ │         │ │         │ │ │ ✗ short_password   │ ││
-│  │         │ │         │ │         │ │ │ 2/3 passing        │ ││
-│  │         │ │         │ │         │ │ └────────────────────┘ ││
+│  │         │ │         │ │         │ │ Flow/Domain/System     ││
+│  │         │ │         │ │         │ │ scope validation       ││
 │  └─────────┘ └─────────┘ └─────────┘ └────────────────────────┘│
+│                                                                   │
+│  ┌──────────────────────────────────────────────────────────────┐│
+│  │ Stale Banners (L2 FlowBlock / L3 FlowCanvas)                ││
+│  │ Copy Command → /ddd-implement {domain}/{flow}                ││
+│  └──────────────────────────────────────────────────────────────┘│
 │                                                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
-
-#### 1. Implementation Panel
-
-A toggleable right-side panel (`Cmd+I` / `Ctrl+I`) with three sections: prompt preview, interactive terminal, and test results.
-
-**Prompt Preview:** Before running Claude Code, the panel shows the auto-generated prompt so the user can review and edit it. The prompt is built by the Prompt Builder (see below).
-
-**Interactive Terminal:** A full pseudo-terminal (PTY) embedded in the DDD Tool. Claude Code runs here interactively — the user can approve file operations, answer questions, and see progress in real-time. This is not a "fire and forget" — the user stays in control.
-
-**Test Results:** After Claude Code finishes, the DDD Tool runs the project's test command and displays results linked to the implemented flow.
-
-**Panel states:**
-
-| State | What the panel shows |
-|-------|---------------------|
-| **Idle** | "Ready to implement" message + Claude Code command box |
-| **Prompt ready** | Prompt preview with Edit/Preview tabs + [Run Implementation] button + Claude Code command box |
-| **Running** | Terminal output with live streaming |
-| **Done** | Output summary + [Run Tests] + [Fix Runtime Error] + Claude Code command boxes (`/ddd-implement`, `/ddd-sync`) + [Implement Another Flow] |
-| **Failed** | Error output + [Edit Prompt] [Fix Error] [Retry] buttons |
-
-**Entry points — how to start implementation:**
-
-| Action | Where | What happens |
-|--------|-------|-------------|
-| Click "▶ Implement" button | Flow Sheet (L3) toolbar | Opens Implementation Panel, builds prompt for current flow |
-| Right-click flow block → "Implement" | Domain Map (L2) | Opens Implementation Panel for that flow |
-| Click "Update code" on stale warning | Stale notification | Opens Implementation Panel with targeted update prompt |
-| Click "▶ Implement selected" | Implementation Queue | Processes selected flows sequentially |
-| Copy command from ClaudeCommandBox | Any panel state | User pastes `/ddd-implement` command into Claude Code terminal |
 
 **ClaudeCommandBox:** A reusable UI component that auto-generates the correct Claude Code slash command based on the current navigation scope. Shows a copyable command in a bordered box with Terminal icon:
 
@@ -4018,7 +3973,7 @@ On Level 3 (Flow Sheet), a banner appears at the top:
 
 #### 4. Test Runner
 
-After Claude Code finishes implementing a flow, the DDD Tool runs the project's test suite and displays results in the Implementation Panel.
+After Claude Code finishes implementing a flow, the project's test suite runs via the CLI workflow (`/ddd-implement` handles test execution natively).
 
 **Configuration:**
 
@@ -4162,35 +4117,6 @@ src/
 - User clicks "Regenerate CLAUDE.md" in settings
 
 **Custom section preserved:** Everything below `<!-- CUSTOM -->` is never overwritten. Users can add their own conventions, workarounds, or preferences there.
-
-#### Implementation Queue
-
-The Implementation Panel includes a queue view showing all flows and their status.
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│ IMPLEMENTATION QUEUE                                          │
-│                                                                │
-│ Pending (not yet implemented):                                │
-│ ☐ api/user-reset-password                                    │
-│ ☐ api/get-contracts                                          │
-│ ☐ api/get-obligations                                        │
-│ ☐ notification/deadline-alert (agent)                        │
-│ ☐ notification/compliance-report                             │
-│                                                                │
-│ Stale (spec changed since code gen):                          │
-│ ☐ ingestion/scheduled-sync (2 changes)                       │
-│                                                                │
-│ Implemented (up to date):                                     │
-│ ✓ api/user-register              4/4 tests ✓                │
-│ ✓ api/user-login                 3/3 tests ✓                │
-│ ✓ ingestion/webhook-ingestion    5/5 tests ✓                │
-│                                                                │
-│ [Select all pending]  [▶ Implement selected]                 │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Batch implementation:** User selects multiple flows, clicks "Implement selected." The tool processes them sequentially — builds prompt, runs Claude Code, runs tests, updates status, moves to next. The user can monitor progress and intervene at any step.
 
 #### 6. Cowork Workflow — DDD Tool ↔ Claude Code Terminal
 
@@ -4361,7 +4287,7 @@ After implementation, the DDD Tool reads the generated code files and compares t
 1. The DDD Tool reads all files listed in `.ddd/mapping.yaml` for the flow
 2. It compares the flow spec YAML against the implementation code (via hash comparison and structural analysis)
 3. Differences are identified and categorized (matching, code-only, spec-only)
-4. The DDD Tool displays the report in the Implementation Panel
+4. Results are saved to `.ddd/reconciliations/` for review
 
 **Reconciliation actions per item:**
 
@@ -4429,7 +4355,6 @@ Clicking the sync badge opens the reconciliation report.
 
 **When reconciliation runs:**
 - Automatically after every Claude Code implementation (if `reconciliation.auto_run: true`)
-- Manually via "Reconcile" button in Implementation Panel
 - On project load, for any flow that was implemented outside the DDD Tool (e.g., manually edited code)
 - After git pull, if code files in mapping changed but spec didn't
 
@@ -5578,7 +5503,7 @@ The Mermaid export utility generates diagrams from flow specs and can be trigger
 - Portal nodes for cross-domain navigation
 - Spec panel (basic fields + agent-specific + orchestration panels)
 - YAML export (traditional, agent, and orchestration flow formats)
-- **Claude Code Integration:** Implementation Panel with embedded PTY terminal for interactive Claude Code sessions
+- **Claude Code Integration:** Drift detection with stale banners, "Copy Command" for CLI-driven implementation via `/ddd-implement`
 - **Prompt Builder:** Auto-constructs optimal prompts from specs (schema resolution, agent detection, update mode)
 - **Stale Detection:** SHA-256 hash comparison to detect spec-vs-code drift with human-readable change summaries
 - **Test Runner:** Auto-runs tests after implementation, displays results linked to flows, fix-and-retest loop
