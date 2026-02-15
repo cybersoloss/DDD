@@ -476,8 +476,17 @@ export interface ServiceCallSpec {
   headers?: Record<string, string>;
   body?: Record<string, unknown>;
   timeout_ms?: number;
-  retry?: { max_attempts?: number; backoff_ms?: number };
+  retry?: { max_attempts?: number; backoff_ms?: number; strategy?: 'fixed' | 'linear' | 'exponential'; jitter?: boolean };
   error_mapping?: Record<string, string>;
+  request_config?: {
+    user_agent?: 'rotate' | 'browser' | 'custom';
+    delay?: { min_ms?: number; max_ms?: number; strategy?: 'random' | 'fixed' };
+    cookie_jar?: 'per_domain' | 'shared' | 'none';
+    proxy?: 'pool' | 'direct' | 'tor';
+    tls_fingerprint?: 'randomize' | 'chrome' | 'firefox' | 'default';
+    fallback?: 'headless_browser' | 'none';
+  };
+  integration?: string;
   description?: string;
   [key: string]: unknown;
 }
@@ -486,7 +495,12 @@ export interface EventNodeSpec {
   direction?: 'emit' | 'consume';
   event_name?: string;
   payload?: Record<string, unknown>;
+  payload_source?: string;
   async?: boolean;
+  target_queue?: string;
+  priority?: number;
+  delay_ms?: number;
+  dedup_key?: string;
   description?: string;
   [key: string]: unknown;
 }
@@ -14041,8 +14055,8 @@ const KNOWN_KEYS: Record<string, Set<string>> = {
   decision: new Set(['condition', 'trueLabel', 'falseLabel', 'description']),
   terminal: new Set(['outcome', 'description', 'status', 'body', 'response_type', 'headers']),
   data_store: new Set(['operation', 'model', 'data', 'query', 'description', 'pagination', 'sort', 'batch', 'upsert_key', 'include', 'returning']),
-  service_call: new Set(['method', 'url', 'headers', 'body', 'timeout_ms', 'retry', 'error_mapping', 'request_config', 'description']),
-  event: new Set(['direction', 'event_name', 'payload', 'payload_source', 'async', 'description']),
+  service_call: new Set(['method', 'url', 'headers', 'body', 'timeout_ms', 'retry', 'error_mapping', 'request_config', 'integration', 'description']),
+  event: new Set(['direction', 'event_name', 'payload', 'payload_source', 'async', 'target_queue', 'priority', 'delay_ms', 'dedup_key', 'description']),
   loop: new Set(['collection', 'iterator', 'break_condition', 'on_error', 'accumulate', 'description']),
   parallel: new Set(['branches', 'join', 'join_count', 'timeout_ms', 'description']),
   sub_flow: new Set(['flow_ref', 'input_mapping', 'output_mapping', 'description']),
@@ -14259,17 +14273,19 @@ export interface TransactionSpec {
 }
 ```
 
-### Field Extensions (7 existing specs)
+### Field Extensions (9 existing specs)
 
 | Spec | New Fields |
 |------|-----------|
 | `TriggerSpec` | `filter?: Record<string, unknown>` |
 | `ProcessSpec` | `category?: 'security' \| 'transform' \| 'integration' \| 'business_logic' \| 'infrastructure'`, `inputs?: string[]`, `outputs?: string[]` |
 | `DataStoreSpec` | Extended `operation` union with `'upsert' \| 'create_many' \| 'update_many' \| 'delete_many'`, `include?: Record<string, unknown>`, `returning?: boolean` |
-| `EventNodeSpec` | `payload_source?: string` |
+| `ServiceCallSpec` | `request_config` updated to rich enums (`user_agent`, `delay`, `cookie_jar`, `proxy`, `tls_fingerprint`, `fallback`), `integration?: string` |
+| `EventNodeSpec` | `payload_source?: string`, `target_queue?: string`, `priority?: number`, `delay_ms?: number`, `dedup_key?: string` |
 | `LoopSpec` | `accumulate?: { field?: string; strategy?: 'append' \| 'merge' \| 'sum' \| 'last'; output?: string }` |
 | `ParallelSpec` | `branches` broadened to `(string \| { label: string; condition?: string })[]` |
 | `LlmCallSpec` | `context_sources?: Record<string, { from: string; transform?: string }>` |
+| `TerminalSpec` | `response_type` and `headers` added to KNOWN_KEYS |
 
 ### Validation Rules (new)
 
@@ -14279,6 +14295,9 @@ Added to `checkExtendedNodes()` in `src/utils/flow-validator.ts`:
 - `crypto`: error if no operation, error if no algorithm, error if no key_source
 - `batch`: error if no input, error if no operation_template
 - `transaction`: error if steps < 2
+- `cache`: error if no key, error if no store
+- `transform`: error if no input_schema, error if no output_schema
+- `delay`: error if no min_ms
 
 ### Updated Registrations
 
