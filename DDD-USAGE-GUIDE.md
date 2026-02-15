@@ -184,6 +184,8 @@ tech_stack:
   queue: BullMQ
   auth: JWT + bcrypt
 
+> **Note:** The `queue` field determines event infrastructure: when set (e.g., `BullMQ`), `/ddd-scaffold` generates queue-based event infrastructure and `/ddd-implement` uses it for async events. When absent, use an in-process EventEmitter for domain events.
+
 environments:
   - name: development
     url: http://localhost:3000
@@ -3299,6 +3301,7 @@ export async function createOrder(ctx: FlowContext): Promise<FlowResult> {
 - Internal helper functions for process/decision nodes stay private in the file
 - Repository functions are shared across flows via the `repositories/` directory
 - Schemas and types go in dedicated files, imported by services
+- When multiple flows share a domain, group their HTTP routes into a single route file per resource (e.g., `routes/auth.ts` for `user-register` + `user-login`). Each flow's service file stays separate — the route file imports and dispatches to the correct service.
 
 ### Error Handling
 
