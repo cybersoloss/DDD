@@ -1921,6 +1921,25 @@ connections:
     sourceHandle: "rolled_back"
 ```
 
+### Guardrail pass/block
+```yaml
+connections:
+  - targetNodeId: continue-node-id
+    sourceHandle: "pass"
+  - targetNodeId: blocked-handler-id
+    sourceHandle: "block"
+```
+
+### Human Gate (dynamic per approval_options)
+```yaml
+# Handles are generated from the approval_options[].id values
+connections:
+  - targetNodeId: approved-path-id
+    sourceHandle: "approve"
+  - targetNodeId: rejected-path-id
+    sourceHandle: "reject"
+```
+
 ---
 
 ## 9. Validation Rules
