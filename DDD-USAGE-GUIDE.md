@@ -914,7 +914,7 @@ Connections can optionally include a `behavior` field to distinguish error handl
 |-------|-------------|
 | `continue` | Log and continue (soft fail) |
 | `stop` | Stop the flow (hard fail) |
-| `retry(n)` | Retry n times before failing |
+| `retry` | Retry before failing (retry count configured at node level) |
 | `circuit_break` | Use circuit breaker pattern |
 
 ```yaml
@@ -937,6 +937,39 @@ The DDD Tool normalizes several alternative field names on import, so specs from
 | `label` or `name` | `label` |
 
 You should prefer the canonical names (`targetNodeId`, `spec`, `label`) in new specs. The aliases exist for backward compatibility and interoperability with external generators.
+
+### Variable Scope and Data Flow
+
+DDD specs use `$.variable_name` syntax to reference data flowing through a flow. Here is how variable scope works:
+
+**The `$` context object:**
+- `$` represents the flow context — a mutable object created when the trigger fires and passed through every node in the flow.
+- Each node reads inputs from `$` and writes its output back to `$` under a named key.
+- Scope is **flow-scoped** and **accumulative**: later nodes can read anything written by earlier nodes.
+
+**Lifecycle:**
+1. **Trigger** initializes `$` from the incoming event payload (e.g., HTTP body, cron metadata, event data).
+2. **Input** validates and may reshape fields on `$`.
+3. **Process / decision / data_store / service_call** nodes read from `$` and write results back.
+4. **Terminal** reads from `$` to build the response.
+
+**Implementation mapping:**
+
+| Spec Reference | Implementation (Express) | Implementation (Generic) |
+|---------------|-------------------------|-------------------------|
+| `$.field` in trigger (http) | `req.body.field` or `req.params.field` | Function argument field |
+| `$.field` in trigger (event) | `event.payload.field` | Event data field |
+| `$.model_name` after data_store read | `const model_name = await repo.find(...)` | Query result variable |
+| `$.raw_*` (raw content) | Unparsed response body variable | Raw content variable |
+| `$.result` in terminal | `res.json({ result })` | Return value |
+
+**Naming conventions:**
+- `$.raw_*` — unprocessed content (e.g., `$.raw_feed`, `$.raw_html`)
+- `$.model_name` — data model instances (e.g., `$.order`, `$.user`)
+- `$.model_name_list` — arrays of models (e.g., `$.order_list`)
+- `$.is_*` or `$.has_*` — boolean flags for decision nodes (e.g., `$.is_valid`, `$.has_permission`)
+
+**Code generation rule:** When generating code, replace each `$.X` reference with the corresponding local variable or parameter. The `$` object is a design-time abstraction — it does not need to exist as a literal runtime object.
 
 ### FlowParameter (for parameterized flows)
 
@@ -1526,7 +1559,7 @@ Structured extraction from raw content formats (RSS, HTML, XML, JSON, CSV). Use 
 |------------|------|-------------|
 | `format` | string | `'rss' \| 'atom' \| 'html' \| 'xml' \| 'json' \| 'csv' \| 'markdown'` |
 | `input` | string | Raw content variable (e.g., `"$.raw_response"`) |
-| `strategy` | string? | `'strict' \| 'lenient' \| 'streaming'` — parsing strictness (default: 'strict') |
+| `strategy` | string \| object | String: `'strict' \| 'lenient' \| 'streaming'` for parsing strictness (default: `'strict'`). Object: `{ selectors: [...] }` for HTML scraping with CSS selectors. |
 | `library` | string? | Implementation hint (e.g., `'cheerio'`, `'rss-parser'`, `'fast-xml-parser'`) |
 | `output` | string | Output variable name |
 | `description` | string | Details |
@@ -1537,7 +1570,6 @@ spec:
   format: rss
   input: "$.raw_feed"
   strategy: lenient
-      - { name: published, path: "item.pubDate", transform: date }
   output: "feed_entries"
 
 # HTML scraping
@@ -1972,6 +2004,54 @@ connections:
   - targetNodeId: rejected-path-id
     sourceHandle: "reject"
 ```
+
+### Delay (single output)
+```yaml
+connections:
+  - targetNodeId: next-node-id
+```
+
+> **Note:** Delay nodes have a single unnamed output handle. The delay duration is configured in the node's spec, not in the connection.
+
+### Transform (single output)
+```yaml
+connections:
+  - targetNodeId: next-node-id
+```
+
+> **Note:** Transform nodes have a single unnamed output handle. Mapping rules are in the node spec.
+
+### Sub Flow (single output)
+```yaml
+connections:
+  - targetNodeId: next-node-id
+```
+
+> **Note:** Sub flow nodes invoke another flow and return the result via a single unnamed output. Error handling uses connection `behavior` (e.g., `behavior: stop`).
+
+### Orchestrator (single output)
+```yaml
+connections:
+  - targetNodeId: next-node-id
+```
+
+> **Note:** Orchestrator nodes manage multiple agents internally (sequential, parallel, or adaptive strategy). The orchestrated result exits via a single unnamed output handle.
+
+### Handoff (single output)
+```yaml
+connections:
+  - targetNodeId: next-node-id
+```
+
+> **Note:** Handoff transfers context to a target agent. In `mode: terminate`, the downstream connection receives no further data. In `mode: continue`, the result is passed through the single unnamed output.
+
+### Agent Group (single output)
+```yaml
+connections:
+  - targetNodeId: next-node-id
+```
+
+> **Note:** Agent group runs agents in parallel or round-robin, aggregates results, and outputs via a single unnamed handle.
 
 ---
 
@@ -3091,3 +3171,148 @@ filter:
   "payload.amount": { gte: 100 }       # greater-than-or-equal
   "payload.status": [active, pending]   # in-list
 ```
+
+---
+
+## 17. Implementation Patterns
+
+This section provides guidance for `/ddd-implement` and other code generators. It maps DDD spec constructs to implementation code artifacts.
+
+### Node Type to Code Artifact Mapping
+
+Each node type produces specific code artifacts. The **primary** artifact is always generated; **secondary** artifacts are generated when the node's spec warrants it.
+
+| Node Type | Primary Artifact | Secondary Artifacts |
+|-----------|-----------------|---------------------|
+| `trigger` (http) | Route handler / controller | Auth middleware, rate limiter |
+| `trigger` (cron) | Scheduled job definition | — |
+| `trigger` (event) | Event listener / subscriber | — |
+| `input` | Zod validation schema | TypeScript request type |
+| `process` | Service function | — |
+| `decision` | Conditional branch in service | — |
+| `terminal` | Response formatter / return | Error response variant |
+| `data_store` (read) | Repository / query function | Prisma query |
+| `data_store` (write/update/delete) | Repository / mutation function | Prisma mutation |
+| `collection` | Array utility in service | — |
+| `service_call` | HTTP client call / SDK wrapper | Retry/timeout config |
+| `event` (emit) | Event emitter call | Event type definition |
+| `event` (listen) | Event handler registration | — |
+| `loop` | `for`/`while` block in service | — |
+| `parallel` | `Promise.all` / `Promise.allSettled` | — |
+| `sub_flow` | Imported service function call | — |
+| `parse` | Parser utility function | — |
+| `crypto` | Crypto utility function | Key management helper |
+| `transform` | Data mapping function | — |
+| `delay` | `setTimeout` / queue delay | — |
+| `llm_call` | LLM client call | Prompt template |
+| `agent_loop` | Agentic tool-use loop | Tool definitions |
+| `guardrail` | Check middleware / validator | — |
+| `human_gate` | Async checkpoint + notification | Approval state persistence |
+| `orchestrator` | Strategy dispatcher | Per-strategy handler |
+| `smart_router` | Routing function | Confidence scorer |
+| `handoff` | Context transfer + agent call | — |
+| `agent_group` | Parallel/sequential agent runner | — |
+
+### Service Layer Pattern
+
+Each flow maps to one **service file**. The service exports a main function named after the flow (e.g., `create-order.yaml` → `createOrder()`). Nodes become sequential or branching calls within that function.
+
+```typescript
+// services/create-order.service.ts  (generated from create-order.yaml)
+import { validateInput } from './validators/create-order.input';
+import { orderRepo } from '../repositories/order.repo';
+
+export async function createOrder(ctx: FlowContext): Promise<FlowResult> {
+  // input node → validation
+  const data = validateInput(ctx.body);
+
+  // process node → business logic
+  const order = buildOrder(data);
+
+  // data_store node → persistence
+  const saved = await orderRepo.create(order);
+
+  // terminal node → response
+  return { status: 201, body: saved };
+}
+```
+
+**Key rules:**
+- One service file per flow, one exported function per flow
+- Internal helper functions for process/decision nodes stay private in the file
+- Repository functions are shared across flows via the `repositories/` directory
+- Schemas and types go in dedicated files, imported by services
+
+### Error Handling
+
+Connection `sourceHandle` values map to control flow:
+
+| Source Handle | Implementation |
+|--------------|----------------|
+| (unnamed) | Normal sequential call |
+| `"success"` | Success branch (equivalent to unnamed) |
+| `"error"` | `catch` block / error handler |
+| `"true"` / `"false"` | `if`/`else` branches |
+| `"timeout"` | Timeout-specific catch |
+
+Connection `behavior` maps to error handling strategy:
+
+| Behavior | Implementation |
+|----------|----------------|
+| `continue` | `try { ... } catch(e) { logger.warn(e); }` — log and proceed |
+| `stop` | `throw e;` — propagate to flow-level error handler |
+| `retry` | Wrap call in retry loop (count from node's `retry_count` or default 3) |
+| `circuit_break` | Use circuit breaker (e.g., `opossum`) with threshold from node spec |
+
+### Middleware and Validation
+
+| Spec Source | Generated Artifact |
+|------------|-------------------|
+| `input` node `fields[]` with `type` + `required` | Zod schema (`z.object({ ... })`) |
+| `input` node `validation_preset` | Pre-built validator (e.g., `validateEmail()`) |
+| `trigger` with `auth` | Auth middleware (`requireAuth`, `requireRole`) |
+| `trigger` with `rate_limit` | Rate limiter middleware |
+| `guardrail` node | Check function called before downstream logic |
+
+```typescript
+// validators/create-order.input.ts  (generated from input node)
+import { z } from 'zod';
+
+export const CreateOrderInput = z.object({
+  product_id: z.string().uuid(),
+  quantity: z.number().int().positive(),
+  shipping_address: z.string().min(1),
+});
+
+export type CreateOrderInput = z.infer<typeof CreateOrderInput>;
+```
+
+### Test Generation
+
+Generate tests based on flow structure:
+
+| Flow Element | Test Case |
+|-------------|-----------|
+| Happy path (trigger → terminal success) | End-to-end success test |
+| Each `decision` node | One test per branch (`true` and `false`) |
+| Each `error` handle connection | Error path test |
+| `input` node with `required` fields | Validation rejection test per field |
+| `service_call` node | Mock external call, test success + failure |
+| `data_store` node | Mock repository, verify query/mutation |
+| `guardrail` node | Test pass and block outcomes |
+| `human_gate` node | Test approve and reject paths |
+
+**Test file naming:** `{flow-id}.test.ts` alongside the service file.
+
+### Agent Implementation
+
+| Agent Node | Implementation Pattern |
+|-----------|----------------------|
+| `agent_loop` | While-loop calling LLM with tool definitions. Each iteration: send messages → get response → if tool_call, execute tool → append result → repeat. Exit on final answer or `max_iterations`. |
+| `orchestrator` (sequential) | Call each agent in `agents[]` order, passing accumulated context. |
+| `orchestrator` (parallel) | `Promise.all` over `agents[]`, merge results. |
+| `orchestrator` (adaptive) | LLM decides next agent based on current state; loop until done. |
+| `smart_router` | Evaluate input against each route's `condition`, pick highest-confidence match, route to that agent. |
+| `handoff` | Save current context, call target agent with `transfer_data`, optionally `mode: terminate` (fire-and-forget) or `mode: continue` (return result). |
+| `human_gate` | Persist pending state, send notification (email/Slack/webhook per `notification`), expose approval endpoint. On response, resume flow via the matching `approval_options[].id` handle. |
+| `agent_group` | Run all agents in group (parallel or round-robin per `strategy`), collect results, apply `aggregation` to combine. |
