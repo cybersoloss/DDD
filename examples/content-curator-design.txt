@@ -1,0 +1,2477 @@
+CONTENT CURATOR - DDD DESIGN DOCUMENT
+======================================
+
+AI-powered multi-platform content research, curation, and reposting.
+Researches the internet and content platforms (Twitter/X, LinkedIn, Medium,
+RSS feeds, web pages) acting like a human researcher. Discovers relevant content
+and content creators, monitors them periodically, filters for relevance using AI,
+drafts social media posts, and runs a human approval loop before publishing.
+
+
+SYSTEM
+======
+
+  Name:        content-curator
+  Version:     2.0.0
+
+  Tech Stack:
+    Language:          Python 3.12
+    Framework:         FastAPI
+    Database:          PostgreSQL
+    ORM:               SQLAlchemy (async)
+    Cache:             Redis
+    Queue:             Celery with Redis broker
+    Event Bus:         Redis pub/sub
+    Auth:              API key (self-hosted)
+    LLM Provider:      Anthropic
+    LLM Model:         claude-sonnet-4-5
+    Hosting:           Docker + Compose
+    CI/CD:             GitHub Actions
+    Logging:           structlog
+    Error Tracking:    Sentry
+    Test Framework:    pytest
+
+  Integrations:
+    - Twitter/X API v2 (REST, bearer token auth) — read + write
+    - LinkedIn API v2 (OAuth2) — read + write
+    - Medium RSS feeds (medium.com/feed/@author) — read only
+    - Google Custom Search API (API key) — web discovery
+    - RSS/Atom parser (feedparser) — read only
+    - Web scraper (httpx + readability-lxml) — article extraction
+    - Playwright (headless browser) — dynamic page rendering when needed
+
+  Domains:
+    1. config       - Research subjects, content sources, creator profiles, posting preferences
+    2. discovery    - AI-driven web research, creator discovery, source suggestions
+    3. ingestion    - Scheduled fetching from all configured sources
+    4. analysis     - AI content relevance filtering and draft creation
+    5. publishing   - Human approval loop, platform publishing, dashboard
+
+
+DOMAIN MAP (L1)
+===============
+
+  [config] ----read by----> [discovery]
+     |                          |
+     |                          | SourcesSuggested
+     |                          v
+     |                      [config]
+     |
+     +-----read by----> [ingestion] --ContentFetched--> [analysis] --ContentReady--> [publishing]
+                             ^
+                             |
+                        [discovery]
+                      ContentDiscovered
+
+  Event Flow:
+    discovery publishes ContentDiscovered → ingestion stores it
+    discovery publishes SourcesSuggested → config (user reviews)
+    ingestion publishes ContentFetched → analysis scores and drafts
+    analysis publishes ContentReady → publishing (user approves)
+    config publishes nothing (read-only reference for other domains)
+
+
+ERROR CODES
+===========
+
+  Code                       HTTP    Message
+  ----                       ----    -------
+  VALIDATION_FAILED          400     Validation failed
+  DUPLICATE_SUBJECT          409     A research subject with this name already exists
+  DUPLICATE_SOURCE           409     This source is already being monitored
+  DUPLICATE_CREATOR          409     A creator with this identifier already exists
+  SUBJECT_NOT_FOUND          404     Research subject not found
+  SOURCE_NOT_FOUND           404     Content source not found
+  CREATOR_NOT_FOUND          404     Content creator not found
+  DRAFT_NOT_FOUND            404     Draft not found
+  PREFERENCES_NOT_FOUND      404     Posting preferences not initialized
+  SUGGESTION_NOT_FOUND       404     Discovery suggestion not found
+  TWITTER_USER_NOT_FOUND     404     Twitter/X user not found
+  TWITTER_API_ERROR          502     Twitter/X API returned an error
+  TWITTER_RATE_LIMITED       429     Twitter/X API rate limit exceeded
+  LINKEDIN_API_ERROR         502     LinkedIn API returned an error
+  LINKEDIN_AUTH_EXPIRED      401     LinkedIn OAuth token expired
+  MEDIUM_FETCH_ERROR         502     Failed to fetch Medium content
+  GOOGLE_SEARCH_ERROR        502     Google Custom Search API error
+  GOOGLE_SEARCH_QUOTA        429     Google Custom Search daily quota exceeded
+  RSS_PARSE_ERROR            502     Failed to parse RSS feed
+  WEB_SCRAPE_ERROR           502     Failed to extract content from web page
+  WEB_SCRAPE_BLOCKED         403     Website blocked automated access
+  LLM_ERROR                  502     LLM provider returned an error
+  LLM_TIMEOUT                504     LLM request timed out
+  GUARDRAIL_BLOCKED          422     Content blocked by guardrail policy
+  ALREADY_PUBLISHED          409     This draft has already been published
+  DUPLICATE_CONTENT          409     Similar content was published within the last 7 days
+  DATABASE_ERROR             500     Database operation failed
+  INTERNAL_ERROR             500     An unexpected error occurred
+
+  Error response format:
+    {
+      "error": {
+        "code": "ERROR_CODE",
+        "message": "Human readable message",
+        "details": { field-level details if applicable }
+      }
+    }
+
+
+SCHEMAS
+=======
+
+  ResearchSubject:
+    id:          uuid, primary key
+    name:        string, unique, max 100
+    description: text, nullable (what this subject is about)
+    keywords:    array of strings (search terms)
+    enabled:     boolean, default true
+    created_at:  timestamp
+    updated_at:  timestamp
+
+  ContentSource:
+    id:                  uuid, primary key
+    source_type:         string, enum [twitter_account, linkedin_profile,
+                         medium_author, rss_feed, web_page]
+    platform_identifier: string (handle, URL, or feed URL depending on type)
+    display_name:        string
+    platform_metadata:   json (platform-specific data: user_id, avatar, etc.)
+    category:            string, nullable (e.g., "cybersecurity researcher")
+    subjects:            array of uuid (linked ResearchSubject IDs)
+    check_frequency:     integer, default 30 (minutes between checks)
+    enabled:             boolean, default true
+    discovered_by:       string, enum [manual, ai_discovery]
+    quality_score:       integer, nullable (0-100, set by analysis over time)
+    last_checked_at:     timestamp, nullable
+    last_content_id:     string, nullable (cursor for pagination/dedup)
+    creator_id:          uuid, nullable (FK to ContentCreator if linked)
+    created_at:          timestamp
+
+  ContentCreator:
+    id:                  uuid, primary key
+    name:                string
+    bio:                 text, nullable
+    platforms:           json ({
+                           twitter: { handle, user_id, url },
+                           linkedin: { profile_url },
+                           medium: { username, url },
+                           website: { url }
+                         })
+    expertise_areas:     array of strings (e.g., ["zero trust", "LLM security"])
+    quality_score:       integer, default 50 (0-100, updated by analysis)
+    content_frequency:   string, nullable (e.g., "3 posts/week")
+    discovered_via:      string, enum [manual, content_analysis, web_research]
+    source_ids:          array of uuid (linked ContentSource IDs)
+    is_monitored:        boolean, default false (true = actively fetching their content)
+    notes:               text, nullable (user notes about this creator)
+    created_at:          timestamp
+    updated_at:          timestamp
+
+  RawContent:
+    id:                  uuid, primary key
+    source_type:         string, enum [twitter, linkedin, medium, rss, web]
+    source_id:           string, unique (platform-specific content ID or URL hash)
+    source_url:          string
+    title:               string, nullable (articles have titles, tweets don't)
+    content:             text (full text content)
+    content_type:        string, enum [tweet, thread, linkedin_post, linkedin_article,
+                         medium_article, blog_post, rss_item, web_page]
+    author_name:         string
+    author_handle:       string, nullable
+    author_url:          string, nullable
+    creator_id:          uuid, nullable (FK to ContentCreator)
+    word_count:          integer
+    reading_time_minutes: integer, nullable
+    metrics:             json (likes, shares, comments — platform-specific)
+    matched_subject_id:  uuid, nullable (FK to ResearchSubject)
+    matched_keywords:    array of strings, nullable
+    relevance_score:     integer, nullable (0-100)
+    analysis_reasoning:  text, nullable
+    summary:             text, nullable
+    published_at:        timestamp (when the original content was published)
+    fetched_at:          timestamp
+    discovered_via:      string, enum [source_monitoring, keyword_search,
+                         web_research, creator_discovery]
+    status:              string, enum [pending_analysis, analyzed, drafted,
+                         published, dropped]
+
+  Draft:
+    id:              uuid, primary key
+    source_content_id: uuid, foreign key to RawContent
+    platform:        string, enum [twitter, linkedin]
+    draft_content:   text
+    author_credit:   string
+    hashtags:        array of strings
+    original_summary: text
+    source_url:      string (link to original content)
+    status:          string, enum [pending, revised, approved, published, dropped]
+    revision_count:  integer, default 0
+    last_feedback:   text, nullable
+    drop_reason:     text, nullable
+    published_url:   string, nullable
+    published_at:    timestamp, nullable
+    created_at:      timestamp
+    updated_at:      timestamp
+
+  PublishedPost:
+    id:              uuid, primary key
+    draft_id:        uuid, foreign key to Draft
+    platform:        string
+    platform_post_id: string
+    platform_url:    string
+    content:         text
+    source_content_id: uuid, foreign key to RawContent
+    author_credited: string
+    published_at:    timestamp
+
+  PostingPreferences:
+    id:                  uuid, primary key
+    user_id:             string
+    tone:                string, enum [professional, casual, technical, witty]
+    max_length_x:        integer, default 280
+    max_length_linkedin: integer, default 1500
+    hashtag_strategy:    string, enum [auto, manual, none], default auto
+    max_hashtags:        integer, default 5
+    default_platforms:   array of strings, enum [twitter, linkedin]
+    signature:           string, nullable
+    posting_schedule:    string, enum [immediate, queue_hourly, queue_daily]
+    include_source_link: boolean, default true
+    updated_at:          timestamp
+
+  DiscoverySuggestion:
+    id:              uuid, primary key
+    suggestion_type: string, enum [new_source, new_creator, new_subject]
+    data:            json (source/creator/subject details to be added)
+    reasoning:       text (why the AI suggests this)
+    confidence:      integer (0-100)
+    discovered_in:   uuid (FK to DiscoverySession)
+    status:          string, enum [pending, accepted, rejected]
+    created_at:      timestamp
+    reviewed_at:     timestamp, nullable
+
+  DiscoverySession:
+    id:                uuid, primary key
+    session_type:      string, enum [web_research, creator_discovery]
+    subjects_targeted: array of strings
+    urls_visited:      integer, default 0
+    content_found:     integer, default 0
+    creators_found:    integer, default 0
+    suggestions_made:  integer, default 0
+    started_at:        timestamp
+    completed_at:      timestamp, nullable
+    status:            string, enum [running, completed, failed]
+
+
+================================================================================
+FLOWS
+================================================================================
+
+
+DOMAIN: CONFIG (11 flows)
+=========================
+
+
+FLOW 1: manage-subjects (Create Research Subject)
+--------------------------------------------------
+Type:    traditional
+Trigger: POST /api/config/subjects
+
+  Trigger
+    |
+    v
+  Input (validate)
+    fields:
+      name:        string, required, min=2, max=100
+      description: string, optional, max=500
+      keywords:    array of strings, required, min_items=1, max_items=20
+      enabled:     boolean, default=true
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED + field errors)
+    |
+    v valid
+  Decision (subject with same name exists?)
+    check: SELECT * FROM research_subjects WHERE name = $.name
+    |
+    +-- true --> Terminal (409 DUPLICATE_SUBJECT)
+    |
+    v false
+  Data Store (create)
+    operation: create
+    model:     ResearchSubject
+    data:      name, description, keywords, enabled, created_at=now()
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (201 "Research subject created")
+    body: { subject: { id, name, description, keywords, enabled, created_at } }
+
+
+FLOW 2: update-subject (Update Research Subject)
+--------------------------------------------------
+Type:    traditional
+Trigger: PUT /api/config/subjects/{subject_id}
+
+  Trigger
+    |
+    v
+  Input (validate)
+    fields:
+      name:        string, optional, min=2, max=100
+      description: string, optional, max=500
+      keywords:    array of strings, optional, min_items=1, max_items=20
+      enabled:     boolean, optional
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read existing)
+    operation: read
+    model:     ResearchSubject
+    query:     { id: $.subject_id }
+    |
+    +-- not_found --> Terminal (404 SUBJECT_NOT_FOUND)
+    |
+    v found
+  Decision (name changed AND new name already taken?)
+    check: name != original AND exists(new name)
+    |
+    +-- true --> Terminal (409 DUPLICATE_SUBJECT)
+    |
+    v false
+  Data Store (update)
+    operation: update
+    model:     ResearchSubject
+    query:     { id: $.subject_id }
+    data:      name, description, keywords, enabled, updated_at=now()
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200 "Subject updated")
+    body: { subject: { id, name, description, keywords, enabled, updated_at } }
+
+
+FLOW 3: delete-subject (Delete Research Subject)
+--------------------------------------------------
+Type:    traditional
+Trigger: DELETE /api/config/subjects/{subject_id}
+
+  Trigger
+    |
+    v
+  Data Store (read)
+    operation: read
+    model:     ResearchSubject
+    query:     { id: $.subject_id }
+    |
+    +-- not_found --> Terminal (404 SUBJECT_NOT_FOUND)
+    |
+    v found
+  Data Store (delete)
+    operation: delete
+    model:     ResearchSubject
+    query:     { id: $.subject_id }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (204 No Content)
+
+
+FLOW 4: list-subjects (List Research Subjects)
+-----------------------------------------------
+Type:    traditional
+Trigger: GET /api/config/subjects
+
+  Trigger
+    |
+    v
+  Input (validate query params)
+    fields:
+      enabled:   boolean, optional (filter)
+      page:      integer, optional, default=1, min=1
+      page_size: integer, optional, default=20, min=1, max=100
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read)
+    operation:  read
+    model:      ResearchSubject
+    query:      { enabled: $.enabled }
+    pagination: { page, page_size }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      subjects: [...],
+      pagination: { page, page_size, total_count, total_pages }
+    }
+
+
+FLOW 5: add-source (Add Content Source)
+-----------------------------------------
+Type:    traditional
+Trigger: POST /api/config/sources
+
+  Trigger
+    |
+    v
+  Input (validate)
+    fields:
+      source_type:         string, required, enum=[twitter_account, linkedin_profile,
+                           medium_author, rss_feed, web_page]
+      platform_identifier: string, required (handle, profile URL, feed URL, or page URL)
+      display_name:        string, optional, max=100
+      category:            string, optional, max=50
+      subjects:            array of uuid, optional (link to research subjects)
+      check_frequency:     integer, optional, default=30, min=5, max=1440
+      enabled:             boolean, default=true
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED + field errors)
+    |
+    v valid
+  Process (normalize identifier)
+    action:
+      twitter_account: strip @, lowercase
+      linkedin_profile: extract profile slug from URL
+      medium_author: strip @, extract from URL if full URL given
+      rss_feed: validate URL format
+      web_page: validate URL format
+    |
+    v
+  Decision (source already exists?)
+    check: SELECT * FROM content_sources
+           WHERE source_type = $.source_type AND platform_identifier = $.normalized_id
+    |
+    +-- true --> Terminal (409 DUPLICATE_SOURCE)
+    |
+    v false
+  Decision (which source type?)
+    check: $.source_type
+    |
+    +-- twitter_account --> [VERIFY TWITTER]
+    +-- linkedin_profile -> [VERIFY LINKEDIN]
+    +-- medium_author ----> [VERIFY MEDIUM]
+    +-- rss_feed ---------> [VERIFY RSS]
+    +-- web_page ---------> [VERIFY WEB]
+
+
+  VERIFY TWITTER:
+    Service Call (verify account on Twitter)
+      method:  GET
+      url:     https://api.twitter.com/2/users/by/username/{identifier}
+      headers: Authorization: Bearer $env.TWITTER_BEARER_TOKEN
+      timeout: 10000ms
+      retry:   2 attempts
+      |
+      +-- 404 ---------> Terminal (404 TWITTER_USER_NOT_FOUND)
+      +-- 429 ---------> Terminal (429 TWITTER_RATE_LIMITED)
+      +-- other error --> Terminal (502 TWITTER_API_ERROR)
+      |
+      v success
+    Process (extract metadata)
+      action: set platform_metadata = { user_id, name, profile_image_url, followers_count }
+              set display_name = response.name if not provided
+      |
+      v --> [SAVE SOURCE]
+
+  VERIFY LINKEDIN:
+    Service Call (verify LinkedIn profile)
+      method:  GET
+      url:     https://api.linkedin.com/v2/people/{profile_slug}
+      headers: Authorization: Bearer $env.LINKEDIN_ACCESS_TOKEN
+      timeout: 10000ms
+      |
+      +-- 401 ---------> Terminal (401 LINKEDIN_AUTH_EXPIRED)
+      +-- 404 ---------> Terminal (404 "LinkedIn profile not found")
+      +-- other error --> Terminal (502 LINKEDIN_API_ERROR)
+      |
+      v success
+    Process (extract metadata)
+      action: set platform_metadata = { profile_id, headline, industry }
+              set display_name = response.firstName + " " + response.lastName
+      |
+      v --> [SAVE SOURCE]
+
+  VERIFY MEDIUM:
+    Service Call (verify Medium author RSS exists)
+      method:  GET
+      url:     https://medium.com/feed/@{identifier}
+      timeout: 10000ms
+      |
+      +-- 404 ---------> Terminal (404 "Medium author not found")
+      +-- other error --> Terminal (502 MEDIUM_FETCH_ERROR)
+      |
+      v success
+    Process (parse RSS for metadata)
+      action: parse feed title, description, image
+              set platform_metadata = { feed_url, title, description }
+              set display_name = feed.title if not provided
+      |
+      v --> [SAVE SOURCE]
+
+  VERIFY RSS:
+    Service Call (fetch and validate RSS feed)
+      method:  GET
+      url:     {platform_identifier}
+      timeout: 15000ms
+      |
+      +-- error --> Terminal (502 RSS_PARSE_ERROR "Could not fetch or parse RSS feed")
+      |
+      v success
+    Process (validate is valid RSS/Atom)
+      action: parse with feedparser, check for entries
+      |
+      +-- invalid --> Terminal (400 "URL does not contain a valid RSS/Atom feed")
+      |
+      v valid
+    Process (extract metadata)
+      action: set platform_metadata = { feed_url, title, description, entry_count }
+              set display_name = feed.title if not provided
+      |
+      v --> [SAVE SOURCE]
+
+  VERIFY WEB:
+    Service Call (fetch web page)
+      method:  GET
+      url:     {platform_identifier}
+      timeout: 15000ms
+      |
+      +-- error --> Terminal (502 WEB_SCRAPE_ERROR "Could not reach this URL")
+      |
+      v success
+    Process (extract page info)
+      action: extract title, meta description
+              set platform_metadata = { title, description, content_type }
+              set display_name = page title if not provided
+      |
+      v --> [SAVE SOURCE]
+
+
+  SAVE SOURCE:
+    Data Store (create)
+      operation: create
+      model:     ContentSource
+      data:      source_type, platform_identifier, display_name, platform_metadata,
+                 category, subjects, check_frequency, enabled,
+                 discovered_by=manual, created_at=now()
+      |
+      +-- failure --> Terminal (500 DATABASE_ERROR)
+      |
+      v success
+    Terminal (201 "Content source added")
+      body: { source: { id, source_type, platform_identifier, display_name,
+                         category, check_frequency, enabled, platform_metadata } }
+
+
+FLOW 6: remove-source (Remove Content Source)
+----------------------------------------------
+Type:    traditional
+Trigger: DELETE /api/config/sources/{source_id}
+
+  Trigger
+    |
+    v
+  Data Store (read)
+    operation: read
+    model:     ContentSource
+    query:     { id: $.source_id }
+    |
+    +-- not_found --> Terminal (404 SOURCE_NOT_FOUND)
+    |
+    v found
+  Data Store (delete)
+    operation: delete
+    model:     ContentSource
+    query:     { id: $.source_id }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (204 No Content)
+
+
+FLOW 7: list-sources (List Content Sources)
+--------------------------------------------
+Type:    traditional
+Trigger: GET /api/config/sources
+
+  Trigger
+    |
+    v
+  Input (validate query params)
+    fields:
+      source_type: string, optional, enum=[twitter_account, linkedin_profile,
+                   medium_author, rss_feed, web_page]
+      enabled:     boolean, optional
+      subject_id:  uuid, optional (filter by linked subject)
+      page:        integer, optional, default=1, min=1
+      page_size:   integer, optional, default=20, min=1, max=100
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read)
+    operation:  read
+    model:      ContentSource LEFT JOIN ContentCreator
+    query:      { source_type, enabled, subjects contains subject_id }
+    pagination: { page, page_size }
+    order_by:   quality_score DESC, last_checked_at DESC
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      sources: [{
+        id, source_type, platform_identifier, display_name, category,
+        check_frequency, enabled, quality_score, last_checked_at,
+        creator: { id, name } or null
+      }],
+      pagination: { page, page_size, total_count, total_pages }
+    }
+
+
+FLOW 8: add-creator (Add Content Creator)
+-------------------------------------------
+Type:    traditional
+Trigger: POST /api/config/creators
+
+  Trigger
+    |
+    v
+  Input (validate)
+    fields:
+      name:             string, required, min=2, max=100
+      bio:              string, optional, max=1000
+      platforms:        object, required, at least one platform
+        twitter:        object, optional { handle: string }
+        linkedin:       object, optional { profile_url: string }
+        medium:         object, optional { username: string }
+        website:        object, optional { url: string }
+      expertise_areas:  array of strings, optional, max_items=10
+      notes:            string, optional, max=500
+      is_monitored:     boolean, default=false
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Decision (creator already exists?)
+    check: match on any platform identifier (twitter handle, linkedin URL, etc.)
+    |
+    +-- true --> Terminal (409 DUPLICATE_CREATOR)
+    |
+    v false
+  Data Store (create)
+    operation: create
+    model:     ContentCreator
+    data:      name, bio, platforms, expertise_areas, notes,
+               quality_score=50, discovered_via=manual, is_monitored,
+               created_at=now(), updated_at=now()
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Decision (is_monitored = true?)
+    check: $.is_monitored
+    |
+    +-- false --> Terminal (201 "Creator added")
+    |              body: { creator: { id, name, platforms, expertise_areas } }
+    |
+    v true
+  Process (auto-create sources for each platform)
+    action: for each platform in creator.platforms,
+            create a ContentSource with source_type matching the platform,
+            link to this creator_id
+    |
+    v
+  Terminal (201 "Creator added with monitoring enabled")
+    body: {
+      creator: { id, name, platforms, expertise_areas, is_monitored },
+      sources_created: [{ id, source_type, platform_identifier }]
+    }
+
+
+FLOW 9: list-creators (List Content Creators)
+-----------------------------------------------
+Type:    traditional
+Trigger: GET /api/config/creators
+
+  Trigger
+    |
+    v
+  Input (validate query params)
+    fields:
+      is_monitored:   boolean, optional
+      expertise_area: string, optional (filter by area)
+      discovered_via: string, optional, enum=[manual, content_analysis, web_research]
+      min_quality:    integer, optional, min=0, max=100
+      page:           integer, optional, default=1, min=1
+      page_size:      integer, optional, default=20, min=1, max=100
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read)
+    operation:  read
+    model:      ContentCreator LEFT JOIN ContentSource (count)
+    query:      { is_monitored, expertise_areas contains expertise_area,
+                  discovered_via, quality_score >= min_quality }
+    pagination: { page, page_size }
+    order_by:   quality_score DESC
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      creators: [{
+        id, name, bio, platforms, expertise_areas, quality_score,
+        content_frequency, discovered_via, is_monitored, source_count,
+        created_at
+      }],
+      pagination: { page, page_size, total_count, total_pages }
+    }
+
+
+FLOW 10: save-preferences (Save Posting Preferences)
+------------------------------------------------------
+Type:    traditional
+Trigger: PUT /api/config/preferences
+
+  Trigger
+    |
+    v
+  Input (validate)
+    fields:
+      tone:                string, required, enum=[professional, casual, technical, witty]
+      max_length_x:        integer, optional, default=280, min=50, max=280
+      max_length_linkedin: integer, optional, default=1500, min=100, max=3000
+      hashtag_strategy:    string, optional, default=auto, enum=[auto, manual, none]
+      max_hashtags:        integer, optional, default=5, min=0, max=10
+      default_platforms:   array, required, min_items=1, items enum=[twitter, linkedin]
+      signature:           string, optional, max=100
+      posting_schedule:    string, optional, default=immediate,
+                           enum=[immediate, queue_hourly, queue_daily]
+      include_source_link: boolean, optional, default=true
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (upsert)
+    operation: update or create if not exists
+    model:     PostingPreferences
+    query:     { user_id: $.auth.user_id }
+    data:      all fields + updated_at=now()
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200 "Preferences saved")
+    body: { preferences: { all fields } }
+
+
+FLOW 11: get-preferences (Get Posting Preferences)
+----------------------------------------------------
+Type:    traditional
+Trigger: GET /api/config/preferences
+
+  Trigger
+    |
+    v
+  Data Store (read)
+    operation: read
+    model:     PostingPreferences
+    query:     { user_id: $.auth.user_id }
+    |
+    +-- not_found --> Terminal (200 body: { preferences: null, message: "No preferences set" })
+    +-- failure ----> Terminal (500 DATABASE_ERROR)
+    |
+    v found
+  Terminal (200)
+    body: { preferences: { all fields } }
+
+
+DOMAIN: DISCOVERY (4 flows)
+============================
+
+The Discovery domain is the "acting like a human researcher" part of the system.
+It uses AI agents that actively search the web, browse content portals, follow
+links, evaluate content quality, and identify both valuable content and the
+people who create it. This runs periodically but less frequently than ingestion.
+
+
+FLOW 12: research-topics (AI Agent: Web Research)
+---------------------------------------------------
+Type:    agent
+Trigger: scheduled, cron "0 */6 * * *" (every 6 hours)
+
+  Trigger
+    |
+    v
+  Data Store (read enabled subjects)
+    operation: read
+    model:     ResearchSubject
+    query:     { enabled: true }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Decision (any subjects?)
+    check: results.length > 0
+    |
+    +-- false --> Terminal (200 "No subjects configured")
+    |
+    v true
+  Data Store (create discovery session)
+    operation: create
+    model:     DiscoverySession
+    data:      session_type=web_research, subjects_targeted=[subject names],
+               started_at=now(), status=running
+    |
+    v
+  Agent Loop
+    model:          claude-sonnet-4-5
+    max_iterations: 30
+    temperature:    0.4
+
+    System Prompt:
+      You are a research assistant that browses the internet like a curious human
+      to find high-quality content about specific topics.
+
+      Your research subjects:
+      {subjects with keywords}
+
+      Your workflow:
+      1. For each subject, formulate 2-3 diverse search queries
+         - Use different angles: news, technical deep-dives, opinions, tutorials
+         - Vary query phrasing to get different results
+      2. Search the web using Google Custom Search
+      3. For each promising result:
+         - Read the page content
+         - Evaluate relevance and quality (score 0-100)
+         - If quality >= 70, save as discovered content
+         - Note the author for potential creator discovery
+      4. Browse Medium for recent articles on each subject
+      5. Check LinkedIn for recent thought-leadership posts
+      6. Follow interesting links found within articles (max 2 hops deep)
+
+      Quality criteria:
+      - Original insights, not rehashed news
+      - Technical depth appropriate to the topic
+      - Published within the last 7 days (prefer recent)
+      - From credible authors/publications
+      - Not behind paywalls (skip if you can't read the full content)
+      - Not promotional/sales content
+
+      STOP when you have checked all subjects OR reached the iteration limit.
+
+    Tools:
+      1. search_google
+         description: Search the web via Google Custom Search API
+         parameters:
+           query:     string, required
+           num:       integer, optional, default=10, max=10
+         returns:     array of { title, url, snippet }
+
+      2. fetch_page
+         description: Fetch and extract readable content from a URL
+         parameters:
+           url: string, required
+         returns:     { title, content, author, published_date, word_count,
+                       links: [{ text, url }] }
+         errors:      WEB_SCRAPE_ERROR, WEB_SCRAPE_BLOCKED
+
+      3. search_medium
+         description: Search Medium for articles on a topic
+         parameters:
+           query: string, required
+         returns:     array of { title, url, author, author_url, claps,
+                       responses, reading_time, snippet }
+
+      4. search_linkedin
+         description: Search LinkedIn for recent posts on a topic
+         parameters:
+           query: string, required
+         returns:     array of { text, author_name, author_url, likes,
+                       comments, posted_at }
+         errors:      LINKEDIN_AUTH_EXPIRED
+
+      5. save_discovered_content
+         description: Save a piece of content found during research
+         parameters:
+           source_type:    string, required, enum=[web, medium, linkedin, twitter]
+           source_url:     string, required
+           title:          string
+           content:        string, required (full text or substantial excerpt)
+           content_type:   string, required
+           author_name:    string, required
+           author_handle:  string
+           author_url:     string
+           word_count:     integer
+           quality_score:  integer, required (0-100)
+           matched_subject: string, required
+           matched_keywords: array of strings
+           reasoning:      string, required (why this content is valuable)
+
+      6. save_creator_lead
+         description: Note a content creator discovered during research
+         parameters:
+           name:            string, required
+           platform:        string, required
+           identifier:      string, required (handle or URL)
+           expertise_areas: array of strings
+           sample_content:  string (URL of the content where you found them)
+           reasoning:       string, required (why this creator is worth following)
+
+      7. update_session_stats
+         description: Update the discovery session with progress
+         parameters:
+           urls_visited:    integer
+           content_found:   integer
+           creators_found:  integer
+
+    Guardrails (output):
+      - content must be substantive (>100 words or meaningful social post)
+        on_fail: Skip, don't save trivial content
+      - no duplicate URLs (check against existing raw_content)
+        on_fail: Skip duplicate
+      - author name must be non-empty
+        on_fail: Use "Unknown" and flag for review
+
+    Memory: conversation, max 8000 tokens
+    |
+    +-- LLM error --> [FINALIZE SESSION with status=failed, log error]
+    +-- timeout ----> [FINALIZE SESSION with status=failed, log timeout]
+    |
+    v agent done
+  Process (finalize session)
+    action: UPDATE discovery_sessions SET status=completed, completed_at=now(),
+            suggestions_made=count(suggestions)
+    |
+    v
+  Decision (any content discovered?)
+    check: session.content_found > 0
+    |
+    +-- false --> Terminal (200 "Research complete, no relevant content found")
+    |              body: { session_id, urls_visited, content_found: 0 }
+    |
+    v true
+  Event (emit ContentDiscovered)
+    event_name: ContentDiscovered
+    payload:    { content_ids, session_id, count }
+    async:      true
+    |
+    v
+  Decision (any creators discovered?)
+    check: session.creators_found > 0
+    |
+    +-- false --> Terminal (200 "Research complete")
+    |              body: { session_id, content_found: N, creators_found: 0 }
+    |
+    v true
+  Event (emit SourcesSuggested)
+    event_name: SourcesSuggested
+    payload:    { suggestion_ids, session_id }
+    async:      true
+    |
+    v
+  Terminal (200 "Research complete")
+    body: {
+      session_id,
+      subjects_researched: N,
+      urls_visited: N,
+      content_found: N,
+      creators_found: N,
+      suggestions_made: N
+    }
+
+
+FLOW 13: discover-creators (AI Agent: Creator Analysis)
+---------------------------------------------------------
+Type:    agent
+Trigger: scheduled, cron "0 3 * * *" (daily at 3 AM)
+
+  Trigger
+    |
+    v
+  Data Store (read recently analyzed content with high relevance)
+    operation: read
+    model:     RawContent
+    query:     { relevance_score >= 70, fetched_at >= now() - 7 days,
+                 creator_id IS NULL }
+    order_by:  relevance_score DESC
+    limit:     100
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Decision (any content to analyze?)
+    check: results.length > 0
+    |
+    +-- false --> Terminal (200 "No unlinked high-quality content to analyze")
+    |
+    v true
+  Data Store (read existing creators for dedup)
+    operation: read
+    model:     ContentCreator
+    query:     all
+    |
+    v
+  Data Store (create session)
+    operation: create
+    model:     DiscoverySession
+    data:      session_type=creator_discovery, started_at=now(), status=running
+    |
+    v
+  Agent Loop
+    model:          claude-sonnet-4-5
+    max_iterations: 20
+    temperature:    0.3
+
+    System Prompt:
+      You are analyzing a collection of high-quality content to identify
+      content creators worth following.
+
+      For each piece of content:
+      1. Check if the author already exists in our creator database
+      2. If not, research the author:
+         - Look up their other profiles (Twitter, LinkedIn, Medium, personal site)
+         - Assess their posting frequency and consistency
+         - Evaluate the breadth vs depth of their expertise
+         - Score their overall quality (0-100)
+      3. For new creators scoring >= 70, create a suggestion to monitor them
+      4. For existing creators, update quality score if we have new signal
+
+      Focus on creators who:
+      - Post original analysis, not just reshare news
+      - Have domain expertise (not generic influencers)
+      - Post regularly (at least weekly)
+      - Engage thoughtfully with their community
+
+    Tools:
+      1. get_content_batch
+         description: Get the batch of high-relevance content to analyze
+         returns:     array of { id, source_type, source_url, title, content,
+                      author_name, author_handle, author_url, relevance_score }
+
+      2. get_existing_creators
+         description: Get all known creators for deduplication
+         returns:     array of { id, name, platforms }
+
+      3. search_author_profiles
+         description: Search for an author across platforms
+         parameters:
+           name:    string, required
+           handle:  string, optional
+           url:     string, optional
+         returns:   { twitter, linkedin, medium, website } (each nullable)
+
+      4. suggest_new_creator
+         description: Create a suggestion to add a new content creator
+         parameters:
+           name:             string, required
+           platforms:        object, required (same structure as ContentCreator)
+           expertise_areas:  array of strings, required
+           quality_score:    integer, required (0-100)
+           sample_urls:      array of strings (their best content we found)
+           reasoning:        string, required
+
+      5. link_content_to_creator
+         description: Link existing content to a known or newly suggested creator
+         parameters:
+           content_ids: array of strings, required
+           creator_id:  string (existing) or suggestion_id (new)
+
+    Guardrails (output):
+      - quality_score must be evidence-based (cite specific content quality)
+        on_fail: Require reasoning update
+      - no duplicate creator suggestions
+        on_fail: Skip
+
+    Memory: conversation, max 6000 tokens
+    |
+    +-- LLM error --> Terminal (502 LLM_ERROR)
+    +-- timeout ----> Terminal (504 LLM_TIMEOUT)
+    |
+    v agent done
+  Process (finalize session)
+    action: UPDATE session SET status=completed, completed_at=now()
+    |
+    v
+  Decision (any suggestions made?)
+    check: session.suggestions_made > 0
+    |
+    +-- false --> Terminal (200 body: { session_id, creators_found: 0 })
+    |
+    v true
+  Event (emit SourcesSuggested)
+    event_name: SourcesSuggested
+    payload:    { suggestion_ids, session_id }
+    async:      true
+    |
+    v
+  Terminal (200)
+    body: {
+      session_id,
+      content_analyzed: N,
+      creators_found: N,
+      suggestions_made: N
+    }
+
+
+FLOW 14: review-suggestions (Review AI Discovery Suggestions)
+---------------------------------------------------------------
+Type:    traditional
+Trigger: POST /api/discovery/suggestions/{suggestion_id}/review
+
+  Trigger
+    |
+    v
+  Input (validate)
+    fields:
+      action: string, required, enum=[accept, reject]
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read suggestion)
+    operation: read
+    model:     DiscoverySuggestion
+    query:     { id: $.suggestion_id }
+    |
+    +-- not_found --> Terminal (404 SUGGESTION_NOT_FOUND)
+    |
+    v found
+  Decision (which action?)
+    check: $.action
+    |
+    +-- "reject" --> [REJECT PATH]
+    +-- "accept" --> [ACCEPT PATH]
+
+  REJECT PATH:
+    Data Store (update suggestion)
+      operation: update
+      model:     DiscoverySuggestion
+      data:      status=rejected, reviewed_at=now()
+      |
+      v
+    Terminal (200 "Suggestion rejected")
+
+  ACCEPT PATH:
+    Decision (suggestion type?)
+      check: suggestion.suggestion_type
+      |
+      +-- "new_source" ---> [CREATE SOURCE from suggestion.data]
+      +-- "new_creator" --> [CREATE CREATOR from suggestion.data]
+      +-- "new_subject" --> [CREATE SUBJECT from suggestion.data]
+      |
+      v (after creation)
+    Data Store (update suggestion)
+      operation: update
+      model:     DiscoverySuggestion
+      data:      status=accepted, reviewed_at=now()
+      |
+      +-- failure --> Terminal (500 DATABASE_ERROR)
+      |
+      v
+    Terminal (200 "Suggestion accepted and applied")
+      body: { suggestion: { id, status: accepted }, created: { type, id } }
+
+
+FLOW 15: get-discovery-stats (Discovery Dashboard)
+----------------------------------------------------
+Type:    traditional
+Trigger: GET /api/discovery/stats
+
+  Trigger
+    |
+    v
+  Input (validate query params)
+    fields:
+      days: integer, optional, default=7, min=1, max=90
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Parallel
+    +-- Branch 1: Data Store (recent sessions summary)
+    +-- Branch 2: Data Store (suggestions by status and type)
+    +-- Branch 3: Data Store (content discovered per subject)
+    +-- Branch 4: Data Store (creators discovered count)
+    join: all
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      period_days: N,
+      sessions: { total, completed, failed },
+      content_discovered: N,
+      creators_discovered: N,
+      suggestions: {
+        pending: N, accepted: N, rejected: N,
+        by_type: { new_source: N, new_creator: N, new_subject: N }
+      },
+      by_subject: [{ name, content_found, avg_quality }],
+      recent_sessions: [{ id, type, started_at, content_found, creators_found }]
+    }
+
+
+DOMAIN: INGESTION (5 flows)
+============================
+
+Ingestion handles scheduled fetching from all CONFIGURED sources.
+It does not discover new content (that's Discovery's job).
+It monitors known sources and pulls new content on their configured schedule.
+
+
+FLOW 16: fetch-social-posts (Scheduled: Twitter + LinkedIn Monitoring)
+-----------------------------------------------------------------------
+Type:    traditional
+Trigger: scheduled, cron "*/15 * * * *" (every 15 minutes)
+
+  Trigger
+    |
+    v
+  Data Store (read social sources due for check)
+    operation: read
+    model:     ContentSource
+    query:     { source_type IN [twitter_account, linkedin_profile],
+                 enabled: true,
+                 last_checked_at IS NULL OR
+                 last_checked_at <= now() - check_frequency minutes }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Decision (any sources due?)
+    check: results.length > 0
+    |
+    +-- false --> Terminal (200 "No social sources due for check")
+    |
+    v true
+  Loop (for each source)
+    iterator: source
+    |
+    v
+    Decision (source type?)
+      check: source.source_type
+      |
+      +-- twitter_account --> [FETCH TWITTER]
+      +-- linkedin_profile -> [FETCH LINKEDIN]
+
+
+    FETCH TWITTER:
+      Service Call (fetch tweets)
+        method:  GET
+        url:     https://api.twitter.com/2/users/{source.platform_metadata.user_id}/tweets
+        headers: Authorization: Bearer $env.TWITTER_BEARER_TOKEN
+        params:  since_id={source.last_content_id}, max_results=20,
+                 tweet.fields=created_at,public_metrics,entities,referenced_tweets,
+                 expansions=author_id
+        timeout: 15000ms
+        retry:   3 attempts, 2000ms backoff
+        |
+        +-- 429 ---------> Process (log rate limit, skip, continue loop)
+        +-- other error --> Process (log error, continue loop)
+        |
+        v success
+      Loop (for each tweet)
+        iterator: tweet
+        |
+        v
+        Decision (already stored?)
+          check: SELECT id FROM raw_content WHERE source_id = tweet.id
+          |
+          +-- true --> (skip, continue)
+          |
+          v false
+        Decision (is retweet without comment?)
+          check: tweet.referenced_tweets contains type=retweeted
+          |
+          +-- true --> (skip, continue)
+          |
+          v false
+        Data Store (create raw content)
+          operation: create
+          model:     RawContent
+          data:
+            source_type:     twitter
+            source_id:       tweet.id
+            source_url:      https://twitter.com/{source.platform_identifier}/status/{tweet.id}
+            content:         tweet.text
+            content_type:    tweet
+            author_name:     source.display_name
+            author_handle:   source.platform_identifier
+            creator_id:      source.creator_id
+            word_count:      len(tweet.text.split())
+            metrics:         { likes, retweets, replies }
+            published_at:    tweet.created_at
+            fetched_at:      now()
+            discovered_via:  source_monitoring
+            status:          pending_analysis
+          |
+          +-- failure --> Process (log error, continue)
+          |
+          v success
+        (end tweet loop)
+      |
+      v
+      Data Store (update source cursor)
+        operation: update
+        model:     ContentSource
+        query:     { id: source.id }
+        data:      last_content_id=latest_tweet_id, last_checked_at=now()
+      |
+      v (continue source loop)
+
+
+    FETCH LINKEDIN:
+      Service Call (fetch LinkedIn posts)
+        method:  GET
+        url:     https://api.linkedin.com/v2/people/{profile_id}/posts
+        headers: Authorization: Bearer $env.LINKEDIN_ACCESS_TOKEN
+        params:  count=20, start=0
+        timeout: 15000ms
+        |
+        +-- 401 ---------> Process (log auth expired, skip, continue loop)
+        +-- other error --> Process (log error, continue loop)
+        |
+        v success
+      Loop (for each post)
+        iterator: li_post
+        |
+        v
+        Decision (already stored?)
+          check: SELECT id FROM raw_content WHERE source_id = li_post.id
+          |
+          +-- true --> (skip, continue)
+          |
+          v false
+        Data Store (create raw content)
+          operation: create
+          model:     RawContent
+          data:
+            source_type:     linkedin
+            source_id:       li_post.id
+            source_url:      li_post.url
+            content:         li_post.text
+            content_type:    linkedin_post
+            author_name:     source.display_name
+            author_handle:   source.platform_identifier
+            creator_id:      source.creator_id
+            word_count:      len(li_post.text.split())
+            metrics:         { likes, comments, shares }
+            published_at:    li_post.created_at
+            fetched_at:      now()
+            discovered_via:  source_monitoring
+            status:          pending_analysis
+          |
+          +-- failure --> Process (log error, continue)
+          |
+          v success
+        (end post loop)
+      |
+      v
+      Data Store (update source cursor)
+        operation: update
+        model:     ContentSource
+        data:      last_checked_at=now()
+      |
+      v (continue source loop)
+
+  (end source loop)
+  |
+  v
+  Decision (any new content stored?)
+    check: total_new > 0
+    |
+    +-- false --> Terminal (200 "No new social posts found")
+    |
+    v true
+  Event (emit ContentFetched)
+    event_name: ContentFetched
+    payload:    { content_ids, source=social_monitoring, count }
+    async:      true
+    |
+    v
+  Terminal (200)
+    body: {
+      sources_checked: N,
+      sources_skipped: N,
+      new_content: N,
+      duplicates_skipped: N,
+      by_platform: { twitter: N, linkedin: N }
+    }
+
+
+FLOW 17: fetch-articles (Scheduled: Medium + RSS + Web Monitoring)
+-------------------------------------------------------------------
+Type:    traditional
+Trigger: scheduled, cron "*/30 * * * *" (every 30 minutes)
+
+  Trigger
+    |
+    v
+  Data Store (read article sources due for check)
+    operation: read
+    model:     ContentSource
+    query:     { source_type IN [medium_author, rss_feed, web_page],
+                 enabled: true,
+                 last_checked_at IS NULL OR
+                 last_checked_at <= now() - check_frequency minutes }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Decision (any sources due?)
+    check: results.length > 0
+    |
+    +-- false --> Terminal (200 "No article sources due for check")
+    |
+    v true
+  Loop (for each source)
+    iterator: source
+    |
+    v
+    Decision (source type?)
+      check: source.source_type
+      |
+      +-- medium_author --> [FETCH MEDIUM]
+      +-- rss_feed ------> [FETCH RSS]
+      +-- web_page ------> [FETCH WEB]
+
+
+    FETCH MEDIUM:
+      Service Call (fetch Medium RSS feed)
+        method:  GET
+        url:     https://medium.com/feed/@{source.platform_identifier}
+        timeout: 15000ms
+        |
+        +-- error --> Process (log MEDIUM_FETCH_ERROR, skip, continue)
+        |
+        v success
+      Process (parse RSS entries)
+        action: parse with feedparser, extract recent entries
+      |
+      v
+      Loop (for each entry)
+        iterator: entry
+        |
+        v
+        Decision (already stored?)
+          check: SELECT id FROM raw_content WHERE source_url = entry.link
+          |
+          +-- true --> (skip)
+          |
+          v false
+        Service Call (fetch full article content)
+          method: GET
+          url:    entry.link
+          timeout: 15000ms
+          |
+          +-- error --> Process (log error, use RSS summary as content, continue)
+          |
+          v success
+        Process (extract readable content)
+          action: use readability-lxml to extract article body, strip HTML
+        |
+        v
+        Data Store (create raw content)
+          operation: create
+          model:     RawContent
+          data:
+            source_type:     medium
+            source_id:       hash(entry.link)
+            source_url:      entry.link
+            title:           entry.title
+            content:         extracted article text
+            content_type:    medium_article
+            author_name:     source.display_name
+            author_handle:   source.platform_identifier
+            creator_id:      source.creator_id
+            word_count:      len(content.split())
+            reading_time_minutes: word_count / 200
+            published_at:    entry.published
+            fetched_at:      now()
+            discovered_via:  source_monitoring
+            status:          pending_analysis
+          |
+          +-- failure --> Process (log error, continue)
+          |
+          v success
+        (end entry loop)
+      |
+      v
+      Data Store (update source cursor)
+        data: last_checked_at=now()
+      |
+      v (continue source loop)
+
+
+    FETCH RSS:
+      Service Call (fetch RSS feed)
+        method:  GET
+        url:     {source.platform_identifier}
+        timeout: 15000ms
+        |
+        +-- error --> Process (log RSS_PARSE_ERROR, skip, continue)
+        |
+        v success
+      Process (parse feed entries)
+        action: parse with feedparser, get entries newer than last_checked_at
+      |
+      v
+      Loop (for each entry)
+        iterator: entry
+        |
+        v
+        Decision (already stored?)
+          check: SELECT id FROM raw_content WHERE source_url = entry.link
+          |
+          +-- true --> (skip)
+          |
+          v false
+        Service Call (fetch full article if entry has link)
+          method: GET
+          url:    entry.link
+          timeout: 15000ms
+          |
+          +-- error --> Process (use RSS description as content)
+          |
+          v success
+        Process (extract readable content)
+          action: readability-lxml extraction
+        |
+        v
+        Data Store (create raw content)
+          operation: create
+          model:     RawContent
+          data:
+            source_type:     rss
+            source_id:       hash(entry.link)
+            source_url:      entry.link
+            title:           entry.title
+            content:         article text or entry.description
+            content_type:    rss_item
+            author_name:     entry.author or source.display_name
+            word_count:      len(content.split())
+            reading_time_minutes: word_count / 200
+            published_at:    entry.published
+            fetched_at:      now()
+            discovered_via:  source_monitoring
+            status:          pending_analysis
+          |
+          +-- failure --> Process (log error, continue)
+          |
+          v success
+        (end entry loop)
+      |
+      v
+      Data Store (update source cursor)
+        data: last_checked_at=now()
+      |
+      v (continue source loop)
+
+
+    FETCH WEB:
+      Service Call (fetch web page)
+        method:  GET
+        url:     {source.platform_identifier}
+        timeout: 15000ms
+        |
+        +-- 403 ------> Process (log WEB_SCRAPE_BLOCKED, skip, continue)
+        +-- error -----> Process (log WEB_SCRAPE_ERROR, skip, continue)
+        |
+        v success
+      Process (extract content and detect new articles)
+        action: extract readable content with readability-lxml
+                compare content hash against last known hash
+                if page is an index/blog page, extract article links
+      |
+      v
+      Decision (content changed or new articles found?)
+        check: content_hash != last_hash OR new_article_links.length > 0
+        |
+        +-- false --> Data Store (update last_checked_at only, continue)
+        |
+        v true
+      Loop (for each new article or changed page)
+        |
+        v
+        Decision (already stored?)
+          check: source_url or content hash match
+          |
+          +-- true --> (skip)
+          |
+          v false
+        Data Store (create raw content)
+          operation: create
+          model:     RawContent
+          data:
+            source_type:     web
+            source_id:       hash(url)
+            source_url:      url
+            title:           page title
+            content:         extracted text
+            content_type:    web_page or blog_post
+            author_name:     extracted or source.display_name
+            word_count:      len(content.split())
+            reading_time_minutes: word_count / 200
+            fetched_at:      now()
+            discovered_via:  source_monitoring
+            status:          pending_analysis
+          |
+          +-- failure --> Process (log error, continue)
+          |
+          v success
+        (end article loop)
+      |
+      v
+      Data Store (update source)
+        data: last_checked_at=now(), platform_metadata.last_hash=new_hash
+      |
+      v (continue source loop)
+
+  (end source loop)
+  |
+  v
+  Decision (any new content?)
+    check: total_new > 0
+    |
+    +-- false --> Terminal (200 "No new articles found")
+    |
+    v true
+  Event (emit ContentFetched)
+    event_name: ContentFetched
+    payload:    { content_ids, source=article_monitoring, count }
+    async:      true
+    |
+    v
+  Terminal (200)
+    body: {
+      sources_checked: N,
+      new_content: N,
+      by_type: { medium: N, rss: N, web: N }
+    }
+
+
+FLOW 18: search-by-keywords (Scheduled: Cross-Platform Keyword Search)
+------------------------------------------------------------------------
+Type:    traditional
+Trigger: scheduled, cron "0 */4 * * *" (every 4 hours)
+
+  Trigger
+    |
+    v
+  Data Store (read enabled subjects)
+    operation: read
+    model:     ResearchSubject
+    query:     { enabled: true }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Decision (any subjects?)
+    check: results.length > 0
+    |
+    +-- false --> Terminal (200 "No enabled subjects")
+    |
+    v true
+  Loop (for each subject)
+    iterator: subject
+    |
+    v
+    Process (build search queries)
+      action: create platform-specific queries from subject.keywords
+              twitter_query: join keywords with " OR ", append "-is:retweet lang:en"
+              google_query: join keywords with " OR "
+    |
+    v
+
+    --- TWITTER SEARCH ---
+    Service Call (search Twitter)
+      method:  GET
+      url:     https://api.twitter.com/2/tweets/search/recent
+      headers: Authorization: Bearer $env.TWITTER_BEARER_TOKEN
+      params:  query={twitter_query}, max_results=50, sort_order=relevancy,
+               tweet.fields=created_at,public_metrics,author_id,
+               expansions=author_id, user.fields=username,name
+      timeout: 15000ms
+      retry:   3 attempts
+      |
+      +-- 429 ---------> Process (log rate limit, skip Twitter search)
+      +-- other error --> Process (log error, skip Twitter search)
+      |
+      v success
+    Loop (for each tweet)
+      iterator: tweet
+      |
+      v
+      Decision (already stored?)
+        +-- true --> (skip)
+        |
+        v false
+      Data Store (create raw content)
+        data:
+          source_type: twitter, source_id: tweet.id, content_type: tweet,
+          matched_subject_id: subject.id, matched_keywords: [matched],
+          discovered_via: keyword_search, status: pending_analysis
+        |
+        +-- failure --> (log, continue)
+        v success
+      (end tweet loop)
+
+    --- GOOGLE SEARCH ---
+    Service Call (search Google)
+      method:  GET
+      url:     https://www.googleapis.com/customsearch/v1
+      params:  key=$env.GOOGLE_SEARCH_API_KEY, cx=$env.GOOGLE_SEARCH_CX,
+               q={google_query}, dateRestrict=d7, num=10
+      timeout: 10000ms
+      |
+      +-- 429 ---------> Process (log quota exceeded, skip Google)
+      +-- other error --> Process (log GOOGLE_SEARCH_ERROR, skip Google)
+      |
+      v success
+    Loop (for each result)
+      iterator: result
+      |
+      v
+      Decision (already stored?)
+        check: SELECT id FROM raw_content WHERE source_url = result.link
+        +-- true --> (skip)
+        |
+        v false
+      Service Call (fetch page content)
+        method: GET
+        url:    result.link
+        timeout: 15000ms
+        |
+        +-- error --> Process (store with snippet as content)
+        |
+        v success
+      Process (extract readable content)
+        action: readability-lxml
+      |
+      v
+      Data Store (create raw content)
+        data:
+          source_type: web, source_id: hash(result.link), source_url: result.link,
+          title: result.title, content: extracted text,
+          content_type: web_page, author_name: extract from page or "Unknown",
+          matched_subject_id: subject.id, matched_keywords: [matched],
+          discovered_via: keyword_search, status: pending_analysis
+        |
+        +-- failure --> (log, continue)
+        v success
+      (end result loop)
+
+    (end subject loop)
+  |
+  v
+  Decision (any new content?)
+    check: total_new > 0
+    |
+    +-- false --> Terminal (200 "No new content from keyword search")
+    |
+    v true
+  Event (emit ContentFetched)
+    event_name: ContentFetched
+    payload:    { content_ids, source=keyword_search, count }
+    async:      true
+    |
+    v
+  Terminal (200)
+    body: {
+      subjects_searched: N,
+      new_content: N,
+      by_source: { twitter: N, google: N }
+    }
+
+
+FLOW 19: get-ingestion-status (Ingestion Dashboard)
+-----------------------------------------------------
+Type:    traditional
+Trigger: GET /api/ingestion/status
+
+  Trigger
+    |
+    v
+  Parallel
+    +-- Branch 1: Data Store (content counts by status, last 24h)
+    +-- Branch 2: Data Store (content counts by source_type, last 24h)
+    +-- Branch 3: Data Store (source health: each source, last_checked, status)
+    +-- Branch 4: Data Store (today stats: fetched, by type, by discovered_via)
+    join: all
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      content_counts: { pending_analysis, analyzed, drafted, published, dropped },
+      by_source_type: { twitter: N, linkedin: N, medium: N, rss: N, web: N },
+      source_health: [{
+        id, source_type, display_name, last_checked_at,
+        status: healthy|stale|error
+      }],
+      today: { fetched, by_type, by_discovery_method }
+    }
+
+
+DOMAIN: ANALYSIS (2 flows)
+===========================
+
+Analysis works identically regardless of content source. The AI agent
+evaluates ALL content types (tweets, articles, LinkedIn posts, blog posts)
+against research subjects and creates platform-appropriate drafts.
+
+
+FLOW 20: analyze-content (AI Agent: Filter + Summarize)
+--------------------------------------------------------
+Type:    agent
+Trigger: event ContentFetched
+
+  Trigger (event: ContentFetched)
+    |
+    v
+  Data Store (read pending content)
+    operation: read
+    model:     RawContent
+    query:     { id IN event.content_ids, status=pending_analysis }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Decision (any content to analyze?)
+    check: results.length > 0
+    |
+    +-- false --> Terminal (200 "No pending content")
+    |
+    v true
+  Data Store (read active subjects)
+    operation: read
+    model:     ResearchSubject
+    query:     { enabled: true }
+    |
+    v
+  Data Store (read preferences)
+    operation: read
+    model:     PostingPreferences
+    |
+    v
+  Agent Loop
+    model:          claude-sonnet-4-5
+    max_iterations: 20
+    temperature:    0.3
+
+    System Prompt:
+      You are a content analyst specializing in research topic curation.
+
+      For each piece of content you receive (tweets, articles, LinkedIn posts,
+      blog posts, RSS items):
+
+      1. CHECK RELEVANCE
+         - Compare against research subject keywords
+         - Score relevance 0-100
+         - Posts scoring >= 60 are relevant
+         - Spam, pure promotion, or low-effort content scores 0
+         - For articles: evaluate depth and originality, not just keyword match
+         - For social posts: check for substantive insight vs noise
+
+      2. FOR RELEVANT CONTENT - CREATE SUMMARY
+         - For tweets/short posts: capture the key insight (1-2 sentences)
+         - For articles: extract 3-5 key takeaways
+         - Note why it matters for the audience
+
+      3. FOR RELEVANT CONTENT - DRAFT SOCIAL POSTS
+         - Create one draft per target platform
+         - X/Twitter draft:
+           - Must be <= {max_length_x} characters
+           - Lead with the insight
+           - Credit original: "via @{author}" or "h/t @{author}"
+           - For articles: include a compelling hook + link
+           - Hashtags per strategy
+           - Tone: {tone}
+         - LinkedIn draft:
+           - Must be <= {max_length_linkedin} characters
+           - Professional format with line breaks
+           - For articles: can include key takeaway bullets
+           - Credit: "Originally by {author_name}" + link to original
+           - Tone: {tone}
+         - If include_source_link is true, always include the source URL
+
+      4. SAVE RESULTS for every piece of content (relevant or not)
+
+      DO NOT:
+      - Copy original content verbatim
+      - Add opinions not in the original
+      - Mention that you are an AI
+      - Create drafts for content scoring < 60
+
+    Tools:
+      1. get_pending_content
+         description: Returns the batch of content to analyze
+         returns:     array of { id, source_type, source_url, title, content,
+                      content_type, author_name, author_handle, word_count,
+                      metrics, published_at }
+
+      2. get_subjects
+         description: Returns active research subjects with keywords
+         returns:     array of { id, name, description, keywords }
+
+      3. get_preferences
+         description: Returns posting preferences
+         returns:     { tone, max_length_x, max_length_linkedin, hashtag_strategy,
+                      max_hashtags, default_platforms, signature, include_source_link }
+
+      4. save_analysis
+         description: Save relevance analysis for content
+         parameters:
+           content_id:       string, required
+           relevant:         boolean, required
+           relevance_score:  integer, required, 0-100
+           matched_subject:  string
+           matched_keywords: array of strings
+           summary:          string
+           reasoning:        string
+
+      5. create_draft
+         description: Create a social media draft
+         parameters:
+           source_content_id: string, required
+           platform:         string, required, enum=[twitter, linkedin]
+           draft_content:    string, required
+           author_credit:    string, required
+           hashtags:         array of strings
+           original_summary: string, required
+           source_url:       string, required
+
+    Guardrails (output):
+      - draft must contain author credit
+        on_fail: Add credit and retry
+      - twitter drafts <= max_length_x chars
+        on_fail: Shorten and retry
+      - linkedin drafts <= max_length_linkedin chars
+        on_fail: Shorten and retry
+      - draft must not be >60% identical to original content
+        on_fail: Rewrite and retry
+      - if include_source_link, draft must contain source URL
+        on_fail: Add link and retry
+
+    Memory: conversation, max 6000 tokens
+    |
+    +-- LLM error --> Terminal (502 LLM_ERROR, content remains pending for retry)
+    +-- timeout ----> Terminal (504 LLM_TIMEOUT, content remains pending)
+    |
+    v agent done
+  Process (update content statuses)
+    action: UPDATE raw_content SET status=analyzed WHERE id IN analyzed_ids
+            UPDATE raw_content SET status=drafted WHERE id IN drafted_ids
+    |
+    v
+  Decision (any drafts created?)
+    check: draft_count > 0
+    |
+    +-- false --> Terminal (200 body: { analyzed: N, relevant: 0, drafts: 0 })
+    |
+    v true
+  Event (emit ContentReady)
+    event_name: ContentReady
+    payload:    { draft_ids, count }
+    async:      true
+    |
+    v
+  Terminal (200)
+    body: {
+      analyzed: N,
+      relevant: N,
+      irrelevant: N,
+      drafts_created: N,
+      by_content_type: { tweet: N, article: N, linkedin_post: N, ... },
+      average_relevance_score: N
+    }
+
+
+FLOW 21: get-analysis-stats (Analysis Dashboard)
+--------------------------------------------------
+Type:    traditional
+Trigger: GET /api/analysis/stats
+
+  Trigger
+    |
+    v
+  Input (validate query params)
+    fields:
+      days: integer, optional, default=7, min=1, max=90
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read stats)
+    operation: read
+    model:     RawContent
+    query:     WHERE fetched_at >= now() - {days} days
+               GROUP BY status, matched_subject, source_type, content_type
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      period_days: N,
+      total_fetched: N,
+      analyzed: N,
+      relevant: N,
+      irrelevant: N,
+      drafted: N,
+      by_subject: [{ name, count, avg_relevance }],
+      by_source_type: [{ type, count, avg_relevance }],
+      by_content_type: [{ type, count, avg_relevance }],
+      by_author: [{ name, count, avg_relevance }],
+      top_content: [{ source_url, title, relevance_score, summary }]
+    }
+
+
+DOMAIN: PUBLISHING (4 flows)
+=============================
+
+
+FLOW 22: list-pending-drafts (See Drafts Awaiting Approval)
+-------------------------------------------------------------
+Type:    traditional
+Trigger: GET /api/publishing/drafts
+
+  Trigger
+    |
+    v
+  Input (validate query params)
+    fields:
+      status:       string, optional, enum=[pending, approved, revised, dropped]
+      platform:     string, optional, enum=[twitter, linkedin]
+      content_type: string, optional (filter by source content type)
+      page:         integer, optional, default=1, min=1
+      page_size:    integer, optional, default=20, min=1, max=50
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read drafts with source content)
+    operation: read
+    model:     Draft JOIN RawContent ON Draft.source_content_id = RawContent.id
+    query:     { status: $.status or 'pending', platform, content_type }
+    order_by:  created_at DESC
+    pagination: { page, page_size }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      drafts: [{
+        id, platform, draft_content, hashtags, author_credit, source_url,
+        original_summary,
+        source_content: {
+          source_type, content_type, title, author_name, author_handle,
+          content (truncated to 500 chars), source_url, published_at
+        },
+        status, revision_count, created_at, updated_at
+      }],
+      pagination: { page, page_size, total_count, total_pages }
+    }
+
+
+FLOW 23: approval-loop (Human Reviews, Approves/Edits/Drops)
+--------------------------------------------------------------
+Type:    agent (with human gate)
+Trigger: POST /api/publishing/drafts/{draft_id}/review
+
+  Trigger
+    |
+    v
+  Input (validate)
+    fields:
+      action:           string, required, enum=[approve, revise, drop]
+      feedback:         string, required if action=revise, min=5, max=500
+      target_platforms: array, optional, items enum=[twitter, linkedin]
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read draft)
+    operation: read
+    model:     Draft
+    query:     { id: $.draft_id }
+    |
+    +-- not_found --> Terminal (404 DRAFT_NOT_FOUND)
+    |
+    v found
+  Decision (already published?)
+    check: draft.status == published
+    |
+    +-- true --> Terminal (409 ALREADY_PUBLISHED)
+    |
+    v false
+  Decision (which action?)
+    check: $.action
+    |
+    +-- "drop" ----> [DROP PATH]
+    +-- "revise" --> [REVISE PATH]
+    +-- "approve" -> [APPROVE PATH]
+
+
+  DROP PATH:
+  ----------
+    Data Store (update draft)
+      operation: update
+      model:     Draft
+      data:      status=dropped, drop_reason=$.feedback, updated_at=now()
+      |
+      +-- failure --> Terminal (500 DATABASE_ERROR)
+      |
+      v success
+    Terminal (200 "Draft dropped")
+      body: { draft: { id, status: dropped } }
+
+
+  REVISE PATH:
+  ------------
+    Data Store (read source content + preferences)
+      operation: read
+      model:     RawContent, PostingPreferences
+      |
+      v
+    Agent Loop (revision)
+      model:          claude-sonnet-4-5
+      max_iterations: 3
+      temperature:    0.4
+
+      System Prompt:
+        You are revising a social media draft based on human feedback.
+
+        Original content: {source_content.content}
+        Original title: {source_content.title}
+        Current draft: {draft.draft_content}
+        Platform: {draft.platform}
+        Human feedback: {feedback}
+
+        Rewrite the draft incorporating the feedback.
+        Keep author credit. Respect character limits.
+        If source has a URL and include_source_link is true, keep the link.
+        Tone: {preferences.tone}
+
+      Tools:
+        1. save_revision
+           parameters: draft_id (string), revised_content (string)
+
+      Guardrails (output):
+        - revised draft must contain author credit
+        - respect platform character limit
+      |
+      +-- LLM error --> Terminal (502 LLM_ERROR)
+      |
+      v success
+    Data Store (update draft)
+      operation: update
+      model:     Draft
+      data:      draft_content=revised, status=pending,
+                 revision_count=+1, last_feedback=$.feedback, updated_at=now()
+      |
+      +-- failure --> Terminal (500 DATABASE_ERROR)
+      |
+      v success
+    Terminal (200 "Draft revised, awaiting re-approval")
+      body: {
+        draft: { id, draft_content, status: pending, revision_count },
+        message: "Please review the updated draft"
+      }
+
+
+  APPROVE PATH:
+  -------------
+    Decision (duplicate content in last 7 days?)
+      check: SELECT * FROM published_posts
+             WHERE similarity(content, draft.draft_content) > 0.8
+             AND published_at >= now() - interval '7 days'
+      |
+      +-- true --> Terminal (409 DUPLICATE_CONTENT
+      |              body: { similar_post: { url, published_at } })
+      |
+      v false
+    Decision (which platform?)
+      check: draft.platform
+      |
+      +-- "twitter" ---> [PUBLISH TO TWITTER]
+      +-- "linkedin" --> [PUBLISH TO LINKEDIN]
+
+
+    PUBLISH TO TWITTER:
+      Service Call
+        method:  POST
+        url:     https://api.twitter.com/2/tweets
+        headers: Authorization: Bearer $env.TWITTER_BEARER_TOKEN
+        body:    { text: draft.draft_content }
+        timeout: 15000ms
+        retry:   2 attempts
+        |
+        +-- 429 ---------> Terminal (429 TWITTER_RATE_LIMITED)
+        +-- 401 ---------> Terminal (401 "Twitter auth failed")
+        +-- other error --> Terminal (502 TWITTER_API_ERROR)
+        |
+        v success --> [SAVE PUBLISHED]
+
+    PUBLISH TO LINKEDIN:
+      Service Call
+        method:  POST
+        url:     https://api.linkedin.com/v2/ugcPosts
+        headers: Authorization: Bearer $env.LINKEDIN_ACCESS_TOKEN
+        body:
+          author:          urn:li:person:{linkedin_user_id}
+          lifecycleState:  PUBLISHED
+          specificContent:
+            shareCommentary:    draft.draft_content
+            shareMediaCategory: NONE
+        timeout: 15000ms
+        retry:   2 attempts
+        |
+        +-- 401 ---------> Terminal (401 LINKEDIN_AUTH_EXPIRED)
+        +-- other error --> Terminal (502 LINKEDIN_API_ERROR)
+        |
+        v success --> [SAVE PUBLISHED]
+
+
+    SAVE PUBLISHED:
+      Data Store (create published record)
+        operation: create
+        model:     PublishedPost
+        data:      draft_id, platform, platform_post_id, platform_url,
+                   content, source_content_id, author_credited, published_at=now()
+        |
+        +-- failure --> Terminal (500 DATABASE_ERROR)
+        |
+        v success
+      Data Store (update draft status)
+        operation: update
+        model:     Draft
+        data:      status=published, published_at=now(), published_url=platform_url
+        |
+        v
+      Terminal (200 "Published successfully")
+        body: {
+          draft: { id, status: published },
+          published: { platform, url, post_id }
+        }
+
+
+FLOW 24: publishing-history (What Was Published)
+--------------------------------------------------
+Type:    traditional
+Trigger: GET /api/publishing/history
+
+  Trigger
+    |
+    v
+  Input (validate query params)
+    fields:
+      platform:     string, optional, enum=[twitter, linkedin]
+      content_type: string, optional (filter by original content type)
+      days:         integer, optional, default=30, min=1, max=365
+      page:         integer, optional, default=1
+      page_size:    integer, optional, default=20, min=1, max=50
+    |
+    +-- invalid --> Terminal (400 VALIDATION_FAILED)
+    |
+    v valid
+  Data Store (read published posts)
+    operation: read
+    model:     PublishedPost JOIN Draft JOIN RawContent
+    query:     { platform, published_at >= now() - {days} days }
+    order_by:  published_at DESC
+    pagination: { page, page_size }
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      posts: [{
+        id, platform, platform_url, content, author_credited, published_at,
+        source: { source_type, content_type, title, author_name, source_url },
+        draft: { revision_count }
+      }],
+      pagination: { page, page_size, total_count, total_pages }
+    }
+
+
+FLOW 25: dashboard (Overall System Dashboard)
+-----------------------------------------------
+Type:    traditional
+Trigger: GET /api/dashboard
+
+  Trigger
+    |
+    v
+  Parallel
+    +-- Branch 1: Data Store (content pipeline counts, last 24h, by status)
+    +-- Branch 2: Data Store (pending draft count)
+    +-- Branch 3: Data Store (published today count, by platform)
+    +-- Branch 4: Data Store (top 5 recent published posts)
+    +-- Branch 5: Data Store (source health: stale sources)
+    +-- Branch 6: Data Store (discovery stats: last session, suggestions pending)
+    +-- Branch 7: Data Store (content by source type, last 7 days)
+    join: all
+    |
+    +-- failure --> Terminal (500 DATABASE_ERROR)
+    |
+    v success
+  Terminal (200)
+    body: {
+      pipeline_24h: {
+        fetched, pending_analysis, analyzed, drafted,
+        pending_approval, published, dropped
+      },
+      pending_drafts: N,
+      published_today: { total: N, twitter: N, linkedin: N },
+      recent_published: [...],
+      source_health: {
+        total: N, healthy: N, stale: N,
+        by_type: { twitter: N, linkedin: N, medium: N, rss: N, web: N }
+      },
+      discovery: {
+        last_session: { type, completed_at, content_found },
+        pending_suggestions: N
+      },
+      content_by_source_7d: { twitter: N, linkedin: N, medium: N, rss: N, web: N }
+    }
+
+
+================================================================================
+FLOW SUMMARY
+================================================================================
+
+  Domain      Flow                    Type         Trigger           Terminals
+  ------      ----                    ----         -------           ---------
+  config      manage-subjects         traditional  POST              3 (201, 400, 409, 500)
+  config      update-subject          traditional  PUT               4 (200, 400, 404, 409, 500)
+  config      delete-subject          traditional  DELETE            3 (204, 404, 500)
+  config      list-subjects           traditional  GET               3 (200, 400, 500)
+  config      add-source              traditional  POST              9 (201, 400, 409, 404, 429, 401, 502x3, 500)
+  config      remove-source           traditional  DELETE            3 (204, 404, 500)
+  config      list-sources            traditional  GET               3 (200, 400, 500)
+  config      add-creator             traditional  POST              4 (201, 201+sources, 400, 409, 500)
+  config      list-creators           traditional  GET               3 (200, 400, 500)
+  config      save-preferences        traditional  PUT               3 (200, 400, 500)
+  config      get-preferences         traditional  GET               3 (200, 200-null, 500)
+  discovery   research-topics         agent        scheduled/6h      4 (200x3, 500, 502, 504)
+  discovery   discover-creators       agent        scheduled/daily   3 (200x2, 500, 502, 504)
+  discovery   review-suggestions      traditional  POST              4 (200x2, 400, 404, 500)
+  discovery   get-discovery-stats     traditional  GET               3 (200, 400, 500)
+  ingestion   fetch-social-posts      traditional  scheduled/15m     4 (200x2, 500)
+  ingestion   fetch-articles          traditional  scheduled/30m     4 (200x2, 500)
+  ingestion   search-by-keywords      traditional  scheduled/4h      4 (200x2, 500)
+  ingestion   get-ingestion-status    traditional  GET               2 (200, 500)
+  analysis    analyze-content         agent        event             4 (200x2, 502, 504)
+  analysis    get-analysis-stats      traditional  GET               3 (200, 400, 500)
+  publishing  list-pending-drafts     traditional  GET               3 (200, 400, 500)
+  publishing  approval-loop           agent        POST             10 (200x4, 400, 404, 409x2, 429, 401x2, 502x3, 500x2)
+  publishing  publishing-history      traditional  GET               3 (200, 400, 500)
+  publishing  dashboard               traditional  GET               2 (200, 500)
+
+  Total: 25 flows (21 traditional + 4 agent)
+
+  Domains: 5
+    config      - 11 flows (all traditional)
+    discovery   -  4 flows (2 agent + 2 traditional)
+    ingestion   -  4 flows (all traditional, scheduled)
+    analysis    -  2 flows (1 agent + 1 traditional)
+    publishing  -  4 flows (1 agent + 3 traditional)
+
+  Node types used:
+    Trigger, Input, Process, Decision, Terminal,
+    Data Store, Service Call, Event, Loop, Parallel,
+    Agent Loop (with tools, guardrails, memory)
+
+  Events:
+    ContentDiscovered - published by discovery, consumed by ingestion (store found content)
+    SourcesSuggested  - published by discovery, consumed by config (user reviews suggestions)
+    ContentFetched    - published by ingestion, consumed by analysis (score and draft)
+    ContentReady      - published by analysis, consumed by publishing (user approves)
+
+  Integrations (6):
+    Twitter/X API v2        - read (monitoring + search) + write (publishing)
+    LinkedIn API v2         - read (monitoring) + write (publishing)
+    Medium RSS              - read (author feeds)
+    Google Custom Search    - read (web discovery + keyword search)
+    Web scraping            - read (article extraction, page monitoring)
+    Anthropic LLM           - AI agents (research, analysis, drafting, revision)
+
+  Scheduled jobs (5):
+    Every 15 min  - fetch-social-posts (Twitter + LinkedIn monitoring)
+    Every 30 min  - fetch-articles (Medium + RSS + web monitoring)
+    Every 4 hours - search-by-keywords (Twitter + Google keyword search)
+    Every 6 hours - research-topics (AI web research agent)
+    Daily 3 AM    - discover-creators (AI creator analysis agent)
+
+
+================================================================================
+DEVELOPMENT WORKFLOW
+================================================================================
+
+  1. DESIGN
+     Open DDD Tool
+     Create project "content-curator" with tech stack above
+     Add 5 domains on L1, draw event arrows
+     Add 25 flows across domains
+     Design each flow on L3 canvas per this document
+     Save project (writes all YAML to specs/)
+
+  2. IMPLEMENT
+     Open terminal in content-curator/ directory
+     Run: claude
+     Run: /ddd-implement --all
+     Claude Code generates all code from specs
+     Tests auto-run after each flow
+
+  3. CONFIGURE
+     Copy .env.example to .env
+     Set TWITTER_BEARER_TOKEN
+     Set LINKEDIN_ACCESS_TOKEN
+     Set ANTHROPIC_API_KEY
+     Set GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX
+     Set DATABASE_URL, REDIS_URL
+
+  4. RUN
+     alembic upgrade head                    (initialize database)
+     uvicorn src.main:app                    (start API server)
+     celery -A src.worker worker --beat      (start scheduled jobs + discovery)
+
+  5. USE
+     - Add research subjects via POST /api/config/subjects
+     - Add content sources via POST /api/config/sources (any platform)
+     - Add known creators via POST /api/config/creators
+     - Set posting preferences via PUT /api/config/preferences
+     - System automatically:
+       * Monitors all sources on their schedules
+       * Searches for keywords across Twitter + Google
+       * AI agent researches topics and discovers new content + creators
+       * AI agent identifies quality creators from analyzed content
+       * AI analyzes all content for relevance
+       * Creates social media drafts for relevant content
+     - Review discovery suggestions at GET /api/discovery/stats
+     - Review drafts at GET /api/publishing/drafts
+     - Approve/revise/drop via POST /api/publishing/drafts/{id}/review
+     - Monitor everything via GET /api/dashboard
+
+  6. UPDATE
+     Change flow in DDD Tool, Save
+     Run: /ddd-implement config/add-source   (only changed flow)
+     Run: /ddd-sync                          (verify everything matches)
+
+  7. SHIP
+     docker-compose up -d
+     Deploy
