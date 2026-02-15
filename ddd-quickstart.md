@@ -1,382 +1,161 @@
 # DDD Quick Start Guide
 
-## Files in This Package
+## What You Need
 
-| File | Purpose |
-|------|---------|
-| `ddd-specification-complete.md` | Full spec explaining DDD concepts, properties, workflows |
-| `ddd-implementation-guide.md` | Instructions for building the DDD Tool itself |
-| `architecture-template.yaml` | **Reusable** - Copy to any project for full code generation |
-| `config-template.yaml` | **Reusable** - Environment variables schema template |
-| `errors-template.yaml` | **Reusable** - Standardized error codes template |
-
----
-
-## Two Different Use Cases
-
-### Use Case A: Build the DDD Tool Itself
-
-**Goal:** Create the desktop app that edits flow diagrams
-
-**Files to use:**
-- `ddd-specification-complete.md`
-- `ddd-implementation-guide.md`
-
-**Prompt for Claude Code:**
-```
-Read ddd-specification-complete.md and ddd-implementation-guide.md.
-Build the DDD Tool following the implementation guide.
-Start with Phase 2: Project Setup.
-```
+| Component | Purpose |
+|-----------|---------|
+| [DDD repo](https://github.com/mhcandan/DDD) | Spec, guide, templates |
+| [DDD Tool](https://github.com/mhcandan/ddd-tool) | Desktop app for visual design |
+| [Claude Commands](https://github.com/mhcandan/claude-commands) | `/ddd-create`, `/ddd-implement`, `/ddd-update`, `/ddd-sync` |
+| Claude Code | AI that reads specs and generates code |
 
 ---
 
-### Use Case B: Generate a Complete Application
+## Quick Start: Create a Project in 3 Steps
 
-**Goal:** Use DDD specs to generate a full codebase
+### Step 1 — Generate specs (Session A)
 
-**Files to use:**
-- `architecture-template.yaml` → Copy to `specs/architecture.yaml`
-- `config-template.yaml` → Copy to `specs/config.yaml`
-- `errors-template.yaml` → Copy to `specs/shared/errors.yaml`
-- Your flow specs in `specs/domains/*/flows/*.yaml`
+Open Claude Code and describe your project:
 
-**Setup Steps:**
-
-```bash
-# 1. Create project and specs folder
-mkdir my-project && cd my-project
-mkdir -p specs/domains specs/schemas specs/shared
-
-# 2. Copy templates (from DDD repo)
-cp ~/code/DDD/templates/architecture-template.yaml specs/architecture.yaml
-cp ~/code/DDD/templates/config-template.yaml specs/config.yaml
-cp ~/code/DDD/templates/errors-template.yaml specs/shared/errors.yaml
-
-# 3. Create system.yaml
-cat > specs/system.yaml << 'EOF'
-system:
-  name: my-project
-  version: 1.0.0
-  description: My awesome project
-  
-  tech_stack:
-    language: python
-    language_version: "3.11"
-    framework: fastapi
-    orm: sqlalchemy
-    database: postgresql
-    cache: redis
-    
-  domains:
-    - name: users
-      description: User management
-    - name: billing
-      description: Subscription and payments
-EOF
-
-# 4. Customize architecture.yaml
-# Edit specs/architecture.yaml:
-#   - Update {placeholders} with your values
-#   - Remove sections you don't need
-#   - Adjust settings for your requirements
-
-# 5. Create your first flow
-mkdir -p specs/domains/users/flows
-cat > specs/domains/users/flows/register.yaml << 'EOF'
-flow:
-  id: user-register
-  name: User Registration
-  domain: users
-  description: Register a new user account
-  
-trigger:
-  type: http
-  method: POST
-  path: /auth/register
-  
-nodes:
-  - id: validate_input
-    type: input
-    spec:
-      fields:
-        email:
-          type: string
-          required: true
-          format: email
-          error: "Please enter a valid email address"
-        password:
-          type: string
-          required: true
-          min_length: 8
-          error: "Password must be at least 8 characters"
-        name:
-          type: string
-          required: true
-          min_length: 2
-          max_length: 100
-          error: "Name must be between 2 and 100 characters"
-    connections:
-      valid: check_duplicate
-      invalid: return_validation_error
-
-  - id: check_duplicate
-    type: decision
-    spec:
-      check: user_exists_by_email
-      on_true:
-        error_code: DUPLICATE_ENTRY
-        error: "A user with this email already exists"
-    connections:
-      false: create_user
-      true: return_duplicate_error
-
-  - id: create_user
-    type: data_store
-    spec:
-      operation: create
-      model: User
-      data:
-        email: "$.email"
-        password_hash: "hash($.password)"
-        name: "$.name"
-    connections:
-      success: return_success
-      failure: return_error
-
-  - id: return_success
-    type: terminal
-    spec:
-      status: 201
-      body:
-        message: "User registered successfully"
-        user:
-          id: "$.user.id"
-          email: "$.user.email"
-          name: "$.user.name"
-EOF
-
-# 6. Create CLAUDE.md instructions
-cat > CLAUDE.md << 'EOF'
-# Project Instructions
-
-This project uses Diagram-Driven Development (DDD).
-
-## Spec Files
-
-- `specs/system.yaml` - Project identity and tech stack
-- `specs/architecture.yaml` - Project structure, infrastructure, cross-cutting
-- `specs/config.yaml` - Environment variables schema
-- `specs/shared/errors.yaml` - Error codes
-- `specs/domains/*/flows/*.yaml` - Flow specifications
-
-## Implementation Rules
-
-1. **Read architecture.yaml first** - Understand project structure, conventions
-2. **Follow the folder layout** - Put files where architecture.yaml says
-3. **Use exact error codes** - From specs/shared/errors.yaml
-4. **Match validation rules** - Implement exactly as spec defines
-5. **Use error messages from spec** - Don't invent new messages
-
-## Commands
-
-```bash
-# After implementing
-pytest                    # Run tests
-mypy src/                 # Type check
-ruff check .              # Lint
 ```
-EOF
+/ddd-create An e-commerce platform with users, products, orders, and notifications.
+TypeScript + Express + PostgreSQL + Redis. JWT auth. REST API.
 ```
 
-**Prompt for Claude Code:**
+Claude fetches the [DDD Usage Guide](DDD-USAGE-GUIDE.md), asks any clarifying questions, then generates:
+
 ```
-I have a DDD project with specs in the specs/ folder.
+my-project/
+  ddd-project.json                    # Project config
+  specs/
+    system.yaml                       # Tech stack
+    architecture.yaml                 # Conventions, project structure
+    config.yaml                       # Environment variables
+    shared/errors.yaml                # Error codes
+    schemas/_base.yaml                # Base model
+    schemas/user.yaml                 # Data models
+    schemas/product.yaml
+    schemas/order.yaml
+    domains/users/domain.yaml         # Domain config + events
+    domains/users/flows/
+      user-register.yaml              # Full flow graphs
+      user-login.yaml
+    domains/products/domain.yaml
+    domains/products/flows/
+      list-products.yaml
+    domains/orders/domain.yaml
+    domains/orders/flows/
+      create-order.yaml
+      process-payment.yaml
+    domains/notifications/domain.yaml
+    domains/notifications/flows/
+      send-email.yaml
+```
 
-Read these files in order:
-1. specs/system.yaml - Project overview
-2. specs/architecture.yaml - How to structure code
-3. specs/config.yaml - Environment variables
-4. specs/shared/errors.yaml - Error codes
-5. specs/domains/users/flows/register.yaml - First flow to implement
+### Step 2 — Review in DDD Tool
 
-Generate the complete project following architecture.yaml exactly:
-1. Create folder structure per architecture.yaml
-2. Create shared infrastructure (database, auth, middleware, exceptions)
-3. Implement the user-register flow
-4. Create tests using the testing strategy in architecture.yaml
+Open the project in the DDD Tool desktop app:
 
-Start with the project scaffold, then implement shared infrastructure,
-then the flow.
+- **L1 System Map** — see all domains and event wiring
+- **L2 Domain Map** — see flows within each domain
+- **L3 Flow Canvas** — see the full node graph for each flow
+
+Validate with 20+ built-in rules. Adjust nodes, connections, and specs on the canvas. Save (Cmd+S) writes changes back to the YAML files.
+
+### Step 3 — Implement (Session B)
+
+Open a fresh Claude Code session in the project directory:
+
+```
+/ddd-implement --all
+```
+
+Claude reads all specs, generates code for each flow, writes tests, runs them, and tracks everything in `.ddd/mapping.yaml`.
+
+---
+
+## Ongoing Development
+
+### Change a flow
+
+```
+/ddd-update users/user-login
+> "Add rate limiting before the login process"
+```
+
+Claude updates the YAML spec. Reload DDD Tool (Cmd+R) to see the change. Then:
+
+```
+/ddd-implement users/user-login
+```
+
+### Add a new flow
+
+```
+/ddd-update --add-flow orders
+> "Add an order cancellation flow with refund processing"
+```
+
+### Add a new domain
+
+```
+/ddd-update --add-domain
+> "Add a notifications domain with email and push notification flows"
+```
+
+### Sync after manual code changes
+
+```
+/ddd-sync              # Update mapping.yaml
+/ddd-sync --discover   # Find untracked code, suggest specs
+/ddd-sync --fix-drift  # Re-implement drifted flows
+/ddd-sync --full       # All of the above
 ```
 
 ---
 
-## Spec Hierarchy
+## Commands Reference
+
+| Command | What it does |
+|---------|-------------|
+| `/ddd-create` | Describe project → full spec structure |
+| `/ddd-implement` | Specs → code + tests |
+| `/ddd-update` | Natural language → updated specs |
+| `/ddd-sync` | Keep specs and code aligned |
+
+### Scope arguments
 
 ```
-specs/
-├── system.yaml              # WHO: Project name, tech stack, domains
-├── architecture.yaml        # HOW: Structure, infrastructure, conventions
-├── config.yaml              # WHAT: Environment variables needed
-│
-├── schemas/                 # DATA MODELS
-│   ├── _base.yaml           # Base model (id, timestamps)
-│   ├── user.yaml
-│   └── ...
-│
-├── shared/                  # CROSS-CUTTING SPECS
-│   ├── errors.yaml          # Error codes
-│   ├── auth.yaml            # Auth flow details (optional)
-│   └── events.yaml          # Event definitions (optional)
-│
-└── domains/                 # BUSINESS LOGIC
-    └── {domain}/
-        ├── domain.yaml      # Domain description
-        └── flows/
-            └── {flow}.yaml  # Individual flows
+/ddd-implement --all                   # Whole project
+/ddd-implement users                   # All flows in a domain
+/ddd-implement users/user-register     # Single flow
+/ddd-implement                         # Interactive — pick from list
 ```
 
 ---
 
-## What Each Spec Controls
+## Files Reference
 
-### system.yaml
-- Project name and version
-- Language and framework choice
-- List of domains
-
-### architecture.yaml
-- Folder structure (where every file goes)
-- Package versions (exact dependencies)
-- Database conventions (naming, timestamps, soft delete)
-- Cache configuration
-- Queue setup
-- Auth strategy (JWT, sessions)
-- Authorization model (RBAC roles)
-- Multi-tenancy settings
-- Logging format and fields
-- Error handling format
-- Rate limiting rules
-- Middleware order
-- API conventions (pagination, filtering, sorting)
-- Testing strategy
-- Deployment configuration
-
-### config.yaml
-- Required environment variables
-- Optional variables with defaults
-- Validation rules for production
-
-### errors.yaml
-- Error code definitions
-- HTTP status mappings
-- Message templates
-- Response format
-
-### Flow specs
-- API endpoints
-- Request/response schemas
-- Validation rules
-- Business logic steps
-- Error handling per step
+| File | What it controls |
+|------|-----------------|
+| `ddd-project.json` | Domain list |
+| `specs/system.yaml` | Tech stack, environments |
+| `specs/architecture.yaml` | Project structure, conventions, API design, testing |
+| `specs/config.yaml` | Environment variables |
+| `specs/shared/errors.yaml` | Error codes with HTTP status mappings |
+| `specs/schemas/*.yaml` | Data models (fields, indexes, relationships) |
+| `specs/domains/*/domain.yaml` | Domain config, flow list, event wiring |
+| `specs/domains/*/flows/*.yaml` | Flow graphs (trigger, nodes, connections) |
+| `.ddd/mapping.yaml` | Implementation tracking (spec hash, file list) |
 
 ---
 
-## Claude Code Generation Flow
+## Key Concepts
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│  1. CLAUDE READS SPECS                                          │
-│     ├── system.yaml        → Knows tech stack                  │
-│     ├── architecture.yaml  → Knows how to structure code       │
-│     ├── config.yaml        → Knows what env vars needed        │
-│     └── errors.yaml        → Knows error format                │
-│                                                                 │
-│  2. CLAUDE GENERATES SCAFFOLD                                   │
-│     ├── pyproject.toml     → From dependencies section         │
-│     ├── src/config/        → From config.yaml                  │
-│     ├── src/shared/        → From cross_cutting section        │
-│     └── src/domains/       → One per domain in system.yaml     │
-│                                                                 │
-│  3. CLAUDE READS FLOW SPECS                                     │
-│     └── specs/domains/users/flows/register.yaml                │
-│                                                                 │
-│  4. CLAUDE IMPLEMENTS FLOW                                      │
-│     ├── src/domains/users/router.py                            │
-│     ├── src/domains/users/schemas.py                           │
-│     ├── src/domains/users/services.py                          │
-│     └── tests/unit/domains/users/test_register.py              │
-│                                                                 │
-│  5. RESULT: Complete, consistent, production-ready code        │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+- **Specs are the source of truth** — code is derived from specs, not the other way around
+- **19 node types** — trigger, input, process, decision, terminal, data_store, service_call, event, loop, parallel, sub_flow, llm_call, agent_loop, guardrail, human_gate, orchestrator, smart_router, handoff, agent_group
+- **Branching nodes use `sourceHandle`** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), loop (body/done), parallel (branch-N/done)
+- **Session separation** — Session A designs (no code noise), Session B implements (no design noise)
+- **Human bridges sessions** — reviews specs in DDD Tool before implementation
 
----
-
-## Minimal Viable Spec Set
-
-For a simple project, you need at minimum:
-
-```
-specs/
-├── system.yaml          # Required
-├── architecture.yaml    # Required (can use template defaults)
-└── domains/
-    └── {domain}/
-        └── flows/
-            └── {flow}.yaml   # At least one flow
-```
-
-The templates provide sensible defaults. Just customize what you need.
-
----
-
-## Tips for Claude Code
-
-1. **Always read architecture.yaml first** - It defines everything
-2. **Generate scaffold before flows** - Infrastructure must exist
-3. **One domain at a time** - Don't generate everything at once
-4. **Validate as you go** - Run tests after each flow
-5. **Use exact error codes** - From errors.yaml, no inventing
-
----
-
-## Common Customizations
-
-### Change language to TypeScript
-In `architecture.yaml`:
-```yaml
-dependencies:
-  node: "20"
-  production:
-    "@nestjs/core": "^10.0.0"
-    # ... TypeScript packages
-```
-
-### Disable multi-tenancy
-In `architecture.yaml`:
-```yaml
-cross_cutting:
-  multi_tenancy:
-    enabled: false
-```
-
-### Use offset pagination instead of cursor
-In `architecture.yaml`:
-```yaml
-api:
-  pagination:
-    style: offset
-```
-
-### Add custom error codes
-In `specs/shared/errors.yaml`:
-```yaml
-business:
-  CONTRACT_EXPIRED:
-    http_status: 422
-    message: "Contract has expired"
-```
+See the [DDD Usage Guide](DDD-USAGE-GUIDE.md) for complete YAML formats, all node specs, and examples.

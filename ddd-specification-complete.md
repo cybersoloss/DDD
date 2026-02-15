@@ -1,4 +1,4 @@
-# Diagram-Driven Development (DDD) - Complete Specification
+# Design Driven Development (DDD) - Complete Specification
 
 ## Document Purpose
 This document captures the complete specification for the DDD tool, enabling continuation of development discussions in any Claude session. It includes core concepts, architectural decisions, technical details, and implementation guidance.
@@ -9,7 +9,7 @@ This document captures the complete specification for the DDD tool, enabling con
 
 ## What is DDD?
 
-**Diagram-Driven Development (DDD)** is a unified tool for bidirectional conversion between visual flow diagrams and code, enabling solopreneurs and small teams to architect systems visually while LLMs (like Claude Code) handle implementation.
+**Design Driven Development (DDD)** is a unified tool for bidirectional conversion between visual flow diagrams and code, enabling solopreneurs and small teams to architect systems visually while LLMs (like Claude Code) handle implementation.
 
 ### The Two-Way Workflow
 
@@ -4058,7 +4058,7 @@ The app launches to a **Project Launcher** screen — not directly into a canvas
 ┌──────────────────────────────────────────────────────────────┐
 │                                                                │
 │                        DDD Tool                               │
-│                   Diagram-Driven Development                  │
+│                   Design Driven Development                  │
 │                                                                │
 │  ┌─────────────────────────────────────────────────────────┐  │
 │  │  Recent Projects                                         │  │
@@ -4219,7 +4219,7 @@ The very first time a user opens the DDD Tool (no `~/.ddd-tool/` directory exist
 ┌──────────────────────────────────────────────────────────────┐
 │                                                                │
 │                    Welcome to DDD Tool                        │
-│              Diagram-Driven Development                       │
+│              Design Driven Development                       │
 │                                                                │
 │  DDD lets you design software visually and have AI            │
 │  implement it. Specs are the source of truth.                 │
@@ -5056,7 +5056,7 @@ The DDD Tool generates and maintains a `CLAUDE.md` file in the project root. Thi
 
 ## Spec-Driven Development
 
-This project uses Diagram-Driven Development (DDD). All business logic
+This project uses Design Driven Development (DDD). All business logic
 is specified in YAML files under `specs/`. Code MUST match specs exactly.
 
 ## Spec Files
@@ -6723,7 +6723,7 @@ obligo/
 ```markdown
 # Spec-Driven Development
 
-This project uses Diagram-Driven Development. All specifications live in `specs/`.
+This project uses Design Driven Development. All specifications live in `specs/`.
 
 ## Spec Files (Read These First)
 
@@ -6859,7 +6859,7 @@ This context helps inform design decisions around:
 To continue this conversation in another Claude session, start with:
 
 ```
-I'm building DDD (Diagram-Driven Development), a tool for bidirectional 
+I'm building DDD (Design Driven Development), a tool for bidirectional 
 conversion between visual flow diagrams and code. I have a detailed 
 specification document I'd like to share. The key points are:
 
