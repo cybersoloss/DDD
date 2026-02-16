@@ -3767,7 +3767,7 @@ Generates a complete DDD project from a natural-language description.
 
 ### /ddd-scaffold
 
-Sets up the project skeleton and shared infrastructure from specs. First step of Session B.
+Sets up the project skeleton and shared infrastructure from specs. First step of Phase 3 (Build).
 
 ```
 /ddd-scaffold
@@ -3849,23 +3849,54 @@ Reverse-engineers DDD specs from an existing codebase.
 
 | Argument | Scope | Example |
 |----------|-------|---------|
-| `--path {dir}` | Codebase root to analyze | `/ddd-reverse --path ./src` |
-| `--domain {name}` | Reverse a single domain | `/ddd-reverse --domain users` |
-| `--strategy {mode}` | Detection approach | `/ddd-reverse --strategy routes` |
-| *(empty)* | Interactive mode | `/ddd-reverse` |
+| `--output <path>` | Where to write specs | `/ddd-reverse --output ./specs` |
+| `--domains <d1,d2>` | Only reverse specific domains | `/ddd-reverse --domains users,orders` |
+| `--merge` | Merge with existing specs | `/ddd-reverse --merge` |
+| `--strategy <name>` | Override auto-selected strategy | `/ddd-reverse --strategy compiler` |
+| *(empty)* | Interactive mode (auto-selects strategy by file count) | `/ddd-reverse` |
 
-**Strategies:** `routes`, `services`, `models`, `auto` *(default)*
+**Strategies** (auto-selected by source file count): `baseline` (<30), `index` (30-80), `swap` (80-150), `bottom-up` (150-300), `compiler` (300-500), `codex` (500+)
+
+### /ddd-evolve
+
+Analyzes shortfall reports and applies framework improvements.
+
+```
+/ddd-evolve [--dir {path}]
+```
+
+### /ddd-reflect
+
+Captures implementation wisdom by comparing code against specs. Writes annotation files to `.ddd/annotations/{domain}/{flow}.yaml`.
+
+| Argument | Scope | Example |
+|----------|-------|---------|
+| `--all` | All implemented flows | `/ddd-reflect --all` |
+| `{domain}` | All flows in a domain | `/ddd-reflect users` |
+| `{domain}/{flow}` | Single flow | `/ddd-reflect users/user-register` |
+| *(empty)* | Interactive mode | `/ddd-reflect` |
+
+### /ddd-promote
+
+Moves approved annotations into permanent specs (architecture.yaml cross_cutting_patterns, flow specs, or shared types/errors).
+
+| Argument | Scope | Example |
+|----------|-------|---------|
+| `--all` | Promote all approved annotations | `/ddd-promote --all` |
+| `--review` | Interactive review of candidates | `/ddd-promote --review` |
+| `{domain}/{flow}` | Scope to a specific flow | `/ddd-promote users/user-register` |
 
 ## Workflow
 
-**Full lifecycle:**
+**Four-Phase Lifecycle:**
 
-1. **Design** — Run `/ddd-create` with a project description (Session A)
-2. **Review** — Open the project in DDD Tool to visualize, validate, and refine specs on the canvas
-3. **Scaffold** — Run `/ddd-scaffold` to set up project skeleton from specs (Session B first step)
-4. **Implement** — Run `/ddd-implement --all` to generate flow code + tests (Session B)
-5. **Test** — Run `/ddd-test --all` to verify all tests pass
-6. **Iterate** — Use `/ddd-status` to check state, `/ddd-update` to modify specs, `/ddd-implement` to update code, `/ddd-sync` to reconcile drift
+1. **Phase 1 — Create** — Run `/ddd-create` with a project description, or `/ddd-reverse` for existing codebases
+2. **Phase 2 — Design** — Open the project in DDD Tool to visualize, validate, and refine specs on the canvas
+3. **Phase 3 — Build** — Run `/ddd-scaffold` → `/ddd-implement --all` → `/ddd-test --all`
+4. **Phase 4 — Reflect** — Run `/ddd-sync` to check alignment, `/ddd-reflect` to capture implementation wisdom, `/ddd-promote` to move approved patterns into specs
+5. **Iterate** — Use `/ddd-status` to check state, `/ddd-update` to modify specs, `/ddd-implement` to update code
+
+> Legacy docs may reference "Session A" (= Phase 1+2) and "Session B" (= Phase 3+4).
 
 ---
 
@@ -5010,7 +5041,7 @@ The DDD Tool and Claude Code work together through a design-implement-sync loop.
 | `/ddd-sync --fix-drift` | Fix drift | Re-implements flows where specs have drifted |
 | `/ddd-sync --full` | Full sync | All of the above |
 
-**The `/ddd-create` command** (Session A — design):
+**The `/ddd-create` command** (Phase 1 — Create):
 1. Fetches the DDD Usage Guide from GitHub at runtime
 2. Reads the user's project description
 3. Asks clarifying questions if the description is brief
@@ -5018,7 +5049,7 @@ The DDD Tool and Claude Code work together through a design-implement-sync loop.
 5. Wires all connections with proper `sourceHandle` values
 6. Runs quality checks (all paths reach terminal, decision branches wired, etc.)
 
-**The `/ddd-update` command** (Session B — iterate):
+**The `/ddd-update` command** (Phase 3 — Build/Iterate):
 1. Reads the user's natural language change request
 2. Reads existing specs (system, architecture, errors, schemas, domain, flow)
 3. Modifies the YAML spec to reflect the change
@@ -5852,11 +5883,12 @@ Process: Read specs, implement flows, validate, run tests
 Output: Working code matching specs exactly
 ```
 
-### Phase 4: Validation & Deploy
+### Phase 4: Reflect
 ```
-Input: Implemented code
-Process: Spec-code sync check, tests, security scan, deploy
-Output: Deployed application
+Input: Implemented code + specs
+Process: /ddd-sync (alignment check), /ddd-reflect (capture wisdom),
+         /ddd-promote (move patterns into specs), then validate & deploy
+Output: Enriched specs + deployed application
 ```
 
 ## Git-Based Sync Workflow
