@@ -18,6 +18,45 @@ gh pr checkout <PR#> --repo cybersoloss/DDD
 git push-all
 ```
 
+**New Mac setup:**
+```bash
+# 1. Install push-all script
+mkdir -p ~/bin
+cat > ~/bin/git-push-all << 'SCRIPT'
+#!/bin/bash
+set -e
+CURRENT_BRANCH=$(git branch --show-current)
+echo "Pushing to origin..."
+git push origin "$CURRENT_BRANCH"
+if ! git remote get-url public &>/dev/null; then
+  echo "No 'public' remote — skipping public push"
+  exit 0
+fi
+TMPBRANCH="_public_mirror_$$"
+git checkout -b "$TMPBRANCH" "$CURRENT_BRANCH" --quiet
+if git ls-files --error-unmatch CLAUDE.md &>/dev/null 2>&1; then
+  git rm --cached CLAUDE.md --quiet
+  git commit --amend --no-edit --allow-empty --quiet
+  echo "Pushing to public (CLAUDE.md excluded)..."
+else
+  echo "Pushing to public..."
+fi
+git push public "$TMPBRANCH:$CURRENT_BRANCH" --force
+git checkout "$CURRENT_BRANCH" --force --quiet
+git branch -D "$TMPBRANCH" --quiet
+echo "Done — pushed to origin and public"
+SCRIPT
+chmod +x ~/bin/git-push-all
+
+# 2. Git alias + auth
+git config --global alias.push-all '!~/bin/git-push-all'
+gh auth setup-git
+
+# 3. Add public remote to each repo clone
+cd ~/dev/DDD && git remote add public https://github.com/cybersoloss/DDD.git
+cd ~/dev/ddd-tool && git remote add public https://github.com/cybersoloss/ddd-tool.git
+```
+
 ## Key Files
 | File | Purpose |
 |------|---------|
