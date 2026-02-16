@@ -875,6 +875,8 @@ metadata:
 | `flow.template` | boolean? | When `true`, this flow is a template (see Parameterized Flow pattern in Section 16) |
 | `flow.parameters` | `Record<string, FlowParameter>`? | Template parameters (required when `template: true`) |
 | `flow.contract` | object? | Sub-flow input/output contract (see below) |
+| `flow.emits` | string[]? | Events this flow emits (informational — domain.yaml remains source of truth). DDD Tool auto-populates from event nodes. |
+| `flow.listens_to` | string[]? | Events this flow consumes (informational — domain.yaml remains source of truth). DDD Tool auto-populates from trigger/event nodes. |
 | `trigger` | DddFlowNode | The entry point node |
 | `nodes` | DddFlowNode[] | All other nodes |
 | `metadata` | object | `{ created, modified }` ISO timestamps |
@@ -886,13 +888,14 @@ Every node has:
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | Unique node ID |
-| `type` | DddNodeType | One of the 27 node types |
+| `type` | DddNodeType | One of the 28 node types |
 | `position` | `{ x, y }` | Canvas position |
 | `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior? }` |
 | `spec` | object | Type-specific configuration (see below) |
 | `label` | string | Display name on canvas |
 | `observability` | object? | Logging/metrics/tracing config |
 | `security` | object? | Auth/rate-limiting/encryption config |
+| `parentId` | string? | ID of a container node (loop or parallel). When set, this node is rendered inside the container on the canvas. |
 
 ### Connection Data Annotations
 
@@ -994,6 +997,7 @@ The entry point of every flow. Exactly one per flow.
 | `event` | string \| string[] | What triggers the flow. String or string[] for multi-event triggers (see conventions below) |
 | `source` | string | Where the trigger comes from (e.g., "API Gateway") |
 | `filter` | `Record<string, unknown>`? | Event payload filter — flow only triggers when filter matches (supports dot notation and operators) |
+| `debounce_ms` | number? | Debounce delay in milliseconds. When set, `/ddd-implement` wraps the event handler in a debounce function. Only meaningful for `event:`, `ipc:`, `shortcut`, and `ui:` triggers. |
 | `description` | string | Details |
 
 **Trigger type conventions** — use these patterns in the `event` field to communicate trigger semantics:
@@ -1091,6 +1095,30 @@ spec:
     "payload.amount": { gte: 100 }
     "payload.status": [pending, confirmed]
   description: Only high-value pending/confirmed orders
+
+# Desktop: keyboard shortcut trigger — "shortcut {keys}"
+spec:
+  event: "shortcut Cmd+K"
+  source: Keyboard
+  description: Open search palette
+
+# Desktop: timer/interval trigger — "timer {interval_ms}"
+spec:
+  event: "timer 10000"
+  source: Timer
+  description: Poll for changes every 10 seconds
+
+# Desktop: UI action trigger — "ui:{action}"
+spec:
+  event: "ui:DragDrop"
+  source: Canvas
+  description: Triggered when user drags and drops on canvas
+
+# Desktop: IPC event trigger — "ipc:{event}"
+spec:
+  event: "ipc:spec-files-changed"
+  source: File Watcher
+  description: Triggered when native file watcher detects spec changes
 ```
 
 **job_config** — optional fields for cron triggers to configure the job queue:
@@ -1207,21 +1235,66 @@ spec:
 ### 6.2 Extended Traditional Nodes
 
 #### data_store
-Database operation. Use `sourceHandle` values `"success"` and `"error"` on connections for success/error routing.
+Data storage operation. Supports databases, filesystem, and in-memory stores. Use `sourceHandle` values `"success"` and `"error"` on connections for success/error routing.
 
 | Spec Field | Type | Values |
 |------------|------|--------|
+| `store_type` | string? | `'database' \| 'filesystem' \| 'memory'` — defaults to `'database'` if omitted (backwards compatible) |
 | `operation` | string | `'create' \| 'read' \| 'update' \| 'delete' \| 'upsert' \| 'create_many' \| 'update_many' \| 'delete_many'` |
-| `model` | string | Entity/table name (e.g., "User") |
+| `model` | string | Entity/table name (database) |
 | `data` | `Record<string, string>` | Fields to write (for create/update) |
 | `query` | `Record<string, string>` | Query conditions (for read/update/delete) |
 | `description` | string | Details |
-| `pagination` | object? | Pagination config (custom field, for list operations) |
-| `sort` | object? | Sort config (custom field, for list operations) |
+| `pagination` | object? | Pagination config (for list operations) |
+| `sort` | object? | Sort config (for list operations) |
 | `batch` | boolean? | Batch operation (process entire collection in one DB call) |
 | `upsert_key` | string[]? | Fields for upsert conflict resolution (required when operation is 'upsert') |
 | `include` | IncludeRelation[]? | Eager-load related records (joins) |
 | `returning` | boolean? | Return affected records (for create_many/update_many/delete_many) |
+| `safety` | string? | `'strict' \| 'lenient'` — when `'strict'`, `/ddd-implement` wraps all property accesses from this read in null-safe patterns (optional chaining, default values). Default: `'strict'`. |
+
+**Filesystem fields** (when `store_type: 'filesystem'`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | string | File path (supports `$.` variable interpolation) |
+| `content` | string | Content to write (for create/update operations) |
+| `create_parents` | boolean? | Create parent directories if they don't exist |
+
+```yaml
+# Filesystem: read a YAML config file
+spec:
+  store_type: filesystem
+  operation: read
+  path: "$.project_path/specs/system.yaml"
+  description: Load system spec from disk
+
+# Filesystem: write a file with parent directory creation
+spec:
+  store_type: filesystem
+  operation: create
+  path: "$.output_dir/reports/summary.json"
+  content: "$.report_json"
+  create_parents: true
+  description: Write generated report to disk
+```
+
+**Memory fields** (when `store_type: 'memory'`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `store` | string | Store name (e.g., "project-store", "flow-store") |
+| `selector` | string | State path to read/write (e.g., "domains", "currentFlow.nodes") |
+
+```yaml
+# Memory: read from an in-memory store
+spec:
+  store_type: memory
+  operation: read
+  store: project-store
+  selector: domains
+  description: Read domains from project store
+```
 
 **Pagination and sorting** — for read operations that return lists, add pagination custom fields:
 
@@ -1319,6 +1392,40 @@ spec:
 | `tls_fingerprint` | string? | `'randomize' \| 'chrome' \| 'firefox' \| 'default'` |
 | `fallback` | string? | `'headless_browser' \| 'none'` — fallback for bot-resistant sites |
 
+#### ipc_call
+Local IPC or native function call (Tauri commands, Electron IPC, React Native bridge, etc.). Use `sourceHandle` values `"success"` and `"error"` on connections for success/error routing.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `command` | string | Command/function name (e.g., "git_status", "compute_file_hash") |
+| `args` | `Record<string, unknown>`? | Named arguments to pass to the command |
+| `return_type` | string? | Expected return type (e.g., "string", "GitStatus", "boolean") |
+| `timeout_ms` | number? | Call timeout in milliseconds |
+| `bridge` | string? | Target bridge/runtime (e.g., "tauri", "electron", "react-native") — for implementation targeting |
+| `description` | string | Details |
+
+```yaml
+# Call a Tauri command
+spec:
+  command: git_status
+  args:
+    repo_path: "$.project_path"
+  return_type: GitStatus
+  timeout_ms: 5000
+  bridge: tauri
+  description: Get git status for the project repository
+
+# Compute file hash
+spec:
+  command: compute_file_hash
+  args:
+    path: "$.file_path"
+    algorithm: sha256
+  return_type: string
+  bridge: tauri
+  description: Compute SHA-256 hash of the spec file
+```
+
 #### event
 Publish or subscribe to an event.
 
@@ -1345,6 +1452,7 @@ Iterate over a collection. Has two output paths: `"body"` for the loop body and 
 | `break_condition` | string | When to stop early |
 | `on_error` | string? | `'continue' \| 'break' \| 'fail'` — behavior when iteration fails (default: 'fail') |
 | `accumulate` | AccumulateConfig? | Collect results across iterations |
+| `body_start` | string? | Node ID of the first node in the loop body. Used for nested layout — nodes with `parentId` matching this loop's ID are rendered inside the loop container. |
 | `description` | string | Details |
 
 **AccumulateConfig fields:**
@@ -1367,6 +1475,29 @@ spec:
     output: "all_new_posts"
   description: Check each source and collect new posts
 ```
+
+**Nested loop layout** — nodes inside a loop body can declare `parentId` to be visually nested inside the loop container on the canvas:
+
+```yaml
+# Loop node
+- id: loop-abc123
+  type: loop
+  spec:
+    collection: "$.items"
+    iterator: item
+    body_start: process-def456
+    description: Process each item
+
+# Node inside the loop body
+- id: process-def456
+  type: process
+  parentId: loop-abc123    # ← renders inside the loop container
+  spec:
+    action: validate_item
+    description: Validate the current item
+```
+
+The `parentId` field is a common field available on any `DddFlowNode`. When set, the node is rendered as a child of the container node (loop or parallel) on the canvas. The `body_start` field on the loop spec tells the DDD Tool which node begins the loop body for layout purposes.
 
 #### parallel
 Run branches concurrently. The `branches` field documents what each branch does and can optionally include conditions to skip branches. Actual parallel paths are defined by connections using `sourceHandle: "branch-0"`, `"branch-1"`, etc. Use `sourceHandle: "done"` for the join/continuation node.
@@ -1872,7 +2003,7 @@ connections:
     sourceHandle: "error"
 ```
 
-### service_call success/error
+### service_call / ipc_call success/error
 ```yaml
 connections:
   - targetNodeId: next-step-id
@@ -2973,7 +3104,7 @@ metadata:
 8. **Node IDs must be unique** within a flow — use a prefix matching the type (e.g., `input-001`, `process-002`)
 9. **Position doesn't affect logic** — positions are for canvas layout only, connections define the actual flow
 10. **Cross-cutting concerns are optional** — only add observability/security when needed for implementation hints
-11. **Always use sourceHandle on branching nodes** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), loop (body/done), parallel (branch-N/done), cache (hit/miss)
+11. **Always use sourceHandle on branching nodes** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), ipc_call (success/error), loop (body/done), parallel (branch-N/done), cache (hit/miss)
 12. **Create supplementary specs early** — system.yaml, architecture.yaml, config.yaml, errors.yaml, and schemas give `/ddd-implement` the context it needs to generate correct code
 13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, `manual`, `sse`, `ws`, or `pattern:` to communicate trigger type
 14. **Add status and body to terminals** — custom fields on terminal specs tell `/ddd-implement` exactly what HTTP response to generate
@@ -3035,7 +3166,7 @@ For nodes with dual output paths (data_store, service_call, input), the conventi
 - **Second connection** = error/failure path
 
 Always use explicit `sourceHandle` values for clarity:
-- `"success"` / `"error"` for data_store and service_call
+- `"success"` / `"error"` for data_store, service_call, and ipc_call
 - `"valid"` / `"invalid"` for input
 - `"true"` / `"false"` for decision
 
