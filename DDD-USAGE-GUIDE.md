@@ -69,6 +69,11 @@ Domain IDs are derived from names: lowercase, spaces replaced with hyphens (e.g.
 ```yaml
 name: Users
 description: User management and authentication
+owns_schemas: ["User", "Session"]
+stores:
+  - name: auth-store
+    shape: { currentUser: "User | null", token: "string | null" }
+    access_pattern: read_write
 flows:
   - id: user-register
     name: User Registration
@@ -103,6 +108,8 @@ layout:
 | `publishes_events` | EventWiring[] | Events this domain emits |
 | `consumes_events` | EventWiring[] | Events this domain listens to |
 | `owns_schemas` | string[]? | Schema names this domain owns (e.g., ["User", "Session"]) |
+| `stores` | StoreDefinition[]? | In-memory state store declarations for this domain |
+| `on_error` | DomainOnError? | Domain-level error hook — `/ddd-implement` adds this behavior to all error terminals in the domain |
 | `groups` | FlowGroup[]? | Visual grouping of flows at L2 |
 | `layout` | DomainLayout | Canvas positions (managed by DDD Tool) |
 
@@ -114,6 +121,51 @@ layout:
 | `name` | string | Display name |
 | `flows` | string[] | Flow IDs in this group |
 
+### StoreDefinition
+
+Declares an in-memory state store owned by this domain. Enables validation of `data_store` memory references and store topology visualization at L1/L2.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Store name (referenced by `data_store` nodes with `store_type: memory`) |
+| `shape` | `Record<string, string>`? | Field names and types (e.g., `{ domains: "DomainConfig[]", currentFlow: "FlowDocument" }`) |
+| `initial_state` | `Record<string, unknown>`? | Default/initial values |
+| `selectors` | string[]? | Common selector paths (e.g., `["domains", "currentFlow.nodes"]`) |
+| `access_pattern` | `'read_write' \| 'read_only'`? | Whether other domains can write to this store (default: `'read_write'`) |
+
+```yaml
+# Example: declare Zustand stores in a domain
+stores:
+  - name: project-store
+    shape:
+      domains: "Record<string, DomainConfig>"
+      projectPath: "string"
+      systemLayout: "SystemLayout"
+    selectors: ["domains", "projectPath", "systemLayout.zones"]
+    access_pattern: read_write
+  - name: ui-store
+    shape:
+      minimapVisible: "boolean"
+      locked: "boolean"
+    access_pattern: read_write
+```
+
+### DomainOnError
+
+Domain-level error hook. When set, `/ddd-implement` automatically adds this behavior to all error terminals in the domain, reducing boilerplate for centralized error handling patterns (e.g., error toast systems).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `emit_event` | string? | Event name to emit from all error terminals (e.g., `"ErrorOccurred"`) |
+| `description` | string? | What the error hook does |
+
+```yaml
+# Example: all error terminals in this domain emit ErrorOccurred
+on_error:
+  emit_event: ErrorOccurred
+  description: "Emit error event for centralized toast display"
+```
+
 ### DomainFlowEntry
 
 | Field | Type | Description |
@@ -123,6 +175,7 @@ layout:
 | `description` | string? | What this flow does |
 | `type` | `'traditional' \| 'agent'` | Flow type |
 | `tags` | string[]? | Custom tags (e.g., ["cron", "internal", "public-api"]) |
+| `keyboard_shortcut` | string? | Keyboard shortcut (e.g., `"Cmd+K"`). Auto-populated from `shortcut` trigger events by DDD Tool. Shown as badge at L2. |
 | `criticality` | string? | `'critical' \| 'high' \| 'normal' \| 'low'` — visual priority at L2 |
 | `throughput` | string? | Expected volume (e.g., `"~500 items/day"`) — shown as subtitle at L2 |
 
@@ -872,6 +925,7 @@ metadata:
 | `flow.type` | `'traditional' \| 'agent'` | Flow category. Flows can be further categorized via `tags` on the DomainFlowEntry |
 | `flow.domain` | string | Parent domain ID |
 | `flow.description` | string? | What this flow does |
+| `flow.keyboard_shortcut` | string? | Keyboard shortcut that triggers this flow (e.g., `"Cmd+K"`). Informational — auto-populated from `shortcut` trigger events by DDD Tool. Shown as badge at L2. |
 | `flow.template` | boolean? | When `true`, this flow is a template (see Parameterized Flow pattern in Section 16) |
 | `flow.parameters` | `Record<string, FlowParameter>`? | Template parameters (required when `template: true`) |
 | `flow.contract` | object? | Sub-flow input/output contract (see below) |
@@ -1240,7 +1294,7 @@ Data storage operation. Supports databases, filesystem, and in-memory stores. Us
 | Spec Field | Type | Values |
 |------------|------|--------|
 | `store_type` | string? | `'database' \| 'filesystem' \| 'memory'` — defaults to `'database'` if omitted (backwards compatible) |
-| `operation` | string | `'create' \| 'read' \| 'update' \| 'delete' \| 'upsert' \| 'create_many' \| 'update_many' \| 'delete_many'` |
+| `operation` | string | Database: `'create' \| 'read' \| 'update' \| 'delete' \| 'upsert' \| 'create_many' \| 'update_many' \| 'delete_many'`. Memory: `'get' \| 'set' \| 'merge' \| 'reset' \| 'subscribe' \| 'update_where'` (CRUD aliases also accepted) |
 | `model` | string | Entity/table name (database) |
 | `data` | `Record<string, string>` | Fields to write (for create/update) |
 | `query` | `Record<string, string>` | Query conditions (for read/update/delete) |
@@ -1286,14 +1340,43 @@ spec:
 | `store` | string | Store name (e.g., "project-store", "flow-store") |
 | `selector` | string | State path to read/write (e.g., "domains", "currentFlow.nodes") |
 
+**Memory operations** (preferred when `store_type: 'memory'`):
+
+| Operation | Equivalent CRUD | Description |
+|-----------|----------------|-------------|
+| `get` | `read` | Read state at selector path |
+| `set` | `create`/`update` | Replace state at selector path |
+| `merge` | `update` | Shallow-merge into state at selector path |
+| `reset` | `delete` | Reset store to initial state (selector optional) |
+| `subscribe` | — | Reactive subscription to state changes at selector path |
+| `update_where` | — | Find items in array by predicate and apply patch |
+
+**Additional `update_where` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `predicate` | string | Expression to match items (e.g., `"$.id === targetId"`) |
+| `patch` | `Record<string, unknown>` | Fields to update on matched items |
+
 ```yaml
 # Memory: read from an in-memory store
 spec:
   store_type: memory
-  operation: read
+  operation: get
   store: project-store
   selector: domains
   description: Read domains from project store
+
+# Memory: update specific item in array by predicate
+spec:
+  store_type: memory
+  operation: update_where
+  store: app-store
+  selector: errors
+  predicate: "$.id === targetErrorId"
+  patch:
+    dismissed: true
+  description: Dismiss a specific error by ID
 ```
 
 **Pagination and sorting** — for read operations that return lists, add pagination custom fields:
@@ -1402,6 +1485,7 @@ Local IPC or native function call (Tauri commands, Electron IPC, React Native br
 | `return_type` | string? | Expected return type (e.g., "string", "GitStatus", "boolean") |
 | `timeout_ms` | number? | Call timeout in milliseconds |
 | `bridge` | string? | Target bridge/runtime (e.g., "tauri", "electron", "react-native") — for implementation targeting |
+| `result_condition` | string? | Expression that maps return values to success/error handles (e.g., `"$.result === true"` → success, else → error). Eliminates need for a separate decision node after boolean-returning calls. |
 | `description` | string | Details |
 
 ```yaml
@@ -1424,6 +1508,16 @@ spec:
   return_type: string
   bridge: tauri
   description: Compute SHA-256 hash of the spec file
+
+# Boolean IPC with result_condition — routes to success/error without a decision node
+spec:
+  command: path_exists
+  args:
+    path: "$.target_path"
+  return_type: boolean
+  result_condition: "$.result === true"
+  bridge: tauri
+  description: Check if the target path exists
 ```
 
 #### event
