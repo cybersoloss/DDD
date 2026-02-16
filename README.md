@@ -38,6 +38,18 @@ DDD is a methodology for building software through visual flow diagrams that out
 
 **Step 5 — Test & Iterate (Session B):** Run `/ddd-test` to verify tests pass after implementation or manual edits. Use `/ddd-status` for a quick overview. As requirements evolve, use `/ddd-update` to modify specs, `/ddd-implement` to update code, and `/ddd-sync` to detect drift.
 
+### Evolving DDD Itself
+
+As you use DDD across projects, you'll encounter framework gaps — missing node types, inadequate fields, layer visibility issues. DDD has a built-in feedback loop:
+
+```
+/ddd-create projA --shortfalls  →  specs/shortfalls.yaml   ┐
+/ddd-create projB --shortfalls  →  specs/shortfalls.yaml   ├─→  /ddd-evolve  →  evolution plan  →  human approves  →  /ddd-evolve --apply
+/ddd-create projC --shortfalls  →  specs/shortfalls.yaml   ┘
+```
+
+The `--shortfalls` flag on `/ddd-create` generates a structured report of 7 gap categories (missing node types, inadequate nodes, missing fields, connection limitations, layer gaps, workarounds, cross-cutting gaps). `/ddd-evolve` then reads these reports, critically evaluates each gap through 6 filters (already possible? recurring? specific? breaking? adequate workaround? intentional?), and produces a tiered recommendation plan. Nothing changes until a human approves.
+
 ### Why Two Sessions?
 
 | Session A (Architect) | Session B (Developer) |
@@ -51,18 +63,19 @@ The **specs directory** is the contract between sessions. Both Claude instances 
 
 ## Commands
 
-Eight Claude Code slash commands power the workflow:
+Nine Claude Code slash commands power the workflow:
 
 | Command | What it does |
 |---------|-------------|
-| `/ddd-create` | Describe a project in natural language → full DDD spec structure |
-| `/ddd-reverse` | Reverse-engineer existing code → DDD specs |
+| `/ddd-create` | Describe a project in natural language → full DDD spec structure. Use `--shortfalls` to generate a framework gap analysis report. |
+| `/ddd-reverse` | Reverse-engineer existing code → DDD specs (6 strategies from baseline to codex based on codebase size) |
 | `/ddd-scaffold` | Set up project skeleton from specs (Session B first step) |
 | `/ddd-implement` | Read specs → generate flow code + tests, update mapping |
 | `/ddd-test` | Run tests for implemented flows without re-generating code |
 | `/ddd-status` | Quick read-only overview of project implementation state |
 | `/ddd-update` | Natural language change request → updated YAML specs |
 | `/ddd-sync` | Sync mapping, discover untracked code, fix drifted implementations |
+| `/ddd-evolve` | Analyze shortfall reports from multiple projects, critically evaluate gaps, produce a prioritized evolution plan for human approval |
 
 Commands are in the [claude-commands](https://github.com/mhcandan/claude-commands) repo.
 
