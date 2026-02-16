@@ -857,7 +857,33 @@ architecture:
         - lint
         - type_check
         - test
-        
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CROSS-CUTTING PATTERNS (learned from implementation)
+  # ─────────────────────────────────────────────────────────────────────────────
+  # These are project-specific conventions discovered during Build/Reflect phases.
+  # Each pattern describes a recurring implementation approach that all matching
+  # flows should follow. /ddd-implement reads these and applies them automatically.
+  # /ddd-reflect discovers patterns, /ddd-promote writes them here.
+  #
+  # Pattern fields:
+  #   description  — What this pattern does and why it's needed
+  #   utility      — Path to the utility file that implements it
+  #   config       — Pattern-specific configuration
+  #   used_by_domains — Which domains use this pattern
+  #   convention   — When and how to apply this pattern
+
+  cross_cutting_patterns:
+    # example_pattern:
+    #   description: >
+    #     What this pattern does and why it's needed
+    #   utility: src/utils/example.ts
+    #   config:
+    #     key: value
+    #   used_by_domains: [domain1, domain2]
+    #   convention: >
+    #     When and how to apply this pattern
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # END OF TEMPLATE
 # ═══════════════════════════════════════════════════════════════════════════════

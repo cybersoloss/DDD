@@ -6,14 +6,14 @@
 |-----------|---------|
 | [DDD repo](https://github.com/mhcandan/DDD) | Spec, guide, templates |
 | [DDD Tool](https://github.com/mhcandan/ddd-tool) | Desktop app for visual design |
-| [Claude Commands](https://github.com/mhcandan/claude-commands) | `/ddd-create`, `/ddd-implement`, `/ddd-update`, `/ddd-sync` |
+| [Claude Commands](https://github.com/mhcandan/claude-commands) | 11 slash commands for the full lifecycle |
 | Claude Code | AI that reads specs and generates code |
 
 ---
 
-## Quick Start: Create a Project in 3 Steps
+## Quick Start: Create a Project in 4 Phases
 
-### Step 1 — Generate specs (Session A)
+### Phase 1 — Create specs
 
 Open Claude Code and describe your project:
 
@@ -52,7 +52,7 @@ my-project/
       send-email.yaml
 ```
 
-### Step 2 — Review in DDD Tool
+### Phase 2 — Design in DDD Tool
 
 Open the project in the DDD Tool desktop app:
 
@@ -62,15 +62,27 @@ Open the project in the DDD Tool desktop app:
 
 Validate with 20+ built-in rules. Adjust nodes, connections, and specs on the canvas. Save (Cmd+S) writes changes back to the YAML files.
 
-### Step 3 — Implement (Session B)
+### Phase 3 — Build
 
-Open a fresh Claude Code session in the project directory:
+Open Claude Code in the project directory:
 
 ```
 /ddd-implement --all
 ```
 
 Claude reads all specs, generates code for each flow, writes tests, runs them, and tracks everything in `.ddd/mapping.yaml`.
+
+### Phase 4 — Reflect (after implementation stabilizes)
+
+Capture implementation wisdom and feed it back into specs:
+
+```
+/ddd-sync              # Check alignment between specs and code
+/ddd-reflect           # Capture patterns code has that specs don't describe
+/ddd-promote           # Move approved patterns into permanent specs
+```
+
+This closes the loop — code wisdom feeds back into specs, making future implementations smarter.
 
 ---
 
@@ -116,12 +128,20 @@ Claude updates the YAML spec. Reload DDD Tool (Cmd+R) to see the change. Then:
 
 ## Commands Reference
 
-| Command | What it does |
-|---------|-------------|
-| `/ddd-create` | Describe project → full spec structure |
-| `/ddd-implement` | Specs → code + tests |
-| `/ddd-update` | Natural language → updated specs |
-| `/ddd-sync` | Keep specs and code aligned |
+| Phase | Command | What it does |
+|-------|---------|-------------|
+| 1 Create | `/ddd-create` | Describe project → full spec structure |
+| 2 Design | *(DDD Tool)* | Visual review and refinement on canvas |
+| 3 Build | `/ddd-scaffold` | Set up project skeleton from specs |
+| 3 Build | `/ddd-implement` | Specs → code + tests |
+| 3 Build | `/ddd-test` | Run tests for implemented flows |
+| 4 Reflect | `/ddd-reverse` | Existing code → DDD specs |
+| 4 Reflect | `/ddd-reflect` | Capture implementation wisdom as annotations |
+| 4 Reflect | `/ddd-promote` | Move approved annotations into specs |
+| Any | `/ddd-status` | Quick read-only project overview |
+| Any | `/ddd-update` | Natural language → updated specs |
+| Any | `/ddd-sync` | Keep specs and code aligned |
+| Meta | `/ddd-evolve` | Analyze shortfalls → evolve DDD framework |
 
 ### Scope arguments
 
@@ -147,15 +167,18 @@ Claude updates the YAML spec. Reload DDD Tool (Cmd+R) to see the change. Then:
 | `specs/domains/*/domain.yaml` | Domain config, flow list, event wiring |
 | `specs/domains/*/flows/*.yaml` | Flow graphs (trigger, nodes, connections) |
 | `.ddd/mapping.yaml` | Implementation tracking (spec hash, file list) |
+| `.ddd/annotations/{domain}/{flow}.yaml` | Implementation wisdom captured by /ddd-reflect |
 
 ---
 
 ## Key Concepts
 
-- **Specs are the source of truth** — code is derived from specs, not the other way around
+- **Specs and code are both sources of truth at different levels** — specs define what/why, code accumulates how. The Reflect phase feeds code wisdom back into specs.
+- **Four-phase lifecycle** — Create → Design → Build → Reflect. Each phase has dedicated commands.
 - **19 node types** — trigger, input, process, decision, terminal, data_store, service_call, event, loop, parallel, sub_flow, llm_call, agent_loop, guardrail, human_gate, orchestrator, smart_router, handoff, agent_group
 - **Branching nodes use `sourceHandle`** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), loop (body/done), parallel (branch-N/done)
-- **Session separation** — Session A designs (no code noise), Session B implements (no design noise)
-- **Human bridges sessions** — reviews specs in DDD Tool before implementation
+- **Human bridges phases** — reviews specs in DDD Tool between Create and Build, reviews annotations between Build and Reflect
+
+> **Note:** Legacy docs may reference "Session A" (= Phase 1+2) and "Session B" (= Phase 3+4).
 
 See the [DDD Usage Guide](DDD-USAGE-GUIDE.md) for complete YAML formats, all node specs, and examples.

@@ -11,21 +11,26 @@ This document captures the complete specification for the DDD tool, enabling con
 
 **Design Driven Development (DDD)** is a unified tool for bidirectional conversion between visual flow diagrams and code, enabling solopreneurs and small teams to architect systems visually while LLMs (like Claude Code) handle implementation.
 
-### The Two-Way Workflow
+### The Four-Phase Lifecycle
 
 ```
-FORWARD (Design-First):
-  Diagram + Spec → Code
-  You design visually → LLM implements
+Phase 1: CREATE        Phase 2: DESIGN         Phase 3: BUILD          Phase 4: REFLECT
+Human intent → Specs   Human reviews in Tool   Specs → Code            Code wisdom → Specs
 
-REVERSE (Documentation/Analysis):
-  Code/Repo → Diagram + Spec
-  Import existing code → Visualize and document
+/ddd-create            (DDD Tool)              /ddd-scaffold           /ddd-reverse
+/ddd-update                                    /ddd-implement          /ddd-sync --discover
+                                               /ddd-test               /ddd-reflect
+                                                                       /ddd-promote
+
+Cross-cutting (any phase): /ddd-status
+Meta-level: /ddd-evolve
 ```
+
+> **Note:** Legacy docs may reference "Session A" (= Phase 1+2) and "Session B" (= Phase 3+4).
 
 ### Core Insight
 
-**Specs are the single source of truth.** They live in the Git repo alongside code. Visual diagrams are just a UI for editing YAML spec files.
+**Specs and code are both sources of truth at different levels.** Specs define the what and why, code accumulates the how. The Reflect phase (Phase 4) feeds implementation wisdom back into specs through annotations and promotion. Visual diagrams are a UI for editing YAML spec files. Everything lives in the Git repo.
 
 ---
 
@@ -86,7 +91,8 @@ obligo/
 ├── src/                     # Code generated from specs
 ├── .ddd/
 │   ├── config.yaml          # Project settings
-│   └── mapping.yaml         # Spec-to-code mapping
+│   ├── mapping.yaml         # Spec-to-code mapping
+│   └── annotations/         # Implementation wisdom from /ddd-reflect
 └── CLAUDE.md                # Instructions for Claude Code
 ```
 
@@ -117,16 +123,15 @@ Every spec element maps to code:
 # .ddd/mapping.yaml
 flows:
   webhook-ingestion:
-    file: domains/ingestion/src/router.py
-    function: receive_webhook
-    nodes:
-      validate_signature:
-        type: inline
-        location: "router.py:45-52"
-      rate_limit_check:
-        type: middleware
-        file: domains/ingestion/src/middleware.py
-        function: rate_limit_check
+    specHash: a1b2c3d4...          # SHA-256 of the flow YAML
+    implementedAt: "2025-01-15T14:30:00Z"
+    files:
+      - domains/ingestion/src/router.py
+      - domains/ingestion/src/middleware.py
+    fileHashes:                     # Per-file hashes for reverse drift detection
+      domains/ingestion/src/router.py: abc123...
+    syncState: synced               # synced | spec_ahead | code_ahead | diverged
+    annotationCount: 0              # Pending annotations from /ddd-reflect
 ```
 
 ## 4. Validation as First-Class Citizen
@@ -3100,6 +3105,32 @@ architecture:
         - name: deploy
           run: kubectl apply
 ```
+
+#### Cross-Cutting Patterns
+
+The `cross_cutting_patterns` section captures project-specific implementation conventions discovered during Phase 3 (Build) and Phase 4 (Reflect). Each pattern describes a recurring approach that `/ddd-implement` applies automatically to matching flows.
+
+```yaml
+cross_cutting_patterns:
+  stealth_http:
+    description: >
+      Rotate user agents, use proxy pools, maintain cookie jars per domain
+    utility: src/utils/stealth-http.ts
+    config:
+      user_agent_pool: 50
+      proxy_rotation: per_request
+    used_by_domains: [monitoring, discovery]
+    convention: >
+      All service_call nodes fetching external content must use stealth HTTP
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | string | What this pattern does and why |
+| `utility` | string? | Path to the utility file implementing it |
+| `config` | `Record<string, unknown>?` | Pattern-specific configuration |
+| `used_by_domains` | string[] | Which domains use this pattern |
+| `convention` | string | When and how to apply this pattern |
 
 ## Config Schema (Environment Variables)
 
