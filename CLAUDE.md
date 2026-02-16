@@ -31,7 +31,7 @@ cd DDD && git remote add public https://github.com/cybersoloss/DDD.git
 | `ddd-specification-complete.md` | Full specification — architecture, lifecycle, command specs |
 | `ddd-implementation-guide.md` | Implementation patterns and code generation rules |
 | `ddd-quickstart.md` | Four-step quickstart for new users |
-| `commands/` | All 11 DDD slash commands for Claude Code (install: `cp commands/*.md ~/.claude/commands/`) |
+| [claude-commands](https://github.com/mhcandan/claude-commands) | All DDD slash commands (install via claude-commands repo) |
 | `templates/` | Architecture, config, and errors YAML templates |
 
 ## Four-Phase Lifecycle
@@ -50,9 +50,9 @@ Cross-cutting: /ddd-status    Meta: /ddd-evolve
 ## Related Repos
 | Repo | What | Private | Public |
 |------|------|---------|--------|
-| **DDD** (this repo) | Methodology, specs, templates, DDD commands | mhcandan/DDD | cybersoloss/DDD |
+| **DDD** (this repo) | Methodology, specs, templates | mhcandan/DDD | cybersoloss/DDD |
 | **ddd-tool** | Desktop app (Tauri 2.0 + React) | mhcandan/ddd-tool | cybersoloss/ddd-tool |
-| **claude-commands** | General dev commands (code-review, security-scan, etc.) | mhcandan/claude-commands | — |
+| **claude-commands** | All slash commands — DDD + general dev (code-review, security-scan, etc.) | mhcandan/claude-commands | — |
 
 ## Conventions
 - `DDD-USAGE-GUIDE.md` is the single source of truth for YAML formats — other docs reference it, not duplicate it

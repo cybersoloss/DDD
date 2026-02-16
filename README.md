@@ -77,12 +77,9 @@ Eleven Claude Code slash commands power the workflow:
 ### Install Commands
 
 ```bash
-# Clone this repo
-git clone https://github.com/mhcandan/DDD.git
-
-# Copy DDD commands into Claude Code
-mkdir -p ~/.claude/commands
-cp DDD/commands/*.md ~/.claude/commands/
+# Clone the commands repo and install
+git clone https://github.com/mhcandan/claude-commands.git
+cd claude-commands && ./install.sh
 
 # Restart Claude Code to load the commands
 ```
@@ -95,24 +92,13 @@ DDD/
 ├── ddd-specification-complete.md    # Full spec: concepts, features, data model
 ├── ddd-implementation-guide.md      # Build instructions: types, stores, components
 ├── ddd-quickstart.md                # Quick start guide for using DDD
-├── commands/                        # Claude Code slash commands
-│   ├── DDD-commands.md              # Command reference
-│   ├── ddd-create.md                # /ddd-create
-│   ├── ddd-reverse.md               # /ddd-reverse
-│   ├── ddd-update.md                # /ddd-update
-│   ├── ddd-scaffold.md              # /ddd-scaffold
-│   ├── ddd-implement.md             # /ddd-implement
-│   ├── ddd-test.md                  # /ddd-test
-│   ├── ddd-sync.md                  # /ddd-sync
-│   ├── ddd-reflect.md               # /ddd-reflect
-│   ├── ddd-promote.md               # /ddd-promote
-│   ├── ddd-status.md                # /ddd-status
-│   └── ddd-evolve.md                # /ddd-evolve
 └── templates/
     ├── architecture-template.yaml   # Reusable: project structure & conventions
     ├── config-template.yaml         # Reusable: environment variables schema
     └── errors-template.yaml         # Reusable: standardized error codes
 ```
+
+> **Commands** live in the [claude-commands](https://github.com/mhcandan/claude-commands) repo.
 
 ## What's Here vs What's Not
 

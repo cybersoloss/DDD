@@ -5024,7 +5024,7 @@ The DDD Tool and Claude Code work together through a design-implement-sync loop.
 6. **Sync** — run `/ddd-sync` to update `.ddd/mapping.yaml`
 7. **Reload** in DDD Tool to see updated implementation status
 
-**Custom Claude Code commands** (installed at `~/.claude/commands/`):
+**Custom Claude Code commands** (installed at `~/.claude/commands/`, repo: [mhcandan/claude-commands](https://github.com/mhcandan/claude-commands)):
 
 | Command | Scope | What it does |
 |---------|-------|-------------|
