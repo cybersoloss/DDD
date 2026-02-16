@@ -78,7 +78,7 @@ Eleven Claude Code slash commands power the workflow:
 
 ```bash
 # Clone the commands repo and install
-git clone https://github.com/mhcandan/claude-commands.git
+git clone https://github.com/cybersoloss/claude-commands.git
 cd claude-commands && ./install.sh
 
 # Restart Claude Code to load the commands
