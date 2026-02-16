@@ -44,8 +44,8 @@ As you use DDD across projects, you'll encounter framework gaps — missing node
 
 ```
 /ddd-create projA --shortfalls  →  specs/shortfalls.yaml   ┐
-/ddd-create projB --shortfalls  →  specs/shortfalls.yaml   ├─→  /ddd-evolve  →  evolution plan  →  human approves  →  /ddd-evolve --apply
-/ddd-create projC --shortfalls  →  specs/shortfalls.yaml   ┘
+/ddd-create projB --shortfalls  →  specs/shortfalls.yaml   ├→ /ddd-evolve → /ddd-evolve --review → /ddd-evolve --apply
+/ddd-create projC --shortfalls  →  specs/shortfalls.yaml   ┘    (analyze)     (interactive decisions)   (execute approved)
 ```
 
 The `--shortfalls` flag on `/ddd-create` generates a structured report of 7 gap categories (missing node types, inadequate nodes, missing fields, connection limitations, layer gaps, workarounds, cross-cutting gaps). `/ddd-evolve` then reads these reports, critically evaluates each gap through 6 filters (already possible? recurring? specific? breaking? adequate workaround? intentional?), and produces a tiered recommendation plan. Nothing changes until a human approves.
@@ -75,7 +75,7 @@ Nine Claude Code slash commands power the workflow:
 | `/ddd-status` | Quick read-only overview of project implementation state |
 | `/ddd-update` | Natural language change request → updated YAML specs |
 | `/ddd-sync` | Sync mapping, discover untracked code, fix drifted implementations |
-| `/ddd-evolve` | Analyze shortfall reports from multiple projects, critically evaluate gaps, produce a prioritized evolution plan for human approval |
+| `/ddd-evolve` | Analyze shortfall reports → `--review` for interactive decisions → `--apply` to execute approved changes |
 
 Commands are in the [claude-commands](https://github.com/mhcandan/claude-commands) repo.
 
