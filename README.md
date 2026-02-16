@@ -74,7 +74,18 @@ Eleven Claude Code slash commands power the workflow:
 | Any | `/ddd-status` | Quick read-only overview of project implementation state |
 | Meta | `/ddd-evolve` | Analyze shortfall reports → `--review` for decisions → `--apply` to execute |
 
-Commands are in the [claude-commands](https://github.com/mhcandan/claude-commands) repo.
+### Install Commands
+
+```bash
+# Clone this repo
+git clone https://github.com/mhcandan/DDD.git
+
+# Copy DDD commands into Claude Code
+mkdir -p ~/.claude/commands
+cp DDD/commands/*.md ~/.claude/commands/
+
+# Restart Claude Code to load the commands
+```
 
 ## Repository Structure
 
@@ -84,6 +95,19 @@ DDD/
 ├── ddd-specification-complete.md    # Full spec: concepts, features, data model
 ├── ddd-implementation-guide.md      # Build instructions: types, stores, components
 ├── ddd-quickstart.md                # Quick start guide for using DDD
+├── commands/                        # Claude Code slash commands
+│   ├── DDD-commands.md              # Command reference
+│   ├── ddd-create.md                # /ddd-create
+│   ├── ddd-reverse.md               # /ddd-reverse
+│   ├── ddd-update.md                # /ddd-update
+│   ├── ddd-scaffold.md              # /ddd-scaffold
+│   ├── ddd-implement.md             # /ddd-implement
+│   ├── ddd-test.md                  # /ddd-test
+│   ├── ddd-sync.md                  # /ddd-sync
+│   ├── ddd-reflect.md               # /ddd-reflect
+│   ├── ddd-promote.md               # /ddd-promote
+│   ├── ddd-status.md                # /ddd-status
+│   └── ddd-evolve.md                # /ddd-evolve
 └── templates/
     ├── architecture-template.yaml   # Reusable: project structure & conventions
     ├── config-template.yaml         # Reusable: environment variables schema
@@ -102,7 +126,7 @@ DDD/
 ## Key Documents
 
 ### [DDD Usage Guide](DDD-USAGE-GUIDE.md)
-The definitive reference for writing DDD specs. Covers all 19 node types, YAML formats, connection patterns, supplementary spec files, validation rules, design patterns, and complete examples. This is what `/ddd-create` fetches at runtime to generate correct specs.
+The definitive reference for writing DDD specs. Covers all 28 node types, YAML formats, connection patterns, supplementary spec files, validation rules, design patterns, and complete examples. This is what `/ddd-create` fetches at runtime to generate correct specs.
 
 ### Specification (~280 KB)
 The complete spec covering: multi-level canvas, 20+ node types, agent & orchestration flows, LLM design assistant, Claude Code integration, bidirectional drift detection, diagram-derived test generation, design validation, production infrastructure generation, and more.
@@ -126,4 +150,4 @@ Or skip manual setup entirely — `/ddd-create` generates everything including t
 
 The desktop app (Tauri + React) is built in a separate repo: **[mhcandan/ddd-tool](https://github.com/mhcandan/ddd-tool)**
 
-19 node types, 3-level canvas navigation, LLM design assistant, Git integration, validation engine, production generators (OpenAPI, Docker, K8s, CI/CD), project memory, drift detection, and reconciliation.
+28 node types, 3-level canvas navigation, LLM design assistant, Git integration, validation engine, production generators (OpenAPI, Docker, K8s, CI/CD), project memory, drift detection, and reconciliation.
