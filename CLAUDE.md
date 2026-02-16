@@ -7,7 +7,9 @@ The methodology, specification, and reference documentation for **Design Driven 
 - `origin` → github.com/mhcandan/DDD (private, master repo)
 - `public` → github.com/cybersoloss/DDD (public mirror)
 
-**Push to both:** `git push-all` (alias for `git push origin main && git push public main`)
+**Push to both:** `git push-all` — pushes to origin normally, then pushes to public with CLAUDE.md excluded (force-push). CLAUDE.md stays on mhcandan only, never on cybersoloss.
+
+**GitHub accounts:** `mhcandan` (primary dev), `cybersoloss` (public). mhcandan is collaborator on cybersoloss repos — no account switching needed.
 
 **Handle community PRs:**
 ```bash
