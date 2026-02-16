@@ -2413,18 +2413,19 @@ Generates a complete DDD project from a natural-language description and/or desi
 
 **What it does:**
 1. Fetches the latest DDD Usage Guide for spec format reference
-2. If `--from` is provided, reads the design file (images, PDFs, markdown, URLs) and extracts domains, flows, data models, events, and tech stack
-3. Analyzes the description and/or design file (asks clarifying questions if brief)
-4. Creates the full project structure:
+2. If this is an existing project (`ddd-project.json` exists): reads `architecture.yaml` for `cross_cutting_patterns`, existing domain specs for event wiring, and `.ddd/annotations/` for implementation wisdom. New flows automatically inherit applicable cross-cutting patterns.
+3. If `--from` is provided, reads the design file (images, PDFs, markdown, URLs) and extracts domains, flows, data models, events, and tech stack
+4. Analyzes the description and/or design file (asks clarifying questions if brief)
+5. Creates the full project structure:
    - `ddd-project.json` with domain list
-   - `specs/system.yaml`, `specs/architecture.yaml`, `specs/config.yaml`
+   - `specs/system.yaml`, `specs/architecture.yaml` (with `cross_cutting_patterns: {}` placeholder), `specs/config.yaml`
    - `specs/shared/errors.yaml`, `specs/shared/types.yaml` (if needed)
    - `specs/schemas/` with `_base.yaml` and per-model schemas
    - `specs/domains/{domain}/domain.yaml` with flows and event wiring
-   - `specs/domains/{domain}/flows/{flow}.yaml` with full node graphs
-5. Validates all flows (trigger → terminals, wired branches, event matching)
-6. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
-7. Shows summary with domain counts, file list, event wiring, and next steps
+   - `specs/domains/{domain}/flows/{flow}.yaml` with full node graphs using all node types (including `collection`, `parse`, `crypto`, `batch`, `transaction`, `cache`, `delay`, `transform`, `ipc_call`) and trigger conventions (`shortcut {keys}`, `timer {interval_ms}`, `ui:{action}`, `ipc:{event}`)
+6. Validates all flows (trigger → terminals, wired branches, event matching)
+7. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
+8. Shows summary with domain counts, file list, event wiring, and next steps
 
 **After running:**
 1. Open the project in DDD Tool to review visually
@@ -2442,9 +2443,10 @@ Sets up the project skeleton and shared infrastructure from specs. This is the f
 1. Reads system.yaml, architecture.yaml, config.yaml, errors.yaml, types.yaml, and all schema files
 2. Initializes the project (package.json, tsconfig, dependencies, directory structure)
 3. Generates shared infrastructure: config loader, error handler, database schema, app entry point, integration clients, event bus, test setup
-4. Creates environment files (.env.example, .gitignore)
-5. Verifies build compiles and example test passes
-6. Initializes `.ddd/mapping.yaml`
+4. Generates cross-cutting utility files from `architecture.yaml` → `cross_cutting_patterns` (e.g., stealth HTTP wrapper, encryption helpers, soft-delete filters) using each pattern's `utility`, `config`, and `convention` fields
+5. Creates environment files (.env.example, .gitignore)
+6. Verifies build compiles and example test passes
+7. Initializes `.ddd/mapping.yaml` and `.ddd/annotations/` directory
 
 **After running:** Run `/ddd-implement --all` to generate flow-level code into the scaffolded project.
 
@@ -2460,14 +2462,15 @@ Generates implementation code from DDD specs.
 | *(empty)* | Interactive mode | `/ddd-implement` |
 
 **What it does:**
-1. Reads `ddd-project.json` and flow YAML specs
-2. Reads supplementary specs (system.yaml, architecture.yaml, config.yaml, errors.yaml, schemas/) for implementation context
-3. Checks `.ddd/mapping.yaml` for existing implementations
-4. Follows the node graph: trigger -> nodes -> terminals
-5. Generates code for each node (route handlers, services, DB queries, etc.)
-6. Generates tests (happy path, decision branches, error states, input validation)
-7. Runs tests and fixes until passing
-8. Updates `.ddd/mapping.yaml` with specHash and file list
+1. Fetches the latest DDD Usage Guide for spec format reference
+2. Reads `ddd-project.json` and flow YAML specs
+3. Reads supplementary specs (system.yaml, architecture.yaml including `cross_cutting_patterns`, config.yaml, errors.yaml, schemas/) for implementation context
+4. Checks `.ddd/mapping.yaml` for existing implementations
+5. Follows the node graph: trigger → nodes → terminals, implementing all node types (including `collection`, `parse`, `crypto`, `batch`, `transaction`, `cache`, `delay`, `transform`, `ipc_call`)
+6. Applies cross-cutting patterns from `architecture.yaml` to matching nodes — e.g., `stealth_http` to external service calls, `soft_delete` to read operations, `encryption` to credential writes, `api_key_resolution` to flows needing API keys
+7. Generates tests (happy path, decision branches, error states, input validation)
+8. Runs tests and fixes until passing
+9. Updates `.ddd/mapping.yaml` with specHash, file list, and fileHashes
 
 ### /ddd-update
 
