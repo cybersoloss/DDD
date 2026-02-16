@@ -2497,14 +2497,16 @@ Claude: /ddd-update users/user-login
 
 ### /ddd-sync
 
-Synchronizes specs with implementation state.
+Synchronizes specs with implementation state using bidirectional analysis. This is the primary tool for resolving drift safely.
 
 | Argument | What it does |
 |----------|-------------|
-| *(default)* | Sync mapping.yaml with current implementation state |
-| `--discover` | Also discover untracked code and suggest new flow specs |
-| `--fix-drift` | Re-implement flows where specs have drifted |
+| *(default)* | Bidirectional sync — classify drift, update hashes for verified flows only |
+| `--discover` | Also discover untracked code and propose new specs (analyze → approve → apply) |
+| `--fix-drift` | Resolve all drift using the decision tree: metadata→hash, code-ahead→reverse, new-logic→implement |
 | `--full` | All of the above |
+
+**Key behavior:** `/ddd-sync` never blindly updates hashes. It classifies each drift (metadata-only, spec enriched, code ahead, new logic) and only updates hashes when both spec→code and code→spec checks pass. Flows where code is ahead of spec are flagged for `/ddd-reverse` instead. See Section 12.1 for the full drift management workflow.
 
 ### /ddd-status
 
@@ -2515,9 +2517,10 @@ Quick read-only overview of the project's implementation state. No files are mod
 **What it does:**
 1. Reads `ddd-project.json`, all domain.yaml files, and `.ddd/mapping.yaml`
 2. For each flow, computes status: **Up to date**, **Drifted**, **Stale**, or **Not implemented**
-3. Checks scaffold state (package.json, entry point, database schema)
-4. Displays a table with domain, flow, status, and implementation date
-5. Suggests next actions (scaffold, implement, fix drift)
+3. **For drifted flows, classifies the drift type** (metadata-only, spec enriched, code ahead, new logic) by reading both the spec diff and the implementation code
+4. Checks scaffold state (package.json, entry point, database schema)
+5. Displays a table with domain, flow, status (including drift type), and implementation date
+6. Suggests next actions using **safe recommendations** — never recommends `/ddd-implement` for drifted flows without confirming the drift type is "new logic". See Section 12.1.
 
 Pass `--json` for machine-readable output.
 
@@ -2654,7 +2657,61 @@ flows:
       - src/services/auth-service.ts
 ```
 
-**Drift detection:** If the specHash no longer matches the flow YAML content, the flow is "stale" and needs re-implementation.
+**Drift detection:** If the specHash no longer matches the flow YAML content, the flow has "drifted" and needs resolution — but NOT necessarily re-implementation. See Section 12.1 for the correct drift resolution workflow.
+
+### 12.1 Drift Management Workflow
+
+When `specHash` doesn't match the current flow YAML, it means specs and code have diverged. **The critical question is: in which direction?**
+
+#### Drift Types
+
+| Drift Type | What Happened | How to Detect |
+|------------|---------------|---------------|
+| **Metadata-only** | DDD Tool saved new timestamps, positions, or formatting. No logic changed. | Diff the YAML — only `metadata.*`, `position`, or whitespace fields differ |
+| **Spec enriched** | Spec added detail (descriptions, field types) but code already handles it. | Read the code — it already does what the updated spec describes |
+| **Code ahead** | Implementation has patterns (error handling, caching, stealth HTTP, encryption) the spec doesn't describe. | Read the code — it does MORE than the spec describes |
+| **New spec logic** | Nodes, connections, tools, or business logic were added to the spec that code doesn't implement. | Read the code — it does LESS than what the updated spec describes |
+
+#### Resolution Decision Tree
+
+```
+Hash mismatch detected
+  │
+  ├─ Metadata-only?
+  │   └─ YES → /ddd-sync (updates hash, no code change)
+  │
+  ├─ Code already covers the spec change?
+  │   └─ YES → /ddd-sync (updates hash after verification)
+  │
+  ├─ Code has details spec doesn't describe?
+  │   └─ YES → /ddd-reverse {domain/flow} first to enrich specs,
+  │            then /ddd-sync to align hashes
+  │
+  └─ Spec has new logic code doesn't implement?
+      └─ YES → /ddd-implement {domain/flow}
+               (ONLY case where re-implementation is correct)
+```
+
+#### Critical Rules
+
+1. **Never run `/ddd-implement` without classifying the drift first.** Re-implementing a flow overwrites existing code. If the code has implementation details the spec doesn't capture (stealth HTTP, encryption, error handling patterns, etc.), those details will be lost.
+
+2. **Never manually update `specHash` in mapping.yaml.** This falsely declares "in sync" without verifying both directions. Use `/ddd-sync` which performs proper bidirectional analysis.
+
+3. **Never update a hash when code is ahead of spec.** If implementation has details the spec doesn't describe, the correct action is `/ddd-reverse` to enrich the spec first, then `/ddd-sync` to update the hash. Updating the hash directly means future `/ddd-implement` runs will generate code WITHOUT those details.
+
+4. **Cross-cutting patterns belong in `architecture.yaml`.** Implementation details used across multiple flows (stealth HTTP, encryption, API key resolution with DB+env fallback, soft-delete conventions) should be documented in `architecture.yaml` so all flows benefit from them during implementation.
+
+#### Bidirectional Sync Check
+
+Before any hash update, verify BOTH directions:
+
+| Check | Question | If NO |
+|-------|----------|-------|
+| **Spec → Code** | Does the code implement everything in the current spec? | Need `/ddd-implement` |
+| **Code → Spec** | Does the spec describe everything the code does? | Need `/ddd-reverse` first |
+
+Only update the hash when BOTH answers are YES.
 
 ---
 
