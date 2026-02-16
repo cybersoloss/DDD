@@ -2702,8 +2702,10 @@ Tracks what has been implemented:
 ```yaml
 flows:
   users/user-register:
+    spec: specs/domains/users/flows/user-register.yaml  # Path to the flow spec file
     specHash: a1b2c3d4e5f6...    # SHA-256 of the flow YAML
     implementedAt: "2025-01-15T14:30:00Z"
+    mode: new                     # new | update — whether first implementation or re-implementation
     files:
       - src/routes/auth.ts
       - src/services/user-service.ts
@@ -2715,8 +2717,10 @@ flows:
     syncState: synced              # synced | spec_ahead | code_ahead | diverged
     annotationCount: 0             # Number of pending annotations from /ddd-reflect
   users/user-login:
+    spec: specs/domains/users/flows/user-login.yaml
     specHash: f6e5d4c3b2a1...
     implementedAt: "2025-01-16T10:00:00Z"
+    mode: update
     files:
       - src/routes/auth.ts
       - src/services/auth-service.ts
