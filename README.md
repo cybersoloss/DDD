@@ -64,7 +64,7 @@ Eleven Claude Code slash commands power the workflow:
 |-------|---------|-------------|
 | Create | `/ddd-create` | Describe a project in natural language → full DDD spec structure. Use `--shortfalls` for gap analysis. |
 | Create | `/ddd-reverse` | Reverse-engineer existing code → DDD specs (6 strategies by codebase size) |
-| Create | `/ddd-update` | Natural language change request → updated YAML specs |
+| Any | `/ddd-update` | Natural language change request → updated YAML specs |
 | Build | `/ddd-scaffold` | Set up project skeleton from specs (Phase 3 first step) |
 | Build | `/ddd-implement` | Read specs → generate flow code + tests, update mapping |
 | Build | `/ddd-test` | Run tests for implemented flows without re-generating code |
