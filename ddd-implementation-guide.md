@@ -241,20 +241,46 @@ export interface DomainConfig {
   flows: DomainFlowEntry[];
   publishes_events: EventWiring[];
   consumes_events: EventWiring[];
+  owns_schemas?: string[];
+  depends_on?: DomainDependency[];
+  groups?: FlowGroup[];
+  role?: 'entity' | 'process' | 'interface' | 'orchestration';
   layout: DomainLayout;
 }
 
 export interface DomainFlowEntry {
   id: string;
   name: string;
-  description: string;
+  description?: string;
+  type?: 'traditional' | 'agent';
+  tags?: string[];
+  criticality?: 'critical' | 'high' | 'normal' | 'low';
+  throughput?: string;
+  group?: string;      // FlowGroup ID for visual grouping at L2
+  schedule?: string;   // Cron expression shown as badge at L2
+  template?: string;           // Template flow ID (for parameterized flow instances)
+  parameters?: Record<string, unknown>; // Template parameter values
 }
 
 export interface EventWiring {
   event: string;
+  schema?: string;
   from_flow?: string;       // For publishes_events
   handled_by_flow?: string; // For consumes_events
-  description: string;
+  description?: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface DomainDependency {
+  domain: string;
+  reason: string;
+  flows_affected?: string[];
+}
+
+export interface FlowGroup {
+  id: string;
+  name: string;
+  flows: string[];
 }
 
 export interface DomainLayout {
@@ -264,12 +290,20 @@ export interface DomainLayout {
 
 export interface SystemLayout {
   domains: Record<string, Position>;
+  zones?: SystemZone[];
+}
+
+export interface SystemZone {
+  id: string;
+  name: string;
+  domains: string[];
 }
 
 // Derived data for rendering System Map (Level 1)
 export interface SystemMapData {
   domains: SystemMapDomain[];
   eventArrows: SystemMapArrow[];
+  zones: SystemZone[];
 }
 
 export interface SystemMapDomain {
@@ -278,11 +312,15 @@ export interface SystemMapDomain {
   description: string;
   flowCount: number;
   position: Position;
+  role?: 'entity' | 'process' | 'interface' | 'orchestration';
+  hasHumanTouchpoint?: boolean;
+  owns_schemas?: string[];
 }
 
 export interface SystemMapArrow {
-  sourceDomain: string;
-  targetDomain: string;
+  id: string;
+  sourceDomainId: string;
+  targetDomainId: string;
   events: string[];       // Event names flowing on this arrow
 }
 
@@ -297,8 +335,12 @@ export interface DomainMapData {
 export interface DomainMapFlow {
   id: string;
   name: string;
-  description: string;
+  description?: string;
+  type?: 'traditional' | 'agent';
   position: Position;
+  tags?: string[];
+  group?: string;           // FlowGroup ID for visual grouping
+  schedule?: string;        // Cron expression shown as badge
 }
 
 export interface DomainMapPortal {
@@ -377,7 +419,17 @@ export interface TriggerSpec {
   source?: string;
   filter?: Record<string, unknown>;
   description?: string;
-  job_config?: { queue?: string; concurrency?: number; timeout?: number; retry?: number; dead_letter?: string };
+  job_config?: {
+    queue?: string;
+    concurrency?: number;
+    timeout_ms?: number;
+    retry?: { max_attempts?: number; backoff_ms?: number; strategy?: 'fixed' | 'linear' | 'exponential'; jitter?: boolean };
+    dead_letter?: boolean;
+    lock_ttl_ms?: number;
+    jitter_ms?: number;
+    priority?: number;
+    dedup_key?: string;
+  };
   pattern?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -428,7 +480,7 @@ export interface DataStoreSpec {
   sort?: Record<string, unknown>;        // { default, allowed }
   batch?: boolean;
   upsert_key?: string[];
-  include?: Array<{ relation: string; fields?: string[] }>;
+  include?: Array<{ model: string; via: string; as: string }>;
   returning?: boolean;
   description?: string;
   [key: string]: unknown;
@@ -504,7 +556,8 @@ export interface LlmCallSpec {
   max_tokens?: number;
   structured_output?: Record<string, unknown>;
   context_sources?: Record<string, { from: string; transform?: string }>;
-  retry?: { max_attempts?: number; backoff_ms?: number };
+  // Supported transforms: truncate(n), join(sep), lowercase, uppercase, first(n), last(n), json_stringify, strip_html, summarize(n)
+  retry?: { max_attempts?: number; backoff_ms?: number; strategy?: 'fixed' | 'linear' | 'exponential'; jitter?: boolean; fallback_model?: string };
   description?: string;
   [key: string]: unknown;
 }
@@ -520,24 +573,59 @@ export type NodeSpec = TriggerSpec | InputSpec | ProcessSpec | DecisionSpec | Te
 
 // --- Flow node (persisted to YAML) ---
 
+export interface DddConnection {
+  targetNodeId: string;
+  sourceHandle?: string;    // e.g., "valid"/"invalid", "success"/"error", "body"/"done", "branch-0"
+  targetHandle?: string;
+  data?: Array<{ name: string; type: string }>;  // Data shape documentation
+  behavior?: 'continue' | 'stop' | 'retry' | 'circuit_break';  // Error handling strategy
+  label?: string;           // Connection label (shown on canvas)
+}
+
 export interface DddFlowNode {
   id: string;
   type: DddNodeType;
   position: Position;
-  connections: Array<{
-    targetNodeId: string;
-    sourceHandle?: string;    // e.g., "valid"/"invalid", "success"/"error", "body"/"done", "branch-0"
-    targetHandle?: string;
-  }>;
+  connections: DddConnection[];
   spec: NodeSpec;
   label: string;
   parentId?: string;
+  observability?: {         // Per-node observability config
+    logging?: { level?: string; include_input?: boolean; include_output?: boolean };
+    metrics?: { enabled?: boolean; custom_counters?: string[] };
+    tracing?: { enabled?: boolean; span_name?: string };
+  };
+  security?: {              // Per-node security config
+    authentication?: { required?: boolean; methods?: string[]; roles?: string[] };
+    rate_limiting?: { enabled?: boolean; requests_per_minute?: number };
+    encryption?: { at_rest?: boolean; in_transit?: boolean; pii_fields?: string[] };
+    audit?: { enabled?: boolean };
+  };
 }
 
 // --- Flow document (YAML shape) ---
 
+export interface FlowParameter {
+  type: 'string' | 'integration_ref' | 'number' | 'boolean';
+  values?: unknown[];
+}
+
+export interface FlowContract {
+  inputs: Array<{ name: string; type: string; required?: boolean; ref?: string }>;
+  outputs: Array<{ name: string; type: string }>;
+}
+
 export interface FlowDocument {
-  flow: { id: string; name: string; type: 'traditional' | 'agent'; domain: string; description?: string };
+  flow: {
+    id: string;
+    name: string;
+    type: 'traditional' | 'agent';
+    domain: string;
+    description?: string;
+    template?: boolean;                    // When true, this flow is a parameterized template
+    parameters?: Record<string, FlowParameter>;  // Template parameters
+    contract?: FlowContract;               // Sub-flow input/output contract
+  };
   trigger: DddFlowNode;
   nodes: DddFlowNode[];
   metadata: { created: string; modified: string };
@@ -8779,14 +8867,17 @@ export interface TransformSpec {
 export interface CollectionSpec {
   operation?: 'filter' | 'sort' | 'deduplicate' | 'merge' | 'group_by' | 'aggregate' | 'reduce' | 'flatten';
   input?: string; predicate?: string; key?: string;
-  direction?: 'asc' | 'desc'; accumulator?: string; output?: string;
+  direction?: 'asc' | 'desc';
+  accumulator?: { init?: unknown; expression?: string }; // For reduce/aggregate
+  output?: string;
   description?: string;
   [key: string]: unknown;
 }
 
 export interface ParseSpec {
   format?: 'rss' | 'atom' | 'html' | 'xml' | 'json' | 'csv' | 'markdown';
-  input?: string; strategy?: 'strict' | 'lenient' | 'streaming';
+  input?: string;
+  strategy?: 'strict' | 'lenient' | 'streaming' | { selectors: Array<{ name: string; css: string; extract?: string; multiple?: boolean }> };
   library?: string; output?: string;
   description?: string;
   [key: string]: unknown;

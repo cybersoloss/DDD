@@ -450,6 +450,340 @@ When implementing a flow, Claude Code uses `sourceHandle` values to determine co
 
 ---
 
+## Node Type Spec Fields
+
+This section defines the `spec` fields for each of the 27 node types. For connection patterns (sourceHandle values), see "Node Output Handles" above.
+
+### Traditional Node Specs
+
+#### trigger
+The entry point of every flow. Exactly one per flow.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `event` | string \| string[] | What triggers the flow (see trigger conventions below) |
+| `source` | string | Where the trigger comes from |
+| `filter` | `Record<string, unknown>`? | Event payload filter — flow only triggers when filter matches |
+| `job_config` | object? | Job queue config for cron triggers (see below) |
+| `description` | string | Details |
+
+**Trigger type conventions** — use these patterns in the `event` field:
+- HTTP trigger: `"HTTP POST /api/users/register"`
+- Scheduled trigger: `"cron */30 * * * *"`
+- Event trigger: `"event:UserRegistered"`
+- Webhook trigger: `"webhook /stripe/events"`
+- Manual trigger: `"manual"`
+- SSE trigger: `"sse /api/updates"`
+- WebSocket trigger: `"ws /api/live"`
+- Event pattern trigger: `"pattern:ContentAnalyzed"`
+- Multi-event: string array `["event:ContentDiscovered", "event:SourceContentFound"]`
+
+**job_config** — optional fields for cron triggers:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `queue` | string? | Named queue for the job |
+| `concurrency` | number? | Max concurrent executions (default: 1) |
+| `timeout_ms` | number? | Job timeout in milliseconds |
+| `retry` | object? | `{ max_attempts?, backoff_ms?, strategy?, jitter? }` |
+| `dead_letter` | boolean? | Send failed jobs to dead letter queue |
+| `lock_ttl_ms` | number? | Distributed lock TTL |
+| `priority` | number? | Job priority (higher = processed first) |
+| `dedup_key` | string? | Deduplication key template |
+
+#### input
+Validates incoming data. Has two output handles: `valid` and `invalid`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `fields` | `Array<{ name, type, required? }>` | Field definitions |
+| `validation` | string | Validation rules/regex |
+| `description` | string | What this input represents |
+
+#### process
+Business logic step.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `action` | string | What this step does |
+| `service` | string | Service/function to call |
+| `category` | string? | `'security' \| 'transform' \| 'integration' \| 'business_logic' \| 'infrastructure'` |
+| `inputs` | string[]? | Explicit input fields (e.g., `["$.password"]`) |
+| `outputs` | string[]? | Explicit output fields (e.g., `["$.hashed_password"]`) |
+| `description` | string | Details |
+
+#### decision
+Branching point. Has two output handles: `true` and `false`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `condition` | string | The condition to evaluate |
+| `trueLabel` | string | Label for the true branch |
+| `falseLabel` | string | Label for the false branch |
+| `description` | string | Details |
+
+#### terminal
+End state. Must have zero outgoing connections.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `outcome` | string | Result (e.g., "success", "error", "timeout") |
+| `description` | string | What happens at this endpoint |
+| `status` | number? | HTTP status code |
+| `body` | object? | Response body shape |
+| `response_type` | string? | `'json' \| 'stream' \| 'sse' \| 'empty'` (default: 'json') |
+| `headers` | `Record<string, string>?` | Custom response headers |
+
+#### data_store
+Database operation. Has two output handles: `success` and `error`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `operation` | string | `'create' \| 'read' \| 'update' \| 'delete' \| 'upsert' \| 'create_many' \| 'update_many' \| 'delete_many'` |
+| `model` | string | Entity/table name (e.g., "User") |
+| `data` | `Record<string, string>` | Fields to write (for create/update) |
+| `query` | `Record<string, string>` | Query conditions (for read/update/delete) |
+| `description` | string | Details |
+| `pagination` | object? | Pagination config (for list operations) |
+| `sort` | object? | Sort config (for list operations) |
+| `upsert_key` | string[]? | Fields for upsert conflict resolution |
+| `include` | IncludeRelation[]? | Eager-load related records (joins) |
+| `returning` | boolean? | Return affected records (for bulk operations) |
+
+**IncludeRelation fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model` | string | Related entity name |
+| `via` | string | Foreign key or relation path (supports dot notation for nested) |
+| `as` | string | Output field name |
+
+#### service_call
+External API call. Has two output handles: `success` and `error`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `method` | string | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'` |
+| `url` | string | API endpoint URL |
+| `headers` | `Record<string, string>` | HTTP headers |
+| `body` | `Record<string, unknown>` | Request body |
+| `timeout_ms` | number | Request timeout |
+| `retry` | object | `{ max_attempts?, backoff_ms?, strategy? }` |
+| `error_mapping` | `Record<string, string>` | Status code to error code mapping |
+| `request_config` | RequestConfig? | Outbound request behavior configuration |
+| `integration` | string? | Reference to integration defined in system.yaml |
+| `description` | string | Details |
+
+**RequestConfig fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_agent` | string? | `'rotate' \| 'browser' \| 'custom'` |
+| `delay` | object? | `{ min_ms, max_ms, strategy }` |
+| `cookie_jar` | string? | `'per_domain' \| 'shared' \| 'none'` |
+| `proxy` | string? | `'pool' \| 'direct' \| 'tor'` |
+| `tls_fingerprint` | string? | `'randomize' \| 'chrome' \| 'firefox' \| 'default'` |
+| `fallback` | string? | `'headless_browser' \| 'none'` |
+
+#### event
+Publish or subscribe to an event.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `direction` | string | `'emit' \| 'consume'` |
+| `event_name` | string | Event identifier |
+| `payload` | `Record<string, unknown>` | Event data shape (static template) |
+| `payload_source` | string? | Dynamic payload variable reference (overrides static `payload`) |
+| `async` | boolean | Fire-and-forget? |
+| `target_queue` | string? | Specific queue name |
+| `priority` | number? | Job priority when enqueueing |
+| `delay_ms` | number? | Delay before processing |
+| `dedup_key` | string? | Deduplication key |
+| `description` | string | Details |
+
+#### loop
+Iterate over a collection. Has two output handles: `body` and `done`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `collection` | string | What to iterate (e.g., "$.items") |
+| `iterator` | string | Iterator variable name |
+| `break_condition` | string | When to stop early |
+| `on_error` | string? | `'continue' \| 'break' \| 'fail'` (default: 'fail') |
+| `accumulate` | AccumulateConfig? | Collect results across iterations |
+| `description` | string | Details |
+
+**AccumulateConfig fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `field` | string | What to collect from each iteration's output |
+| `strategy` | string | `'append' \| 'merge' \| 'sum' \| 'last'` |
+| `output` | string | Variable name available at "done" handle |
+
+#### parallel
+Run branches concurrently. Has N+1 output handles: `branch-0`, `branch-1`, ... + `done`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `branches` | `ParallelBranch[] \| string[] \| number` | Branch definitions |
+| `join` | string | `'all' \| 'any' \| 'n_of'` |
+| `join_count` | number | Required if join is `n_of` |
+| `timeout_ms` | number | Max wait time |
+| `description` | string | Details |
+
+**ParallelBranch fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string? | Branch identifier |
+| `label` | string | Branch description |
+| `condition` | string? | Skip branch if condition evaluates to false |
+
+#### sub_flow
+Reference another flow.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `flow_ref` | string | Target flow in `domain/flow-id` format |
+| `input_mapping` | `Record<string, string>` | Input parameter mapping |
+| `output_mapping` | `Record<string, string>` | Output parameter mapping |
+| `description` | string | Details |
+
+#### delay
+Introduce a deliberate wait.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `min_ms` | number | Minimum delay in milliseconds |
+| `max_ms` | number | Maximum delay (if strategy is random) |
+| `strategy` | string | `'fixed' \| 'random'` |
+| `description` | string | Why this delay exists |
+
+#### cache
+Check cache before expensive operations. Has two output handles: `hit` and `miss`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `key` | string | Cache key template (e.g., "search:{query}") |
+| `ttl_ms` | number | Time-to-live in milliseconds |
+| `store` | string | `'redis' \| 'memory'` |
+| `description` | string | What is being cached |
+
+#### transform
+Structured data mapping between formats.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `input_schema` | string | Source data format reference |
+| `output_schema` | string | Target data format reference |
+| `field_mappings` | `Record<string, string>` | Output field to input field/expression mapping |
+| `description` | string | What transformation is performed |
+
+#### collection
+Collection operations. Has two output handles: `result` and `empty`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `operation` | string | `'filter' \| 'sort' \| 'deduplicate' \| 'merge' \| 'group_by' \| 'aggregate' \| 'reduce' \| 'flatten'` |
+| `input` | string | Input collection reference (e.g., `"$.sources"`) |
+| `predicate` | string? | Filter expression (for `filter`) |
+| `key` | string? | Field key (for `deduplicate`, `sort`, `group_by`) |
+| `direction` | string? | `'asc' \| 'desc'` (for `sort`) |
+| `accumulator` | object? | `{ init: any, expression: string }` (for `reduce`/`aggregate`) |
+| `output` | string | Output variable name |
+| `description` | string | Details |
+
+#### parse
+Structured extraction from raw content formats. Has two output handles: `success` and `error`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `format` | string | `'rss' \| 'atom' \| 'html' \| 'xml' \| 'json' \| 'csv' \| 'markdown'` |
+| `input` | string | Raw content variable (e.g., `"$.raw_response"`) |
+| `strategy` | string \| object | `'strict' \| 'lenient' \| 'streaming'` or `{ selectors: [...] }` for HTML scraping |
+| `library` | string? | Implementation hint (e.g., `'cheerio'`, `'rss-parser'`) |
+| `output` | string | Output variable name |
+| `description` | string | Details |
+
+#### crypto
+Cryptographic operations. Has two output handles: `success` and `error`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `operation` | string | `'encrypt' \| 'decrypt' \| 'hash' \| 'sign' \| 'verify' \| 'generate_key'` |
+| `algorithm` | string | `'aes-256-gcm' \| 'sha256' \| 'sha512' \| 'hmac-sha256' \| 'rsa-oaep' \| 'ed25519'` |
+| `key_source` | object | Where the key comes from: `{ env: string }` |
+| `input_fields` | string[] | Field(s) to process |
+| `output_field` | string | Result field name |
+| `encoding` | string? | `'base64' \| 'hex'` |
+| `description` | string | Details |
+
+#### batch
+Execute operations against a collection with concurrency control. Has two output handles: `done` and `error`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `input` | string | Collection to iterate over |
+| `operation_template` | object | Per-item operation config (type, dispatch_field, configs) |
+| `concurrency` | number? | Max parallel operations |
+| `on_error` | string? | `'continue' \| 'stop'` |
+| `output` | string | Output variable (array of `{ item, result, success }`) |
+| `description` | string | Details |
+
+#### transaction
+Atomic multi-step database operations. Has two output handles: `committed` and `rolled_back`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `isolation` | string? | `'read_committed' \| 'serializable' \| 'repeatable_read'` |
+| `steps` | array | Ordered operations: `[{ action, rollback? }]` |
+| `rollback_on_error` | boolean? | Auto-rollback on any step failure (default: true) |
+| `description` | string | Details |
+
+### Cross-Cutting Concerns (Per-Node)
+
+Every node can optionally have `observability` and `security` configs:
+
+**Observability:**
+
+```yaml
+observability:
+  logging:
+    level: info          # debug | info | warn | error
+    include_input: true
+    include_output: false
+  metrics:
+    enabled: true
+    custom_counters:
+      - requests
+      - errors
+  tracing:
+    enabled: true
+    span_name: node.validate_input
+```
+
+**Security:**
+
+```yaml
+security:
+  authentication:
+    required: true
+    methods: [jwt, api_key]
+    roles: [admin, user]
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 60
+  encryption:
+    at_rest: true
+    in_transit: true
+    pii_fields: [email, ssn]
+  audit:
+    enabled: true
+```
+
+---
+
 ## Agent Infrastructure
 
 ### Flow Types
@@ -1942,124 +2276,302 @@ orchestration:
 
 ```
 specs/
-├── system.yaml              # Project identity, tech stack, domains
+├── system.yaml              # Project identity, tech stack, zones, integrations, schedules, pipelines
 ├── system-layout.yaml       # System Map (L1) block positions (managed by DDD Tool)
-├── architecture.yaml        # Project structure, infrastructure, cross-cutting
+├── architecture.yaml        # Project structure, infrastructure, cross-cutting concerns
 ├── config.yaml              # Environment variables, secrets schema
 ├── schemas/
 │   ├── _base.yaml           # Base model (id, timestamps, soft delete)
-│   ├── contract.yaml
-│   ├── obligation.yaml
-│   └── events/
-│       └── contract-ingested.yaml
+│   ├── {model}.yaml         # Data model definitions (with optional transitions)
+│   └── ...
 ├── shared/
-│   ├── auth.yaml            # Authentication/authorization spec
-│   ├── middleware.yaml      # Middleware stack spec
-│   ├── errors.yaml          # Error codes and response format (incl. agent errors)
-│   ├── api.yaml             # API conventions (pagination, filtering)
-│   └── types.yaml           # Shared enums and value objects (optional)
+│   ├── errors.yaml          # Error codes with HTTP status mappings (incl. agent errors)
+│   ├── types.yaml           # Shared enums and value objects (optional)
+│   └── layers.yaml          # Cross-cutting concern layers (retry, stealth, etc.) (optional)
 └── domains/
     └── {domain}/
-        ├── domain.yaml      # Domain info, flows, events, L2 layout positions
+        ├── domain.yaml      # Domain config: flows, events, depends_on, groups, layout
         └── flows/
             ├── {flow}.yaml          # Traditional flow (type: traditional)
             └── {agent-flow}.yaml    # Agent flow (type: agent) — includes tools, memory, guardrails
 ```
 
+> **Note:** `system.yaml`, `architecture.yaml`, `config.yaml`, `shared/errors.yaml`, `shared/types.yaml`, `shared/layers.yaml`, and schema files are supplementary spec files. They are NOT read by the DDD Tool UI directly — they are context files that `/ddd-implement` reads to generate correct implementation code.
+
 ## System Config
 
 ```yaml
 # specs/system.yaml
-system:
-  name: obligo
-  version: 1.0.0
-  description: Cyber Liability Operating System
-  
-  tech_stack:
-    language: python
-    language_version: "3.11"
-    framework: fastapi
-    orm: sqlalchemy
-    database: postgresql
-    cache: redis
-    queue: rabbitmq
-    
-  domains:
-    - name: ingestion
-      description: Webhook and data ingestion from CLM providers
-    - name: analysis
-      description: Contract analysis and obligation extraction
-    - name: api
-      description: REST API for frontend and integrations
-    - name: notification
-      description: Email, Slack, and webhook notifications
+name: obligo
+version: 1.0.0
+description: Cyber Liability Operating System
 
-  # Optional: External API integration configs
-  # service_call nodes can reference these by name
-  integrations:
-    clm_provider_api:
-      base_url: "https://api.clmprovider.com/v1"
-      auth:
-        method: api_key
-        credentials_env: CLM_API_KEY
-      rate_limits:
-        requests_per_second: 10
-      retry:
-        max_attempts: 3
-        backoff_ms: 1000
-      timeout_ms: 30000
+tech_stack:
+  language: python
+  language_version: "3.11"
+  framework: fastapi
+  orm: sqlalchemy
+  database: postgresql
+  cache: redis
+  queue: rabbitmq
+
+> **Note:** The `queue` field determines event infrastructure: when set (e.g., `BullMQ`, `rabbitmq`), `/ddd-scaffold` generates queue-based event infrastructure and `/ddd-implement` uses it for async events. When absent, use an in-process EventEmitter for domain events.
+
+environments:
+  - name: development
+    url: http://localhost:8000
+  - name: staging
+    url: https://staging.obligo.io
+  - name: production
+    url: https://api.obligo.io
+
+# Optional: Visual grouping of domains at L1
+zones:
+  - id: ingestion-pipeline
+    name: Ingestion Pipeline
+    domains: [ingestion, analysis]
+  - id: user-facing
+    name: User-Facing
+    domains: [api, notification]
+
+# Optional: External API integration configs
+# service_call nodes can reference these by name
+integrations:
+  clm_provider_api:
+    base_url: "https://api.clmprovider.com/v1"
+    auth:
+      method: api_key
+      credentials_env: CLM_API_KEY
+    rate_limits:
+      requests_per_second: 10
+    retry:
+      max_attempts: 3
+      backoff_ms: 1000
+    timeout_ms: 30000
+    used_by_domains: [ingestion]
+
+# Optional: Inter-zone data flow arrows (shown at L1)
+data_flows:
+  - from: ingestion-pipeline
+    to: user-facing
+    label: "analysis.completed events"
+    volume: high
+  - from: user-facing
+    to: ingestion-pipeline
+    label: "Manual re-analysis requests"
+    volume: low
+    style: dashed
+
+# Optional: Scheduling topology (surfaces cron schedules at L1)
+schedules:
+  - frequency: "*/30 * * * *"
+    label: "Every 30 minutes"
+    flows: [ingestion/scheduled-sync]
+  - frequency: "0 2 * * *"
+    label: "Daily at 2am"
+    flows: [analysis/batch-reanalysis]
+
+# Optional: System-level badges shown at L1
+characteristics:
+  - "Event-driven"
+  - "2 cron schedules"
+  - "1 external API"
+
+# Optional: Cross-domain event chains
+pipelines:
+  - id: contract-processing
+    name: Contract Processing Pipeline
+    description: "End-to-end from ingestion to notification"
+    steps:
+      - { domain: ingestion, flow: webhook-ingestion, event_out: contract.ingested }
+      - { domain: analysis, flow: extract-obligations, event_out: analysis.completed }
+      - { domain: notification, flow: send-alert }
+    spans_domains: [ingestion, analysis, notification]
 ```
 
 > **Note:** The `integrations` section is optional. When present, `service_call` nodes can reference an integration by name, and `/ddd-implement` uses the integration's auth, retry, rate limit, and timeout config instead of repeating them per node.
+
+### IntegrationConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `base_url` | string | Base URL for the external API |
+| `auth` | object | `{ method: 'api_key' \| 'oauth2' \| 'bearer', credentials_env: string }` |
+| `rate_limits` | object? | `{ requests_per_second?, requests_per_window?, window_seconds? }` |
+| `retry` | object? | `{ max_attempts?, backoff_ms?, strategy?: 'fixed' \| 'linear' \| 'exponential', jitter?: boolean }` |
+| `timeout_ms` | number? | Request timeout in milliseconds |
+| `headers` | `Record<string, string>?` | Default headers for all requests |
+| `used_by_domains` | string[]? | Domains that use this integration (shown at L1) |
+
+### SystemZone
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Zone ID |
+| `name` | string | Display name |
+| `domains` | string[] | Domain IDs in this zone |
+
+### DataFlow
+
+Inter-zone directed data flow arrows, shown at L1 to visualize high-level architectural data movement.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `from` | string | Source zone or domain ID |
+| `to` | string | Target zone or domain ID |
+| `label` | string | Description of what flows |
+| `volume` | string? | `'low' \| 'medium' \| 'high'` — visual thickness hint |
+| `style` | string? | `'solid' \| 'dashed'` — visual distinction (default: solid) |
+
+### Schedule
+
+Scheduling topology — surfaces cron schedules at L1.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `frequency` | string | Cron expression |
+| `label` | string | Human-readable schedule description |
+| `flows` | string[] | Flow references in `domain/flow-id` format |
+
+### Pipeline
+
+Cross-domain event chains that trace a complete pipeline across domains.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Pipeline ID |
+| `name` | string | Display name |
+| `description` | string? | What this pipeline does end-to-end |
+| `steps` | PipelineStep[] | Ordered steps across domains |
+| `spans_domains` | string[] | All domains involved |
+
+**PipelineStep fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `domain` | string | Domain ID |
+| `flow` | string | Flow ID within the domain |
+| `event_out` | string? | Event emitted to trigger the next step |
 
 ## Domain Config (Drives Level 1 & Level 2 Sheets)
 
 Each domain has a `domain.yaml` that declares its flows, published events, and consumed events. This data drives the System Map (Level 1) and Domain Map (Level 2) visualizations automatically.
 
+### Domain Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Display name |
+| `description` | string? | What this domain handles |
+| `flows` | DomainFlowEntry[] | List of flows in this domain |
+| `publishes_events` | EventWiring[] | Events this domain emits |
+| `consumes_events` | EventWiring[] | Events this domain listens to |
+| `owns_schemas` | string[]? | Schema names this domain owns (e.g., ["User", "Session"]) |
+| `depends_on` | DomainDependency[]? | Cross-domain data dependencies (beyond event wiring) |
+| `groups` | FlowGroup[]? | Visual grouping of flows at L2 |
+| `layout` | DomainLayout | Canvas positions (managed by DDD Tool) |
+
+### DomainFlowEntry
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique flow ID (kebab-case) |
+| `name` | string | Display name |
+| `description` | string? | What this flow does |
+| `type` | `'traditional' \| 'agent'` | Flow type |
+| `tags` | string[]? | Custom tags (e.g., ["cron", "internal", "public-api"]) |
+| `criticality` | string? | `'critical' \| 'high' \| 'normal' \| 'low'` — visual priority at L2 |
+| `throughput` | string? | Expected volume (e.g., `"~500 items/day"`) — shown as subtitle at L2 |
+
+### FlowGroup
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Group ID |
+| `name` | string | Display name |
+| `flows` | string[] | Flow IDs in this group |
+
+### EventWiring
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event` | string | Event name (e.g., UserRegistered) |
+| `schema` | string? | Data schema reference |
+| `from_flow` | string? | Which flow publishes it |
+| `handled_by_flow` | string? | Which flow consumes it |
+| `description` | string? | What this event means |
+| `payload` | `Record<string, unknown>?` | Event data shape (field names and types) |
+
+### DomainDependency
+
+Cross-domain data dependencies (beyond event wiring). Shown as dashed arrows at L2.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `domain` | string | Domain ID this domain depends on |
+| `reason` | string | Why the dependency exists |
+| `flows_affected` | string[]? | Which flows in this domain use the dependency |
+
+```yaml
+depends_on:
+  - domain: settings
+    reason: "Reads API keys and social account preferences"
+    flows_affected: [generate-drafts, check-social-sources]
+```
+
 ```yaml
 # specs/domains/ingestion/domain.yaml
-domain:
-  name: ingestion
-  description: Webhook and data ingestion from CLM providers
+name: ingestion
+description: Webhook and data ingestion from CLM providers
 
+flows:
+  - id: webhook-ingestion
+    name: Webhook Ingestion
+    description: Receives and processes webhooks from CLM providers
+    tags: [webhook]
+    criticality: critical
+  - id: scheduled-sync
+    name: Scheduled Sync
+    description: Periodic sync with CLM provider APIs
+    tags: [cron]
+    throughput: "~200 syncs/day"
+
+# Events this domain publishes (outgoing arrows on System Map)
+publishes_events:
+  - event: contract.ingested
+    from_flow: webhook-ingestion
+    description: Fired when a new contract is received via webhook
+    payload:
+      contract_id: uuid
+      provider: string
+      ingested_at: datetime
+  - event: contract.synced
+    from_flow: scheduled-sync
+    description: Fired when a contract is synced from provider API
+    payload:
+      contract_id: uuid
+      provider: string
+      sync_type: string
+
+# Events this domain consumes (incoming arrows on System Map)
+consumes_events:
+  - event: analysis.completed
+    handled_by_flow: webhook-ingestion
+    description: Notification that analysis of an ingested contract is done
+
+# Optional: Cross-domain data dependencies
+depends_on:
+  - domain: api
+    reason: "Reads provider credentials for API sync"
+    flows_affected: [scheduled-sync]
+
+# Layout positions for Domain Map (Level 2) — managed by DDD Tool
+layout:
   flows:
-    - id: webhook-ingestion
-      name: Webhook Ingestion
-      description: Receives and processes webhooks from CLM providers
-    - id: scheduled-sync
-      name: Scheduled Sync
-      description: Periodic sync with CLM provider APIs
-
-  # Events this domain publishes (outgoing arrows on System Map)
-  publishes_events:
-    - event: contract.ingested
-      from_flow: webhook-ingestion
-      description: Fired when a new contract is received via webhook
-      payload:
-        contract_id: uuid
-        provider: string
-        ingested_at: datetime
-    - event: contract.synced
-      from_flow: scheduled-sync
-      description: Fired when a contract is synced from provider API
-      payload:
-        contract_id: uuid
-        provider: string
-        sync_type: string
-
-  # Events this domain consumes (incoming arrows on System Map)
-  consumes_events:
-    - event: analysis.completed
-      handled_by_flow: webhook-ingestion  # or a dedicated flow
-      description: Notification that analysis of an ingested contract is done
-
-  # Layout positions for Domain Map (Level 2) — managed by DDD Tool
-  layout:
-    flows:
-      webhook-ingestion: { x: 100, y: 100 }
-      scheduled-sync: { x: 400, y: 100 }
-    portals:
-      analysis: { x: 100, y: 300 }
+    webhook-ingestion: { x: 100, y: 100 }
+    scheduled-sync: { x: 400, y: 100 }
+  portals:
+    analysis: { x: 100, y: 300 }
 ```
 
 ```yaml
@@ -2820,18 +3332,156 @@ errors:
 
 ## Flow Spec
 
+### FlowDocument Structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `flow` | object | Flow metadata |
+| `flow.id` | string | Unique flow ID |
+| `flow.name` | string | Display name |
+| `flow.type` | `'traditional' \| 'agent'` | Flow category |
+| `flow.domain` | string | Parent domain ID |
+| `flow.description` | string? | What this flow does |
+| `flow.template` | boolean? | When `true`, this flow is a template (see Parameterized Flow pattern) |
+| `flow.parameters` | `Record<string, FlowParameter>`? | Template parameters (required when `template: true`) |
+| `flow.contract` | object? | Sub-flow input/output contract (see below) |
+| `trigger` | DddFlowNode | The entry point node |
+| `nodes` | DddFlowNode[] | All other nodes |
+| `metadata` | object | `{ created, modified }` ISO timestamps |
+
+### DddFlowNode (Common Fields)
+
+Every node has:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique node ID |
+| `type` | DddNodeType | One of the 27 node types |
+| `position` | `{ x, y }` | Canvas position |
+| `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior? }` |
+| `spec` | object | Type-specific configuration |
+| `label` | string | Display name on canvas |
+| `observability` | object? | Logging/metrics/tracing config (see Cross-Cutting Concerns) |
+| `security` | object? | Auth/rate-limiting/encryption config (see Cross-Cutting Concerns) |
+
+### Connection Data Annotations
+
+Connections can optionally include a `data` field to document what data flows between nodes. This is purely descriptive — it doesn't affect behavior but enables data shape hover in the DDD Tool.
+
+```yaml
+connections:
+  - targetNodeId: data_store-abc123
+    sourceHandle: valid
+    data:
+      - { name: email, type: string }
+      - { name: password, type: string }
+```
+
+### Connection Behavior
+
+Connections can optionally include a `behavior` field to distinguish error handling strategies:
+
+| Value | Description |
+|-------|-------------|
+| `continue` | Log and continue (soft fail) |
+| `stop` | Stop the flow (hard fail) |
+| `retry` | Retry before failing (retry count configured at node level) |
+| `circuit_break` | Use circuit breaker pattern |
+
+```yaml
+connections:
+  - targetNodeId: terminal-error-001
+    sourceHandle: error
+    behavior: continue
+    label: "Log and skip"
+```
+
+### Connection Format Compatibility
+
+The DDD Tool normalizes several alternative field names on import:
+
+| You write | Normalized to |
+|-----------|---------------|
+| `target`, `targetId`, or `targetNodeId` | `targetNodeId` |
+| `sourceHandle: "default"` | unnamed handle (omitted) |
+| `spec`, `properties`, or `config` | `spec` |
+| `label` or `name` | `label` |
+
+### Variable Scope and Data Flow
+
+DDD specs use `$.variable_name` syntax to reference data flowing through a flow:
+
+- `$` represents the flow context — a mutable object created when the trigger fires and passed through every node.
+- Each node reads inputs from `$` and writes its output back to `$` under a named key.
+- Scope is **flow-scoped** and **accumulative**: later nodes can read anything written by earlier nodes.
+
+**Naming conventions:**
+- `$.raw_*` — unprocessed content (e.g., `$.raw_feed`, `$.raw_html`)
+- `$.model_name` — data model instances (e.g., `$.order`, `$.user`)
+- `$.model_name_list` — arrays of models (e.g., `$.order_list`)
+- `$.is_*` or `$.has_*` — boolean flags for decision nodes
+
+**Code generation rule:** When generating code, replace each `$.X` reference with the corresponding local variable or parameter. The `$` object is a design-time abstraction — it does not need to exist as a literal runtime object.
+
+### FlowParameter (for parameterized flows)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Parameter type (`'string'`, `'integration_ref'`, `'number'`, `'boolean'`) |
+| `values` | array? | Allowed values (for string type) |
+
+### Sub-Flow Contract
+
+Flows called as sub-flows can define a `contract` in their flow metadata:
+
+```yaml
+flow:
+  id: normalize-content
+  name: Normalize Content
+  type: traditional
+  domain: ingestion
+  contract:
+    inputs:
+      - name: raw_content
+        type: string
+        required: true
+      - name: platform
+        type: enum
+        ref: platform
+        required: true
+    outputs:
+      - name: content_item_id
+        type: uuid
+      - name: is_duplicate
+        type: boolean
+```
+
+| Contract Field | Type | Description |
+|----------------|------|-------------|
+| `inputs` | `Array<{ name, type, required?, ref? }>` | Expected input parameters |
+| `outputs` | `Array<{ name, type }>` | Returned output values |
+
+### Flow Spec Example
+
 ```yaml
 # specs/domains/ingestion/flows/webhook-ingestion.yaml
 flow:
   id: webhook-ingestion
   name: Webhook Ingestion
+  type: traditional
   domain: ingestion
   description: Receives and processes webhooks from CLM providers
-  
+
 trigger:
-  type: http
-  method: POST
-  path: /webhooks/{provider}
+  id: trigger-001
+  type: trigger
+  position: { x: 100, y: 50 }
+  connections:
+    - targetNodeId: validate_signature
+  spec:
+    event: "webhook /webhooks/{provider}"
+    source: CLM Providers
+    description: Webhook callback from CLM provider
   
 nodes:
   - id: validate_signature
@@ -2968,58 +3618,223 @@ schema:
 
 > **Note:** Schemas can reference shared enums from `specs/shared/types.yaml` using `type: enum, ref: {enum_name}` instead of duplicating `enum:` arrays.
 
+## Shared Types
+
+**Path:** `specs/shared/types.yaml`
+
+Shared enums and value objects used across multiple schemas:
+
+```yaml
+enums:
+  platform:
+    values: [twitter, linkedin, medium, rss, web]
+    description: Supported content platforms
+
+  content_status:
+    values: [pending, analyzed, relevant, irrelevant, error]
+    description: Content processing lifecycle
+
+value_objects:
+  money:
+    fields:
+      - name: amount
+        type: decimal
+      - name: currency
+        type: string
+    description: Monetary amount with currency
+```
+
+### Enum Definition
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `values` | string[] | Allowed values |
+| `description` | string? | What this enum represents |
+
+### Value Object Definition
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fields` | `Array<{ name, type }>` | Component fields |
+| `description` | string? | What this value object represents |
+
+> **Note:** Reference shared enums in schemas with `type: enum, ref: platform` instead of duplicating `values:` arrays. `/ddd-implement` reads this file to generate shared type definitions.
+
+## Shared Layers
+
+**Path:** `specs/shared/layers.yaml`
+
+Cross-cutting concern layers that span multiple nodes and domains. Layers define infrastructure behavior (retry policies, stealth config, circuit breakers) that applies to specific node types across specific domains.
+
+```yaml
+layers:
+  - id: stealth
+    name: Stealth / Anti-Detection
+    description: "Rotating user agents, proxy pools, cookie jars"
+    applies_to:
+      nodes: [service_call, parse]
+      domains: [monitoring, discovery]
+    config:
+      user_agent_pool: 50
+      proxy_rotation: per_request
+      cookie_jar: per_domain
+
+  - id: retry-policy
+    name: Retry Policy
+    description: "Exponential backoff with circuit breaker"
+    applies_to:
+      nodes: [service_call, batch]
+      domains: [monitoring, discovery, publishing]
+    config:
+      max_retries: 3
+      backoff: exponential
+      circuit_breaker:
+        failure_threshold: 5
+        reset_timeout_ms: 60000
+```
+
+### Layer
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique layer ID |
+| `name` | string | Display name |
+| `description` | string? | What this layer does |
+| `applies_to` | object | `{ nodes: string[], domains: string[] }` — which node types and domains this layer affects |
+| `config` | `Record<string, unknown>` | Layer-specific configuration |
+
+> **Note:** Layers don't change node specs — they're read by `/ddd-implement` to generate infrastructure code (retry wrappers, proxy config, rate limiters). In the DDD Tool, affected nodes show a layer badge.
+
 ---
 
-# Part 6: DDD CLI Tool
+# Part 6: DDD Slash Commands (Claude Code Integration)
+
+DDD uses Claude Code slash commands as the implementation interface. These commands are invoked in a Claude Code terminal session and operate on the spec files.
 
 ## Commands
 
-```bash
-# Initialize DDD in project
-ddd init --language python --framework fastapi
+### /ddd-create
 
-# Check sync status
-ddd status                    # All flows
-ddd status -f webhook-ingestion  # Specific flow
+Generates a complete DDD project from a natural-language description.
 
-# Validate spec-code sync
-ddd validate                  # All flows
-ddd validate -f webhook-ingestion --strict
-
-# List pending implementations
-ddd pending
-ddd pending --since HEAD~5
-
-# Generate code from specs
-ddd generate webhook-ingestion
-ddd generate webhook-ingestion -o schemas --dry-run
-
-# Lint spec files
-ddd lint
-ddd lint --fix
-
-# Show spec-code diff
-ddd diff webhook-ingestion
-
-# Manage mapping
-ddd map show
-ddd map update -f webhook-ingestion
-ddd map verify
-
-# Generate Claude Code instructions
-ddd instructions                     # All pending
-ddd instructions webhook-ingestion   # Specific flow
-ddd instructions -o /tmp/impl.md     # Output to file
+```
+/ddd-create {description}
 ```
 
-## Validation Checks
+**Example:**
+```
+/ddd-create An e-commerce platform with user auth, product catalog,
+            shopping cart, order processing, and email notifications
+```
 
-The validator checks:
-1. **Existence:** Node in spec → code exists at mapped location
-2. **Validations:** Spec validation rules → Pydantic/Zod validators match
-3. **Error Messages:** Spec error messages → code error messages match exactly
-4. **Connections:** Spec flow → code function call order matches
-5. **Types:** Spec field types → code types match
+**What it does:**
+1. Fetches the latest DDD Usage Guide for spec format reference
+2. Analyzes the description (asks clarifying questions if brief)
+3. Creates the full project structure: `ddd-project.json`, supplementary specs, schemas, domain YAML, and flow YAML
+4. Validates all flows (trigger → terminals, wired branches, event matching)
+5. Shows summary with domain counts, file list, event wiring, and next steps
+
+### /ddd-scaffold
+
+Sets up the project skeleton and shared infrastructure from specs. First step of Session B.
+
+```
+/ddd-scaffold
+```
+
+**What it does:**
+1. Reads system.yaml, architecture.yaml, config.yaml, errors.yaml, types.yaml, and all schema files
+2. Initializes the project (package.json, tsconfig, dependencies, directory structure)
+3. Generates shared infrastructure: config loader, error handler, database schema, app entry point, integration clients, event bus, test setup
+4. Creates environment files (.env.example, .gitignore)
+5. Verifies build compiles and example test passes
+6. Initializes `.ddd/mapping.yaml`
+
+### /ddd-implement
+
+Generates implementation code from DDD specs.
+
+| Argument | Scope | Example |
+|----------|-------|---------|
+| `--all` | Entire project | `/ddd-implement --all` |
+| `{domain}` | All flows in a domain | `/ddd-implement users` |
+| `{domain}/{flow}` | Single flow | `/ddd-implement users/user-register` |
+| *(empty)* | Interactive mode | `/ddd-implement` |
+
+**What it does:**
+1. Reads `ddd-project.json` and flow YAML specs
+2. Reads supplementary specs for implementation context
+3. Checks `.ddd/mapping.yaml` for existing implementations
+4. Follows the node graph: trigger → nodes → terminals
+5. Generates code for each node (route handlers, services, DB queries, etc.)
+6. Generates tests (happy path, decision branches, error states, input validation)
+7. Runs tests and fixes until passing
+8. Updates `.ddd/mapping.yaml` with specHash and file list
+
+### /ddd-update
+
+Updates DDD project specs (YAML files) to reflect design changes.
+
+| Argument | Scope | Example |
+|----------|-------|---------|
+| `{domain}/{flow}` | Update a specific flow spec | `/ddd-update users/user-register` |
+| `{domain}` | Update domain config and/or its flows | `/ddd-update users` |
+| `--add-flow {domain}` | Add a new flow to a domain | `/ddd-update --add-flow users` |
+| `--add-domain` | Add a new domain to the project | `/ddd-update --add-domain` |
+| *(empty)* | Interactive mode | `/ddd-update` |
+
+### /ddd-sync
+
+Synchronizes specs with implementation state.
+
+| Argument | What it does |
+|----------|-------------|
+| *(default)* | Sync mapping.yaml with current implementation state |
+| `--discover` | Also discover untracked code and suggest new flow specs |
+| `--fix-drift` | Re-implement flows where specs have drifted |
+| `--full` | All of the above |
+
+### /ddd-status
+
+Quick read-only overview of the project's implementation state.
+
+```
+/ddd-status [--json]
+```
+
+### /ddd-test
+
+Run tests for implemented flows without re-generating code.
+
+| Argument | Scope | Example |
+|----------|-------|---------|
+| `--all` | All implemented flows | `/ddd-test --all` |
+| `{domain}` | All flows in a domain | `/ddd-test users` |
+| `{domain}/{flow}` | Single flow | `/ddd-test users/user-register` |
+
+### /ddd-reverse
+
+Reverse-engineers DDD specs from an existing codebase.
+
+| Argument | Scope | Example |
+|----------|-------|---------|
+| `--path {dir}` | Codebase root to analyze | `/ddd-reverse --path ./src` |
+| `--domain {name}` | Reverse a single domain | `/ddd-reverse --domain users` |
+| `--strategy {mode}` | Detection approach | `/ddd-reverse --strategy routes` |
+| *(empty)* | Interactive mode | `/ddd-reverse` |
+
+**Strategies:** `routes`, `services`, `models`, `auto` *(default)*
+
+## Workflow
+
+**Full lifecycle:**
+
+1. **Design** — Run `/ddd-create` with a project description (Session A)
+2. **Review** — Open the project in DDD Tool to visualize, validate, and refine specs on the canvas
+3. **Scaffold** — Run `/ddd-scaffold` to set up project skeleton from specs (Session B first step)
+4. **Implement** — Run `/ddd-implement --all` to generate flow code + tests (Session B)
+5. **Test** — Run `/ddd-test --all` to verify all tests pass
+6. **Iterate** — Use `/ddd-status` to check state, `/ddd-update` to modify specs, `/ddd-implement` to update code, `/ddd-sync` to reconcile drift
 
 ---
 
@@ -4747,6 +5562,237 @@ test_generation:
     circuit_breaker: true          # Test circuit breaker
     supervisor: false              # Skip supervisor tests (complex setup)
 ```
+
+---
+
+# Part 7b: Validation Rules
+
+The DDD Tool enforces these validation rules. Specs should pass all of them.
+
+## Flow-Level (Error)
+- Every flow must have exactly one trigger node
+- All paths from trigger must reach a terminal node
+- No orphaned (unreachable) nodes
+- No circular paths in traditional flows (agents may have cycles)
+- Decision nodes must have both true and false branch connections
+- Trigger must have an `event` defined
+- Input fields must have `type` defined
+- Decision must have a `condition` defined
+
+## Flow-Level (Warning)
+- Terminal nodes should not have outgoing connections
+- Process nodes should have a description or action
+- Agent loops should have `max_iterations` and `model` set
+- Sub-flow `input_mapping` keys should match target flow's contract inputs (if contract defined)
+- Sub-flow `output_mapping` keys should match target flow's contract outputs (if contract defined)
+
+## Agent-Specific (Error)
+- Agent flow must have at least one `agent_loop` node
+- Agent loop must have at least one tool
+- Agent loop must have at least one terminal tool (`is_terminal: true`)
+
+## Orchestration (Error)
+- Orchestrator must have 2+ agents and a strategy
+- Smart Router must have rules defined or LLM routing enabled
+- Handoff must have a target flow
+- Agent Group must have 2+ members
+
+## Extended Nodes (Error)
+- Data Store must have operation and model
+- Service Call must have method and URL
+- Event must have direction and event_name
+- Loop must have collection and iterator
+- Parallel must have 2+ branches
+- Sub-flow must have flow_ref
+- LLM Call must have model
+- Cache must have key and store
+- Transform must have input_schema and output_schema
+- Delay must have min_ms
+- Collection must have operation and input
+- Parse must have format and input
+- Crypto must have operation, algorithm, and key_source
+- Batch must have input and operation_template
+- Transaction must have steps with at least 2 entries
+
+## Domain-Level
+- No duplicate flow IDs within a domain
+- Multiple flows may publish the same event name with different `from_flow` values — this is valid
+
+## System-Level
+- Events consumed by a domain must be published by some domain
+- Events published should be consumed by at least one domain (warning)
+- Event `payload` fields should match between publisher and consumer across domains (warning)
+
+---
+
+# Part 7c: Design Patterns
+
+Common patterns and conventions for DDD specs.
+
+## HTTP Request/Response Approval
+
+For synchronous approval flows (e.g., "admin approves a pending request"), use an HTTP trigger + decision node — **not** a human_gate. Human gates are for async agent workflows.
+
+## Guardrail Execution Model
+
+Guardrails are **inline and sequential** — they sit in the connection chain and data flows through them in order. They are NOT sidecars or parallel watchers.
+
+```
+trigger -> guardrail(input) -> agent_loop -> guardrail(output) -> terminal
+```
+
+## Error Routing Convention
+
+For nodes with dual output paths, the convention is:
+- `"success"` / `"error"` for data_store and service_call
+- `"valid"` / `"invalid"` for input
+- `"true"` / `"false"` for decision
+
+## Multi-Way Routing in Traditional Flows
+
+Decision nodes are binary (true/false). When you need 3+ branches, use `smart_router` — it works in traditional flows too:
+
+```yaml
+- id: router-001
+  type: smart_router
+  spec:
+    rules:
+      - id: twitter
+        condition: "platform === 'twitter'"
+        route: twitter
+      - id: linkedin
+        condition: "platform === 'linkedin'"
+        route: linkedin
+    fallback_chain: [linkedin]
+```
+
+## Parameterized Flow
+
+Define a flow template once, instantiate per-configuration in domain.yaml:
+
+```yaml
+# Flow YAML with template: true
+flow:
+  id: publish-to-platform
+  template: true
+  parameters:
+    platform:
+      type: string
+      values: [twitter, linkedin]
+    api_integration:
+      type: integration_ref
+
+# In domain.yaml — instantiate:
+flows:
+  - id: publish-to-twitter
+    template: publish-to-platform
+    parameters:
+      platform: twitter
+      api_integration: twitter-api-v2
+```
+
+## Collection Pipeline
+
+Process a collection through multiple stages: fetch → parse → filter → iterate → reduce → emit. Use `collection`, `parse`, and `loop` nodes instead of generic `process` nodes.
+
+## Trigger Event Filtering
+
+Use the `filter` field on trigger nodes to filter incoming events by payload fields, eliminating unnecessary decision nodes:
+
+```yaml
+trigger:
+  spec:
+    event: "event:DraftApproved"
+    filter:
+      platform: twitter
+    description: Only triggers when payload.platform is "twitter"
+```
+
+## Cross-Cutting Layers
+
+Define infrastructure layers (retry policies, stealth config, circuit breakers) in `specs/shared/layers.yaml` and reference them from nodes. See Usage Guide Section 4.7 for the full layers.yaml format.
+
+---
+
+# Part 7d: Implementation Patterns
+
+This section maps DDD spec constructs to implementation code artifacts.
+
+## Node Type to Code Artifact Mapping
+
+| Node Type | Primary Artifact | Secondary Artifacts |
+|-----------|-----------------|---------------------|
+| `trigger` (http) | Route handler / controller | Auth middleware, rate limiter |
+| `trigger` (cron) | Scheduled job definition | — |
+| `trigger` (event) | Event listener / subscriber | — |
+| `input` | Zod/Pydantic validation schema | TypeScript request type |
+| `process` | Service function | — |
+| `decision` | Conditional branch in service | — |
+| `terminal` | Response formatter / return | Error response variant |
+| `data_store` | Repository / query function | ORM query |
+| `collection` | Array utility in service | — |
+| `service_call` | HTTP client call / SDK wrapper | Retry/timeout config |
+| `event` (emit) | Event emitter call | Event type definition |
+| `loop` | `for`/`while` block in service | — |
+| `parallel` | `Promise.all` / `asyncio.gather` | — |
+| `sub_flow` | Imported service function call | — |
+| `parse` | Parser utility function | — |
+| `crypto` | Crypto utility function | Key management helper |
+| `transform` | Data mapping function | — |
+| `delay` | `setTimeout` / queue delay | — |
+| `llm_call` | LLM client call | Prompt template |
+| `agent_loop` | Agentic tool-use loop | Tool definitions |
+| `guardrail` | Check middleware / validator | — |
+| `human_gate` | Async checkpoint + notification | Approval state persistence |
+| `orchestrator` | Strategy dispatcher | Per-strategy handler |
+| `smart_router` | Routing function | Confidence scorer |
+| `handoff` | Context transfer + agent call | — |
+| `agent_group` | Parallel/sequential agent runner | — |
+
+## Service Layer Pattern
+
+Each flow maps to one **service file**. The service exports a main function named after the flow. Nodes become sequential or branching calls within that function.
+
+**Key rules:**
+- One service file per flow, one exported function per flow
+- Internal helper functions for process/decision nodes stay private
+- Repository functions are shared across flows via the `repositories/` directory
+- When multiple flows share a domain, group their HTTP routes into a single route file per resource
+
+## Error Handling
+
+Connection `sourceHandle` values map to control flow:
+
+| Source Handle | Implementation |
+|--------------|----------------|
+| (unnamed) | Normal sequential call |
+| `"success"` | Success branch (equivalent to unnamed) |
+| `"error"` | `catch` block / error handler |
+| `"true"` / `"false"` | `if`/`else` branches |
+
+Connection `behavior` maps to error handling strategy:
+
+| Behavior | Implementation |
+|----------|----------------|
+| `continue` | `try { ... } catch(e) { logger.warn(e); }` — log and proceed |
+| `stop` | `throw e;` — propagate to flow-level error handler |
+| `retry` | Wrap call in retry loop |
+| `circuit_break` | Use circuit breaker with threshold from node spec |
+
+## Test Generation
+
+Generate tests based on flow structure:
+
+| Flow Element | Test Case |
+|-------------|-----------|
+| Happy path (trigger → terminal success) | End-to-end success test |
+| Each `decision` node | One test per branch |
+| Each `error` handle connection | Error path test |
+| `input` node with `required` fields | Validation rejection test per field |
+| `service_call` node | Mock external call, test success + failure |
+| `data_store` node | Mock repository, verify query/mutation |
+| `guardrail` node | Test pass and block outcomes |
+| `human_gate` node | Test approve and reject paths |
 
 ---
 
