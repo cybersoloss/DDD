@@ -2160,31 +2160,42 @@ You can also create specs by hand:
 
 ### /ddd-create
 
-Generates a complete DDD project from a natural-language description.
+Generates a complete DDD project from a natural-language description and/or design files.
 
 **Usage:**
 ```
-/ddd-create {description}
+/ddd-create <description> [--from <path-or-url>] [--shortfalls]
 ```
 
-**Example:**
+| Flag | Purpose |
+|------|---------|
+| `--from <path-or-url>` | Use a design file as reference input. Supports images (PNG, JPG), PDFs, markdown, text, YAML, and URLs (Figma, Miro). Extracts domains, flows, data models, events, and architecture from the design. |
+| `--shortfalls` | Generate `specs/shortfalls.yaml` — a structured gap analysis report documenting DDD framework limitations encountered during design (7 categories: missing node types, inadequate nodes, missing fields, connection limitations, layer gaps, workarounds, cross-cutting gaps). Feed into `/ddd-evolve` for analysis. |
+
+**Examples:**
 ```
 /ddd-create An e-commerce platform with user auth, product catalog,
             shopping cart, order processing, and email notifications
+
+/ddd-create --from ~/designs/wireframes.png Social media dashboard app
+
+/ddd-create --from ~/docs/requirements.pdf AI moderation service. TypeScript, Hono. --shortfalls
 ```
 
 **What it does:**
 1. Fetches the latest DDD Usage Guide for spec format reference
-2. Analyzes the description (asks clarifying questions if brief)
-3. Creates the full project structure:
+2. If `--from` is provided, reads the design file (images, PDFs, markdown, URLs) and extracts domains, flows, data models, events, and tech stack
+3. Analyzes the description and/or design file (asks clarifying questions if brief)
+4. Creates the full project structure:
    - `ddd-project.json` with domain list
    - `specs/system.yaml`, `specs/architecture.yaml`, `specs/config.yaml`
    - `specs/shared/errors.yaml`, `specs/shared/types.yaml` (if needed)
    - `specs/schemas/` with `_base.yaml` and per-model schemas
    - `specs/domains/{domain}/domain.yaml` with flows and event wiring
    - `specs/domains/{domain}/flows/{flow}.yaml` with full node graphs
-4. Validates all flows (trigger → terminals, wired branches, event matching)
-5. Shows summary with domain counts, file list, event wiring, and next steps
+5. Validates all flows (trigger → terminals, wired branches, event matching)
+6. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
+7. Shows summary with domain counts, file list, event wiring, and next steps
 
 **After running:**
 1. Open the project in DDD Tool to review visually
@@ -2311,26 +2322,81 @@ Pass `--coverage` to include coverage reporting.
 
 Reverse-engineers DDD specs from an existing codebase. Points at source code and generates domain, flow, and schema YAML files.
 
-| Argument | Scope | Example |
-|----------|-------|---------|
-| `--path {dir}` | Codebase root to analyze | `/ddd-reverse --path ./src` |
-| `--domain {name}` | Reverse a single domain | `/ddd-reverse --domain users` |
-| `--strategy {mode}` | Detection approach | `/ddd-reverse --strategy routes` |
-| *(empty)* | Interactive mode | `/ddd-reverse` |
+**Usage:**
+```
+/ddd-reverse <project-path> [--output <path>] [--domains <d1,d2>] [--merge] [--strategy <name>]
+```
 
-**Strategies:**
-- `routes` — Detect domains from route/controller files
-- `services` — Detect from service/business logic layer
-- `models` — Detect from data models and their relationships
-- `auto` *(default)* — Combine all strategies and cross-reference
+| Flag | Purpose | Default |
+|------|---------|---------|
+| `--output <path>` | Where to write specs | Same as project path |
+| `--domains <d1,d2>` | Only reverse specific domains | All domains |
+| `--merge` | Merge with existing specs (don't overwrite) | Overwrite |
+| `--strategy <name>` | Override auto-selected strategy | Auto by file count |
+
+**Strategies** (auto-selected based on source file count):
+
+| Strategy | Files | Approach |
+|----------|-------|---------|
+| `baseline` | < 30 | Read code directly in context |
+| `index` | 30–80 | Build in-context index, process per-domain |
+| `swap` | 80–150 | Write index to `.ddd/reverse/` on disk, read selectively |
+| `bottom-up` | 150–300 | Grep entry points (L3), extract each independently, group into domains (L2→L1) |
+| `compiler` | 300–500 | 6-pass pipeline: scan → extract → resolve → IR → link → emit |
+| `codex` | 500+ | Compress codebase to ref code vocabulary + one-line call chains |
+
+**Examples:**
+```
+/ddd-reverse ~/code/my-api
+/ddd-reverse ~/code/my-app --output ~/specs --domains users,orders
+/ddd-reverse ~/code/my-app --merge --strategy compiler
+```
 
 **What it does:**
-1. Scans the codebase for route handlers, services, models, and event handlers
-2. Groups related code into candidate domains
-3. Detects flow patterns (request → validate → process → respond)
-4. Infers schemas from model definitions
-5. Generates draft YAML specs in `specs/` for review
-6. Opens in DDD Tool for visual verification and adjustment
+1. Detects tech stack from config files (package.json, Cargo.toml, go.mod, etc.)
+2. Scans project structure, infers domain boundaries
+3. Extracts data models from ORM/schema definitions
+4. Extracts flows from routes, handlers, event listeners, cron jobs
+5. Extracts cross-cutting concerns (errors, shared types, config, architecture)
+6. Wires events across domains
+7. Runs quality checks and coverage verification
+8. Generates draft YAML specs in `specs/` and coverage report at `.ddd/reverse/coverage.yaml`
+
+### /ddd-evolve
+
+Analyzes DDD shortfall reports from one or more projects, critically evaluates each gap, and produces a prioritized evolution plan for human decision-making. This is how DDD improves itself based on real project feedback.
+
+**Usage:**
+```
+/ddd-evolve <shortfalls.yaml> [<shortfalls2.yaml> ...]
+/ddd-evolve --review <evolution-plan.yaml>
+/ddd-evolve --apply <evolution-plan.yaml>
+```
+
+| Mode | What it does |
+|------|-------------|
+| *(default)* | Analyze shortfalls → produce `ddd-evolution-plan.yaml` with recommendations |
+| `--review` | Walk through each item interactively, collect approve/defer/reject decisions |
+| `--apply` | Execute approved items from a reviewed plan (requires `--review` first) |
+
+**What it does:**
+1. Reads shortfall files (generated by `/ddd-create --shortfalls`) and deduplicates across projects
+2. Critically evaluates each shortfall through 6 filters:
+   - **Already possible?** — check if DDD can already do it
+   - **Frequency test** — 1 project = weak signal, 3+ = systemic
+   - **Specificity test** — actionable or vague?
+   - **Scope test** — breaking vs additive vs docs-only
+   - **Workaround quality** — blocked vs lossy vs adequate
+   - **Design intent** — intentional limitation or real gap?
+3. Classifies each as: `REAL_GAP`, `ENHANCEMENT`, `VAGUE`, `ALREADY_POSSIBLE`, `BY_DESIGN`, or `PROJECT_SPECIFIC`
+4. Produces a tiered evolution plan. Nothing changes until a human reviews and approves.
+
+**Evolve DDD workflow:**
+```
+/ddd-create projA --shortfalls  →  specs/shortfalls.yaml   ┐
+/ddd-create projB --shortfalls  →  specs/shortfalls.yaml   ├→ /ddd-evolve → --review → --apply
+/ddd-create projC --shortfalls  →  specs/shortfalls.yaml   ┘
+```
 
 ---
 
