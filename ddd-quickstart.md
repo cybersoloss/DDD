@@ -175,7 +175,7 @@ Claude updates the YAML spec. Reload DDD Tool (Cmd+R) to see the change. Then:
 
 - **Specs and code are both sources of truth at different levels** — specs define what/why, code accumulates how. The Reflect phase feeds code wisdom back into specs.
 - **Four-phase lifecycle** — Create → Design → Build → Reflect. Each phase has dedicated commands.
-- **19 node types** — trigger, input, process, decision, terminal, data_store, service_call, event, loop, parallel, sub_flow, llm_call, agent_loop, guardrail, human_gate, orchestrator, smart_router, handoff, agent_group
+- **28 node types** — trigger, input, process, decision, terminal, data_store, service_call, ipc_call, event, loop, parallel, sub_flow, llm_call, delay, cache, transform, collection, parse, crypto, batch, transaction, agent_loop, guardrail, human_gate, orchestrator, smart_router, handoff, agent_group
 - **Branching nodes use `sourceHandle`** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), loop (body/done), parallel (branch-N/done)
 - **Human bridges phases** — reviews specs in DDD Tool between Create and Build, reviews annotations between Build and Reflect
 
