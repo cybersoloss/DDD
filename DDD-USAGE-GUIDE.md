@@ -2978,6 +2978,9 @@ nodes:
     position: { x: 250, y: 320 }
     connections:
       - targetNodeId: gate-001
+        sourceHandle: "done"
+      - targetNodeId: terminal-agent-error
+        sourceHandle: "error"
     spec:
       model: claude-sonnet
       system_prompt: >
@@ -3016,6 +3019,9 @@ nodes:
     position: { x: 250, y: 480 }
     connections:
       - targetNodeId: terminal-001
+        sourceHandle: "approve"
+      - targetNodeId: terminal-rejected
+        sourceHandle: "reject"
     spec:
       notification_channels:
         - slack
@@ -3043,6 +3049,24 @@ nodes:
       outcome: ticket resolved
       description: Ticket has been resolved
     label: Resolved
+
+  - id: terminal-agent-error
+    type: terminal
+    position: { x: 450, y: 420 }
+    connections: []
+    spec:
+      outcome: agent error
+      description: Agent loop failed or hit max iterations
+    label: Agent Error
+
+  - id: terminal-rejected
+    type: terminal
+    position: { x: 450, y: 580 }
+    connections: []
+    spec:
+      outcome: rejected
+      description: Human reviewer rejected and reassigned
+    label: Rejected & Reassigned
 
   - id: terminal-blocked
     type: terminal
@@ -3074,7 +3098,7 @@ metadata:
 10. **Cross-cutting concerns are optional** — only add observability/security when needed for implementation hints
 11. **Always use sourceHandle on branching nodes** — see Section 8 for the complete handle reference per node type
 12. **Create supplementary specs early** — system.yaml, architecture.yaml, config.yaml, errors.yaml, and schemas give `/ddd-implement` the context it needs to generate correct code
-13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, `manual`, `sse`, `ws`, or `pattern:` to communicate trigger type
+13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, `manual`, `sse`, `ws`, `pattern:`, `shortcut`, `timer`, `ui:`, or `ipc:` to communicate trigger type
 14. **Add status and body to terminals** — custom fields on terminal specs tell `/ddd-implement` exactly what HTTP response to generate
 15. **Define integrations in system.yaml** — `service_call` nodes reference integration names instead of repeating URL/auth/retry config
 16. **Use shared/types.yaml for enums used across schemas** — avoids duplicating `values:` arrays in multiple schema files
