@@ -6,7 +6,7 @@
 |-----------|---------|
 | [DDD repo](https://github.com/cybersoloss/DDD) | Spec, guide, templates |
 | [DDD Tool](https://github.com/cybersoloss/ddd-tool) | Desktop app for visual design |
-| [Claude Commands](https://github.com/cybersoloss/claude-commands) | 12 slash commands for the full lifecycle |
+| [Claude Commands](https://github.com/cybersoloss/claude-commands) | 11 slash commands for the full lifecycle |
 | Claude Code | AI that reads specs and generates code |
 
 ---
