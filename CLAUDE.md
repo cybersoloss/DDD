@@ -28,7 +28,6 @@ cd DDD && git remote add public https://github.com/cybersoloss/DDD.git
 | File | Purpose |
 |------|---------|
 | `DDD-USAGE-GUIDE.md` | Primary reference — all YAML formats, node types, spec fields, conventions |
-| `ddd-quickstart.md` | Four-step quickstart for new users |
 | [claude-commands](https://github.com/cybersoloss/claude-commands) | All DDD slash commands (install via claude-commands repo) |
 | `templates/` | Architecture, config, and errors YAML templates |
 

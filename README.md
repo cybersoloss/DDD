@@ -74,6 +74,34 @@ Eleven Claude Code slash commands power the workflow:
 | Any | `/ddd-status` | Quick read-only overview of project implementation state |
 | Meta | `/ddd-evolve` | Analyze shortfall reports → `--review` for decisions → `--apply` to execute |
 
+### Ongoing Development
+
+```bash
+# Change a flow
+/ddd-update users/user-login
+> "Add rate limiting before the login process"
+/ddd-implement users/user-login
+
+# Add a new flow
+/ddd-update --add-flow orders
+> "Add an order cancellation flow with refund processing"
+
+# Add a new domain
+/ddd-update --add-domain
+> "Add a notifications domain with email and push notification flows"
+
+# Sync after manual code changes
+/ddd-sync              # Update mapping.yaml
+/ddd-sync --discover   # Find untracked code, suggest specs
+/ddd-sync --fix-drift  # Re-implement drifted flows
+/ddd-sync --full       # All of the above
+
+# Scope arguments work on implement, test, update
+/ddd-implement --all                   # Whole project
+/ddd-implement users                   # All flows in a domain
+/ddd-implement users/user-register     # Single flow
+```
+
 ### Install Commands
 
 ```bash
@@ -89,7 +117,6 @@ cd claude-commands && ./install.sh
 ```
 DDD/
 ├── DDD-USAGE-GUIDE.md              # How to write DDD specs (fetched by commands at runtime)
-├── ddd-quickstart.md                # Quick start guide for using DDD
 └── templates/
     ├── architecture-template.yaml   # Reusable: project structure & conventions
     ├── config-template.yaml         # Reusable: environment variables schema
