@@ -111,6 +111,7 @@ layout:
 | `owns_schemas` | string[]? | Schema names this domain owns (e.g., ["User", "Session"]) |
 | `stores` | StoreDefinition[]? | In-memory state store declarations for this domain |
 | `on_error` | DomainOnError? | Domain-level error hook — `/ddd-implement` adds this behavior to all error terminals in the domain |
+| `event_groups` | EventGroup[]? | Named groups of events for use in multi-event triggers |
 | `groups` | FlowGroup[]? | Visual grouping of flows at L2 |
 | `layout` | DomainLayout | Canvas positions (managed by DDD Tool) |
 
@@ -121,6 +122,33 @@ layout:
 | `id` | string | Group ID |
 | `name` | string | Display name |
 | `flows` | string[] | Flow IDs in this group |
+
+### EventGroup
+
+Named collections of events for use in multi-event triggers. Instead of listing 20+ events on a trigger, reference a group with `event_group:{name}` in the trigger's `event` field.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Group name (referenced as `event_group:{name}` in triggers) |
+| `description` | string? | What this group represents |
+| `events` | string[] | Event names in this group |
+
+```yaml
+# Example: define event groups in domain.yaml
+event_groups:
+  - name: audit_events
+    description: "All events that should be logged for audit"
+    events:
+      - PostCreated
+      - PostUpdated
+      - PostDeleted
+      - UserLoggedIn
+      - UserLoggedOut
+      - SettingsUpdated
+
+# Then reference in a trigger:
+# event: "event_group:audit_events"
+```
 
 ### StoreDefinition
 
@@ -1082,6 +1110,12 @@ spec:
   source: Message Bus
   description: Triggered by either content discovery or monitoring
 
+# Event group trigger — "event_group:{name}" (references event_groups in domain.yaml)
+spec:
+  event: "event_group:audit_events"
+  source: Message Bus
+  description: Triggered by any event in the audit_events group
+
 # SSE trigger — Server-Sent Events endpoint
 spec:
   event: "sse /api/updates"
@@ -2020,6 +2054,7 @@ security:
   rate_limiting:
     enabled: true
     requests_per_minute: 60
+    key: ip
   encryption:
     at_rest: true
     in_transit: true
@@ -2027,6 +2062,8 @@ security:
   audit:
     enabled: true
 ```
+
+**`rate_limiting.key`** — specifies what to rate-limit by: `'ip'` (default) | `'api_key'` | `'user'` | `'custom'`. When omitted, implementations should default to IP-based rate limiting.
 
 ---
 
@@ -2166,6 +2203,8 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 ### Domain-Level
 - No duplicate flow IDs within a domain
 - Multiple flows may publish the same event name with different `from_flow` values — this is valid (dual-purpose events)
+- Trigger `event_group:{name}` must reference an `event_groups` entry defined in the same domain's `domain.yaml`
+- No duplicate event group names within a domain
 
 ### System-Level
 - Events consumed by a domain must be published by some domain
