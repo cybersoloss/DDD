@@ -2140,20 +2140,33 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 - All paths from trigger must reach a terminal node
 - No orphaned (unreachable) nodes
 - No circular paths in traditional flows (agents may have cycles)
-- Decision nodes must have both true and false branch connections
 - Trigger must have an `event` defined
 - Input fields must have `type` defined
 - Decision must have a `condition` defined
+- Branching nodes must have all output paths wired (see Section 8 for handles per node type):
+  - Decision: both `true` and `false` branches
+  - Input: both `valid` and `invalid` paths
+  - Data Store, Service Call, IPC Call, LLM Call, Parse, Crypto: both `success` and `error` paths
+  - Loop: both `body` and `done` paths
+  - Parallel: all `branch-N` paths plus `done`
+  - Cache: both `hit` and `miss` paths
+  - Collection: both `result` and `empty` paths
+  - Guardrail: both `pass` and `block` paths
+  - Agent Loop, Batch: both `done` and `error` paths
+  - Transaction: both `committed` and `rolled_back` paths
+  - Smart Router: connections for each `rules[].id` value
+  - Human Gate: connections for each `approval_options[].id` value
 
 ### Flow-Level (Warning)
 - Terminal nodes should not have outgoing connections
 - Process nodes should have a description or action
-- Agent loops should have `max_iterations` and `model` set
+- Agent loops should have `max_iterations` set
 - Sub-flow `input_mapping` keys should match target flow's contract inputs (if contract defined)
 - Sub-flow `output_mapping` keys should match target flow's contract outputs (if contract defined)
 
 ### Agent-Specific (Error)
 - Agent flow must have at least one `agent_loop` node
+- Agent loop must have `model` defined
 - Agent loop must have at least one tool
 - Agent loop must have at least one terminal tool (`is_terminal: true`)
 
@@ -2161,12 +2174,13 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 - Orchestrator must have 2+ agents and a strategy
 - Smart Router must have rules defined or LLM routing enabled
 - Smart Router with empty `fallback_chain` and no LLM routing — warning
-- Handoff must have a target flow
+- Handoff must have a target (flow or domain)
 - Agent Group must have 2+ members
 
 ### Extended Nodes (Error)
 - Data Store must have operation (and model when store_type is database)
 - Service Call must have method and URL
+- IPC Call must have command
 - Event must have direction and event_name
 - Loop must have collection and iterator
 - Parallel must have 2+ branches
@@ -2175,10 +2189,10 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 - Cache must have key and store
 - Transform must have input_schema and output_schema
 - Delay must have min_ms
-- Collection must have operation and input
-- Parse must have format and input
+- Collection must have operation, input, and output
+- Parse must have format, input, and output
 - Crypto must have operation, algorithm, and key_source
-- Batch must have input and operation_template
+- Batch must have input, operation_template, and output
 - Transaction must have steps with at least 2 entries
 
 ### Domain-Level
@@ -2735,21 +2749,21 @@ When creating a flow in the DDD Tool, these templates are available:
 ### Traditional Templates
 | Template | Nodes | Pattern |
 |----------|-------|---------|
-| REST API Endpoint | 5 | Trigger -> Input -> Process -> Terminal (success/error) |
-| CRUD Entity | 6 | Trigger -> Input -> Decision -> Data Store -> Terminal |
-| Webhook Handler | 5 | Trigger -> Input -> Process -> Service Call -> Terminal |
-| Event Processor | 5 | Trigger -> Event (consume) -> Process -> Event (emit) -> Terminal |
-| Cached API Call | 6 | Trigger -> Input -> Cache -> Service Call -> Transform -> Terminal |
-| Collection Processing | 6 | Trigger -> Loop -> Collection (filter) -> Event (emit) -> Terminal |
-| Data Import with Parsing | 6 | Trigger -> Service Call -> Parse -> Collection (deduplicate) -> Data Store -> Terminal |
+| REST API Endpoint | 5 | Trigger -> Input --(valid)--> Process -> Terminal (success) / --(invalid)--> Terminal (error) |
+| CRUD Entity | 6 | Trigger -> Input --(valid)--> Decision --(true)--> Data Store -> Terminal (success) / --(false)--> Terminal (forbidden) |
+| Webhook Handler | 6 | Trigger -> Input --(valid)--> Process -> Service Call --(success)--> Terminal / --(error)--> Terminal (error) |
+| Event Processor | 5 | Trigger (`event:`) -> Process -> Event (emit) -> Terminal (success) / Terminal (error) |
+| Cached API Call | 7 | Trigger -> Input -> Cache --(miss)--> Service Call -> Transform -> Terminal / --(hit)--> Transform -> Terminal |
+| Collection Processing | 6 | Trigger -> Collection (filter) --(result)--> Loop --(body)--> Event (emit) / --(done)--> Terminal / --(empty)--> Terminal |
+| Data Import with Parsing | 7 | Trigger -> Service Call --(success)--> Parse --(success)--> Collection (deduplicate) -> Data Store -> Terminal / --(error)--> Terminal |
 
 ### Agent Templates
 | Template | Nodes | Pattern |
 |----------|-------|---------|
-| RAG Agent | 5 | Guardrail -> Agent Loop (retrieval) -> Guardrail -> Terminal |
-| Customer Support Agent | 5 | Guardrail -> Agent Loop (tickets) -> Human Gate -> Terminal |
-| Code Review Agent | 3 | Trigger -> Agent Loop (analysis) -> Terminal |
-| Data Pipeline Agent | 3 | Trigger -> Agent Loop (ETL) -> Terminal |
+| RAG Agent | 6 | Trigger -> Guardrail --(pass)--> Agent Loop --(done)--> Guardrail -> Terminal / --(error)--> Terminal |
+| Customer Support Agent | 7 | Trigger -> Guardrail --(pass)--> Agent Loop --(done)--> Human Gate --(approve)--> Terminal / --(reject)--> Terminal / --(error)--> Terminal |
+| Code Review Agent | 4 | Trigger -> Agent Loop (analysis) --(done)--> Terminal / --(error)--> Terminal |
+| Data Pipeline Agent | 4 | Trigger -> Agent Loop (ETL) --(done)--> Terminal / --(error)--> Terminal |
 
 ---
 
