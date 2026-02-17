@@ -179,6 +179,8 @@ on_error:
 | `keyboard_shortcut` | string? | Keyboard shortcut (e.g., `"Cmd+K"`). Auto-populated from `shortcut` trigger events by DDD Tool. Shown as badge at L2. |
 | `criticality` | string? | `'critical' \| 'high' \| 'normal' \| 'low'` — visual priority at L2 |
 | `throughput` | string? | Expected volume (e.g., `"~500 items/day"`) — shown as subtitle at L2 |
+| `template` | string? | Reference to a template flow ID (see Parameterized Flow pattern in Section 16) |
+| `parameters` | `Record<string, unknown>`? | Parameter values for template instantiation (required when `template` is set) |
 
 ### EventWiring
 
@@ -3321,13 +3323,17 @@ Each node type produces specific code artifacts. The **primary** artifact is alw
 | `data_store` (write/update/delete) | Repository / mutation function | Prisma mutation |
 | `collection` | Array utility in service | — |
 | `service_call` | HTTP client call / SDK wrapper | Retry/timeout config |
+| `ipc_call` | IPC message sender / bridge call | Response handler |
 | `event` (emit) | Event emitter call | Event type definition |
 | `event` (listen) | Event handler registration | — |
 | `loop` | `for`/`while` block in service | — |
 | `parallel` | `Promise.all` / `Promise.allSettled` | — |
 | `sub_flow` | Imported service function call | — |
+| `cache` | Cache get/set wrapper | Cache key builder |
 | `parse` | Parser utility function | — |
 | `crypto` | Crypto utility function | Key management helper |
+| `batch` | Batch processor / `Promise.allSettled` loop | Per-item operation handler |
+| `transaction` | Database transaction wrapper | Rollback handler |
 | `transform` | Data mapping function | — |
 | `delay` | `setTimeout` / queue delay | — |
 | `llm_call` | LLM client call | Prompt template |
@@ -3372,15 +3378,22 @@ export async function createOrder(ctx: FlowContext): Promise<FlowResult> {
 
 ### Error Handling
 
-Connection `sourceHandle` values map to control flow:
+Connection `sourceHandle` values map to control flow (see Section 8 for the complete handle reference per node type):
 
 | Source Handle | Implementation |
 |--------------|----------------|
 | (unnamed) | Normal sequential call |
-| `"success"` | Success branch (equivalent to unnamed) |
-| `"error"` | `catch` block / error handler |
-| `"true"` / `"false"` | `if`/`else` branches |
-| `"hit"` / `"miss"` | Cache hit/miss branches |
+| `"success"` / `"error"` | Success branch / `catch` block (data_store, service_call, ipc_call, parse, crypto, llm_call) |
+| `"valid"` / `"invalid"` | Validation pass / rejection (input) |
+| `"true"` / `"false"` | `if`/`else` branches (decision) |
+| `"hit"` / `"miss"` | Cache lookup branches (cache) |
+| `"body"` / `"done"` | Loop iteration body / post-loop (loop) |
+| `"branch-N"` / `"done"` | Parallel branches / join point (parallel) |
+| `"result"` / `"empty"` | Has results / empty collection (collection) |
+| `"pass"` / `"block"` | Validation pass / blocked (guardrail) |
+| `"done"` / `"error"` | Completed / failure (agent_loop, batch) |
+| `"committed"` / `"rolled_back"` | Transaction outcome (transaction) |
+| dynamic IDs | Route IDs (smart_router) or approval option IDs (human_gate) |
 
 Connection `behavior` maps to error handling strategy:
 
@@ -3397,8 +3410,8 @@ Connection `behavior` maps to error handling strategy:
 |------------|-------------------|
 | `input` node `fields[]` with `type` + `required` | Zod schema (`z.object({ ... })`) |
 | `input` node `validation` rules | Validation logic (e.g., `z.string().email()`) |
-| `trigger` with `auth` | Auth middleware (`requireAuth`, `requireRole`) |
-| `trigger` with `rate_limit` | Rate limiter middleware |
+| Node with `security.authentication` | Auth middleware (`requireAuth`, `requireRole`) |
+| Node with `security.rate_limiting` | Rate limiter middleware |
 | `guardrail` node | Check function called before downstream logic |
 
 ```typescript
