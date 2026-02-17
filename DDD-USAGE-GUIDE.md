@@ -875,8 +875,8 @@ nodes:
     connections: []
     spec:
       outcome: error
-      description: Return 400 Validation Error
-      status: 400
+      description: Return 422 Validation Error
+      status: 422
       body:
         error: "VALIDATION_ERROR"
         message: "$.validation_errors"
