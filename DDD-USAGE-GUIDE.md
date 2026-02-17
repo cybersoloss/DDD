@@ -2066,13 +2066,33 @@ Connections define the flow graph. Each connection is `{ targetNodeId, sourceHan
 
 **Convention:** For nodes with multiple output paths, always use `sourceHandle` to label each path. This makes the flow graph unambiguous for both the DDD Tool and `/ddd-implement`.
 
-### Simple connection (one output)
-```yaml
-connections:
-  - targetNodeId: next-node-id
-```
+### sourceHandle Reference
 
-### Decision branches (two outputs)
+| Node Type | Handle A | Handle B | Notes |
+|-----------|----------|----------|-------|
+| `input` | `"valid"` | `"invalid"` | |
+| `decision` | `"true"` | `"false"` | |
+| `data_store` | `"success"` | `"error"` | |
+| `service_call` | `"success"` | `"error"` | |
+| `ipc_call` | `"success"` | `"error"` | |
+| `llm_call` | `"success"` | `"error"` | Unnamed handle = `"success"` |
+| `loop` | `"body"` | `"done"` | |
+| `parallel` | `"branch-0"`, `"branch-1"`, ... | `"done"` | |
+| `cache` | `"hit"` | `"miss"` | |
+| `collection` | `"result"` | `"empty"` | |
+| `parse` | `"success"` | `"error"` | |
+| `crypto` | `"success"` | `"error"` | |
+| `batch` | `"done"` | `"error"` | |
+| `transaction` | `"committed"` | `"rolled_back"` | |
+| `guardrail` | `"pass"` | `"block"` | Also accepts `"valid"`/`"invalid"` as aliases |
+| `agent_loop` | `"done"` | `"error"` | |
+| `smart_router` | dynamic route IDs | | From `rules[].id` |
+| `human_gate` | dynamic option IDs | | From `approval_options[].id` |
+| All others | *(single unnamed output)* | | process, delay, transform, sub_flow, orchestrator, handoff, agent_group, event, terminal |
+
+### Examples
+
+**Binary branching** (decision, input, data_store, service_call, etc.):
 ```yaml
 connections:
   - targetNodeId: success-node-id
@@ -2081,46 +2101,8 @@ connections:
     sourceHandle: "false"
 ```
 
-### Input validation branches (valid/invalid)
+**Multi-branch** (parallel):
 ```yaml
-connections:
-  - targetNodeId: process-node-id
-    sourceHandle: "valid"
-  - targetNodeId: error-terminal-id
-    sourceHandle: "invalid"
-```
-
-### data_store success/error
-```yaml
-connections:
-  - targetNodeId: next-step-id
-    sourceHandle: "success"
-  - targetNodeId: error-terminal-id
-    sourceHandle: "error"
-```
-
-### service_call / ipc_call success/error
-```yaml
-connections:
-  - targetNodeId: next-step-id
-    sourceHandle: "success"
-  - targetNodeId: error-terminal-id
-    sourceHandle: "error"
-```
-
-### Loop body + after loop
-```yaml
-connections:
-  - targetNodeId: loop-body-node-id
-    sourceHandle: "body"
-  - targetNodeId: after-loop-node-id
-    sourceHandle: "done"
-```
-
-### Parallel branches + join
-```yaml
-# branches field is descriptive (for documentation)
-# connections define actual parallel paths
 connections:
   - targetNodeId: branch-a-first-node
     sourceHandle: "branch-0"
@@ -2130,103 +2112,8 @@ connections:
     sourceHandle: "done"
 ```
 
-### Cache hit/miss
+**Dynamic handles** (human_gate — handles from `approval_options[].id`):
 ```yaml
-connections:
-  - targetNodeId: use-cached-value-id
-    sourceHandle: "hit"
-  - targetNodeId: fetch-fresh-data-id
-    sourceHandle: "miss"
-```
-
-### Smart Router (multiple outputs)
-```yaml
-connections:
-  - targetNodeId: route-a-id
-    sourceHandle: "route-a"
-  - targetNodeId: route-b-id
-    sourceHandle: "route-b"
-```
-
-### Collection result/empty
-```yaml
-connections:
-  - targetNodeId: next-step-id
-    sourceHandle: "result"
-  - targetNodeId: empty-handler-id
-    sourceHandle: "empty"
-```
-
-### Parse success/error
-```yaml
-connections:
-  - targetNodeId: next-step-id
-    sourceHandle: "success"
-  - targetNodeId: parse-error-id
-    sourceHandle: "error"
-```
-
-### Crypto success/error
-```yaml
-connections:
-  - targetNodeId: next-step-id
-    sourceHandle: "success"
-  - targetNodeId: crypto-error-id
-    sourceHandle: "error"
-```
-
-### Batch done/error
-```yaml
-connections:
-  - targetNodeId: next-step-id
-    sourceHandle: "done"
-  - targetNodeId: batch-error-id
-    sourceHandle: "error"
-```
-
-### Transaction committed/rolled_back
-```yaml
-connections:
-  - targetNodeId: success-path-id
-    sourceHandle: "committed"
-  - targetNodeId: rollback-handler-id
-    sourceHandle: "rolled_back"
-```
-
-### Guardrail pass/block
-```yaml
-connections:
-  - targetNodeId: continue-node-id
-    sourceHandle: "pass"
-  - targetNodeId: blocked-handler-id
-    sourceHandle: "block"
-```
-
-> **Alias:** Guardrail also accepts `"valid"`/`"invalid"` as aliases for `"pass"`/`"block"`. The DDD Tool normalizes both forms.
-
-### Agent Loop done/error
-```yaml
-connections:
-  - targetNodeId: next-node-id
-    sourceHandle: "done"
-  - targetNodeId: error-handler-id
-    sourceHandle: "error"
-```
-
-### LLM Call success/error
-```yaml
-connections:
-  - targetNodeId: next-node-id
-    sourceHandle: "success"
-  - targetNodeId: error-handler-id
-    sourceHandle: "error"
-```
-
-> **Note:** `llm_call` also works with an unnamed handle (no `sourceHandle`) for the success path. The DDD Tool treats an unnamed handle and `"success"` as equivalent.
-
-### Human Gate (dynamic per approval_options)
-```yaml
-# Handles are generated from the approval_options[].id values
 connections:
   - targetNodeId: approved-path-id
     sourceHandle: "approve"
@@ -2234,53 +2121,11 @@ connections:
     sourceHandle: "reject"
 ```
 
-### Delay (single output)
+**Single output** (process, delay, transform, sub_flow, orchestrator, handoff, agent_group):
 ```yaml
 connections:
   - targetNodeId: next-node-id
 ```
-
-> **Note:** Delay nodes have a single unnamed output handle. The delay duration is configured in the node's spec, not in the connection.
-
-### Transform (single output)
-```yaml
-connections:
-  - targetNodeId: next-node-id
-```
-
-> **Note:** Transform nodes have a single unnamed output handle. Mapping rules are in the node spec.
-
-### Sub Flow (single output)
-```yaml
-connections:
-  - targetNodeId: next-node-id
-```
-
-> **Note:** Sub flow nodes invoke another flow and return the result via a single unnamed output. Error handling uses connection `behavior` (e.g., `behavior: stop`).
-
-### Orchestrator (single output)
-```yaml
-connections:
-  - targetNodeId: next-node-id
-```
-
-> **Note:** Orchestrator nodes manage multiple agents internally (supervisor, round_robin, broadcast, or consensus strategy). The orchestrated result exits via a single unnamed output handle.
-
-### Handoff (single output)
-```yaml
-connections:
-  - targetNodeId: next-node-id
-```
-
-> **Note:** Handoff transfers context to a target agent. In `mode: transfer`, the downstream connection receives no further data. In `mode: consult`, the result is passed through the single unnamed output. In `mode: collaborate`, ongoing coordination occurs between agents.
-
-### Agent Group (single output)
-```yaml
-connections:
-  - targetNodeId: next-node-id
-```
-
-> **Note:** Agent group runs agents in parallel or round-robin, aggregates results, and outputs via a single unnamed handle.
 
 ---
 
@@ -2939,68 +2784,7 @@ tech_stack:
   auth: JWT + bcrypt
 ```
 
-### specs/shared/errors.yaml
-
-```yaml
-errors:
-  VALIDATION_ERROR:
-    http_status: 400
-    message_template: "Validation failed: {details}"
-    log_level: warn
-  UNAUTHORIZED:
-    http_status: 401
-    message_template: "Authentication required"
-    log_level: warn
-  NOT_FOUND:
-    http_status: 404
-    message_template: "{resource} not found"
-    log_level: info
-  DUPLICATE_ENTRY:
-    http_status: 409
-    message_template: "{resource} already exists"
-    log_level: warn
-  INSUFFICIENT_STOCK:
-    http_status: 409
-    message_template: "Insufficient stock for {item}"
-    log_level: warn
-  INTERNAL_ERROR:
-    http_status: 500
-    message_template: "An unexpected error occurred"
-    log_level: error
-```
-
-### specs/schemas/user.yaml
-
-```yaml
-name: User
-description: User account
-inherits: _base
-fields:
-  - name: email
-    type: string
-    required: true
-    format: email
-    constraints:
-      unique: true
-  - name: password_hash
-    type: string
-    required: true
-  - name: name
-    type: string
-    required: true
-  - name: role
-    type: enum
-    values: [user, admin]
-    default: user
-indexes:
-  - fields: [email]
-    unique: true
-relationships:
-  - name: orders
-    type: has_many
-    target: Order
-    foreign_key: user_id
-```
+> **errors.yaml** and **schemas** follow the same format as Sections 4.4 and 4.5. Project-specific errors (e.g., `INSUFFICIENT_STOCK`) are added alongside the standard set.
 
 ### specs/schemas/order.yaml
 
@@ -3094,81 +2878,14 @@ layout:
   portals: {}
 ```
 
-### specs/domains/orders/flows/create-order.yaml
+### specs/domains/orders/flows/create-order.yaml (key nodes only)
+
+> Full flow follows the same structure as Section 5's user-register example. Shown here are the novel patterns: `service_call` with `error_mapping`, `event` emit, and multiple error terminals.
 
 ```yaml
-flow:
-  id: create-order
-  name: Create Order
-  type: traditional
-  domain: orders
-  description: Create a new order from cart items
-
-trigger:
-  id: trigger-001
-  type: trigger
-  position: { x: 250, y: 50 }
-  connections:
-    - targetNodeId: input-001
-  spec:
-    event: "HTTP POST /api/v1/orders"
-    source: API Gateway
-    description: Order creation request
-  label: Create Order Request
-
-nodes:
-  - id: input-001
-    type: input
-    position: { x: 250, y: 170 }
-    connections:
-      - targetNodeId: ds-001
-        sourceHandle: "valid"
-      - targetNodeId: terminal-validation
-        sourceHandle: "invalid"
-    spec:
-      fields:
-        - name: user_id
-          type: string
-          required: true
-        - name: items
-          type: array
-          required: true
-        - name: shipping_address
-          type: object
-          required: true
-        - name: payment_method
-          type: string
-          required: true
-      validation: "user_id must be valid UUID, items must be non-empty array"
-      description: Order creation payload
-    label: Order Input
-    security:
-      authentication:
-        required: true
-        methods: [jwt]
-
-  - id: ds-001
-    type: data_store
-    position: { x: 250, y: 310 }
-    connections:
-      - targetNodeId: sc-001
-        sourceHandle: "success"
-      - targetNodeId: terminal-db-error
-        sourceHandle: "error"
-    spec:
-      operation: create
-      model: Order
-      data:
-        user_id: "$.user_id"
-        items: "$.items"
-        shipping_address: "$.shipping_address"
-        status: "pending"
-      description: Save order to database
-    label: Save Order
-
+  # service_call with error_mapping — maps HTTP errors to error codes from errors.yaml
   - id: sc-001
     type: service_call
-    position: { x: 250, y: 440 }
     connections:
       - targetNodeId: decision-001
         sourceHandle: "success"
@@ -3177,8 +2894,6 @@ nodes:
     spec:
       method: POST
       url: "https://inventory.internal/api/reserve"
-      headers:
-        Content-Type: application/json
       body:
         order_id: "$.order.id"
         items: "$.items"
@@ -3189,27 +2904,11 @@ nodes:
       error_mapping:
         "409": "INSUFFICIENT_STOCK"
         "503": "SERVICE_UNAVAILABLE"
-      description: Reserve inventory for order items
     label: Reserve Inventory
 
-  - id: decision-001
-    type: decision
-    position: { x: 250, y: 570 }
-    connections:
-      - targetNodeId: event-001
-        sourceHandle: "true"
-      - targetNodeId: terminal-stock-error
-        sourceHandle: "false"
-    spec:
-      condition: inventory.reserved === true
-      trueLabel: Reserved
-      falseLabel: Out of Stock
-      description: Check if inventory was successfully reserved
-    label: Inventory Available?
-
+  # event emit — async cross-domain notification
   - id: event-001
     type: event
-    position: { x: 150, y: 700 }
     connections:
       - targetNodeId: terminal-success
     spec:
@@ -3220,77 +2919,17 @@ nodes:
         user_id: "$.user_id"
         total: "$.order.total"
       async: true
-      description: Notify other services that order was created
     label: Emit OrderCreated
 
-  - id: terminal-success
-    type: terminal
-    position: { x: 150, y: 830 }
-    connections: []
-    spec:
-      outcome: success
-      description: Return order object
-      status: 201
-      body:
-        message: "Order created successfully"
-        order: "$.order"
-    label: Order Created
-
-  - id: terminal-validation
-    type: terminal
-    position: { x: 450, y: 170 }
-    connections: []
-    spec:
-      outcome: error
-      description: Return validation error
-      status: 400
-      body:
-        error: "VALIDATION_ERROR"
-        message: "$.validation_errors"
-    label: Invalid Input
-
-  - id: terminal-db-error
-    type: terminal
-    position: { x: 450, y: 310 }
-    connections: []
-    spec:
-      outcome: error
-      description: Database write failed
-      status: 500
-      body:
-        error: "INTERNAL_ERROR"
-        message: "Failed to create order"
-    label: DB Error
-
+  # error terminals — each maps to an error code from errors.yaml
   - id: terminal-inventory-error
     type: terminal
-    position: { x: 450, y: 440 }
-    connections: []
     spec:
       outcome: error
-      description: Inventory service unavailable
       status: 503
       body:
         error: "SERVICE_UNAVAILABLE"
-        message: "Inventory service temporarily unavailable"
     label: Inventory Service Error
-
-  - id: terminal-stock-error
-    type: terminal
-    position: { x: 400, y: 700 }
-    connections: []
-    spec:
-      outcome: error
-      description: Insufficient stock
-      status: 409
-      body:
-        error: "INSUFFICIENT_STOCK"
-        message: "One or more items are out of stock"
-    label: Out of Stock
-
-metadata:
-  created: "2025-01-10T10:00:00Z"
-  modified: "2025-01-10T10:00:00Z"
 ```
 
 ### Agent Flow Example: specs/domains/support/flows/support-ticket.yaml
@@ -3433,7 +3072,7 @@ metadata:
 8. **Node IDs must be unique** within a flow — use a prefix matching the type (e.g., `input-001`, `process-002`)
 9. **Position doesn't affect logic** — positions are for canvas layout only, connections define the actual flow
 10. **Cross-cutting concerns are optional** — only add observability/security when needed for implementation hints
-11. **Always use sourceHandle on branching nodes** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), ipc_call (success/error), loop (body/done), parallel (branch-N/done), cache (hit/miss), collection (result/empty), parse (success/error), crypto (success/error), batch (done/error), transaction (committed/rolled_back), guardrail (pass/block), agent_loop (done/error), llm_call (success/error), smart_router (route-N)
+11. **Always use sourceHandle on branching nodes** — see Section 8 for the complete handle reference per node type
 12. **Create supplementary specs early** — system.yaml, architecture.yaml, config.yaml, errors.yaml, and schemas give `/ddd-implement` the context it needs to generate correct code
 13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, `manual`, `sse`, `ws`, or `pattern:` to communicate trigger type
 14. **Add status and body to terminals** — custom fields on terminal specs tell `/ddd-implement` exactly what HTTP response to generate
@@ -3487,87 +3126,6 @@ trigger -> guardrail(input) -> agent_loop -> guardrail(output) -> terminal
 ```
 
 The input guardrail validates/filters data before it reaches the agent. The output guardrail validates the agent's response before it reaches the user. If a guardrail blocks, the flow stops at that point (see `on_block`).
-
-### Error Routing Convention
-
-For nodes with dual output paths (data_store, service_call, input), the convention is:
-- **First connection** = success/happy path
-- **Second connection** = error/failure path
-
-Always use explicit `sourceHandle` values for clarity:
-- `"success"` / `"error"` for data_store, service_call, and ipc_call
-- `"valid"` / `"invalid"` for input
-- `"true"` / `"false"` for decision
-
-### Conditional Required Fields
-
-Use the `validation` string on input nodes to express conditional requirements:
-
-```yaml
-spec:
-  fields:
-    - name: action
-      type: string
-      required: true
-    - name: reason
-      type: string
-      required: false
-    - name: revised_amount
-      type: number
-      required: false
-  validation: "required_if: action == 'revise' then revised_amount; required_if: action == 'reject' then reason"
-```
-
-### Event Cross-Domain Validation
-
-The DDD Tool automatically validates event wiring across domains. You don't need to manually check — just ensure:
-- The publishing domain lists the event in `publishes_events` with `from_flow`
-- The consuming domain lists it in `consumes_events` with `handled_by_flow`
-- The `event` name matches exactly (PascalCase)
-
-The tool will flag errors if a consumed event has no publisher, and warnings if a published event has no consumer.
-
-### Loop with Processing
-
-A loop node iterates over a collection. Use `sourceHandle: "body"` for the loop body path and `sourceHandle: "done"` for after the loop:
-
-```yaml
-- id: loop-001
-  type: loop
-  connections:
-    - targetNodeId: process-item
-      sourceHandle: "body"
-    - targetNodeId: terminal-done
-      sourceHandle: "done"
-  spec:
-    collection: "$.order.items"
-    iterator: "item"
-    break_condition: "item.status === 'cancelled'"
-    description: Process each order item
-```
-
-### Parallel with Join
-
-Parallel branches run concurrently. The `branches` field is descriptive only — connections define actual paths:
-
-```yaml
-- id: parallel-001
-  type: parallel
-  connections:
-    - targetNodeId: validate-payment
-      sourceHandle: "branch-0"
-    - targetNodeId: check-inventory
-      sourceHandle: "branch-1"
-    - targetNodeId: process-continue
-      sourceHandle: "done"
-  spec:
-    branches:
-      - "Validate payment method"
-      - "Check inventory availability"
-    join: all
-    timeout_ms: 10000
-    description: Run payment and inventory checks in parallel
-```
 
 ### Multi-Way Routing in Traditional Flows
 
@@ -3714,52 +3272,6 @@ flows:
       platform: linkedin
       api_integration: linkedin-api
       publish_endpoint: /v2/ugcPosts
-```
-
-### Cross-Cutting Layers
-
-Define infrastructure layers (retry policies, stealth config, circuit breakers) in `specs/shared/layers.yaml` and reference them from nodes. See Section 4.7 for the full layers.yaml format.
-
-```yaml
-# In specs/shared/layers.yaml
-layers:
-  - id: retry-policy
-    name: Retry Policy
-    applies_to:
-      nodes: [service_call, batch]
-      domains: [monitoring, publishing]
-    config:
-      max_retries: 3
-      backoff: exponential
-      circuit_breaker:
-        failure_threshold: 5
-        reset_timeout_ms: 60000
-```
-
-Nodes affected by a layer don't need to repeat the config — `/ddd-implement` reads layers.yaml and applies it automatically. In the DDD Tool, affected nodes show a layer badge.
-
-### Trigger Event Filtering
-
-Use the `filter` field on trigger nodes to filter incoming events by payload fields. This eliminates unnecessary decision nodes immediately after event triggers.
-
-```yaml
-# Instead of: trigger → decision (check platform) → process
-# Use: trigger with filter → process
-trigger:
-  spec:
-    event: "event:DraftApproved"
-    source: approval-domain
-    filter:
-      platform: twitter
-    description: Only triggers when payload.platform is "twitter"
-```
-
-Supports dot notation and operators:
-
-```yaml
-filter:
-  "payload.amount": { gte: 100 }       # greater-than-or-equal
-  "payload.status": [active, pending]   # in-list
 ```
 
 ---

@@ -21,38 +21,9 @@ DDD is a methodology for building software through visual flow diagrams that out
                                                   verify tests pass       enrich specs
 ```
 
-### The Workflow
+**Create** → describe your project, `/ddd-create` generates full YAML specs. **Design** → review in [DDD Tool](https://github.com/mhcandan/ddd-tool) desktop app. **Build** → `/ddd-scaffold` + `/ddd-implement` + `/ddd-test`. **Reflect** → `/ddd-sync` + `/ddd-reflect` + `/ddd-promote` to feed code wisdom back into specs.
 
-**Phase 1 — Create:** Describe your software project to Claude. The `/ddd-create` command fetches the [DDD Usage Guide](DDD-USAGE-GUIDE.md) from this repo, then generates the complete spec structure: project config, tech stack, data models, error codes, domains, and flow graphs with all nodes wired. For existing codebases, use `/ddd-reverse` instead.
-
-**Phase 2 — Design:** Open the generated specs in the [DDD Tool](https://github.com/mhcandan/ddd-tool) desktop app. Visualize the flow graphs on a 3-level canvas (System Map → Domain Map → Flow Canvas). Validate with 20+ built-in rules. Adjust nodes, connections, and specs directly on the canvas.
-
-**Phase 3 — Build:** Run `/ddd-scaffold` to set up the project skeleton — package config, database schema, shared infrastructure, and test setup. Then `/ddd-implement` to generate working code from specs. Claude reads all YAML files, follows the node graph from trigger to terminal, generates code for each node, writes tests, runs them, and tracks everything in `.ddd/mapping.yaml`. Use `/ddd-test` to verify, `/ddd-update` to modify specs, and iterate.
-
-**Phase 4 — Reflect:** After implementation stabilizes, run `/ddd-sync` to check alignment, `/ddd-reflect` to capture implementation wisdom (patterns the code uses that specs don't describe), and `/ddd-promote` to move approved patterns into permanent specs. This closes the loop — code wisdom feeds back into the design.
-
-### Evolving DDD Itself
-
-As you use DDD across projects, you'll encounter framework gaps — missing node types, inadequate fields, layer visibility issues. DDD has a built-in feedback loop:
-
-```
-/ddd-create projA --shortfalls  →  specs/shortfalls.yaml   ┐
-/ddd-create projB --shortfalls  →  specs/shortfalls.yaml   ├→ /ddd-evolve → /ddd-evolve --review → /ddd-evolve --apply
-/ddd-create projC --shortfalls  →  specs/shortfalls.yaml   ┘    (analyze)     (interactive decisions)   (execute approved)
-```
-
-The `--shortfalls` flag on `/ddd-create` generates a structured report of 7 gap categories (missing node types, inadequate nodes, missing fields, connection limitations, layer gaps, workarounds, cross-cutting gaps). `/ddd-evolve` then reads these reports, critically evaluates each gap through 6 filters (already possible? recurring? specific? breaking? adequate workaround? intentional?), and produces a tiered recommendation plan. Nothing changes until a human approves.
-
-### Why Four Phases?
-
-| Create + Design | Build + Reflect |
-|---|---|
-| Design context only | Implementation context only |
-| Thinks about domains, flows, events | Thinks about code, tests, infrastructure |
-| Outputs YAML specs | Outputs working code + annotations |
-| No code noise | No design noise |
-
-The **specs directory** is the contract between phases. The human bridges them — reviewing design decisions that AI can't make alone. The Reflect phase ensures implementation wisdom (cross-cutting patterns, conventions, edge cases) flows back into specs rather than living only in code.
+The **specs directory** is the contract between phases. The human bridges them — reviewing design decisions that AI can't make alone.
 
 > Legacy docs may reference "Session A" (= Phase 1+2) and "Session B" (= Phase 3+4).
 
@@ -77,29 +48,12 @@ Eleven Claude Code slash commands power the workflow:
 ### Ongoing Development
 
 ```bash
-# Change a flow
-/ddd-update users/user-login
-> "Add rate limiting before the login process"
+# Change a flow, then re-implement
+/ddd-update users/user-login "Add rate limiting"
 /ddd-implement users/user-login
 
-# Add a new flow
-/ddd-update --add-flow orders
-> "Add an order cancellation flow with refund processing"
-
-# Add a new domain
-/ddd-update --add-domain
-> "Add a notifications domain with email and push notification flows"
-
-# Sync after manual code changes
-/ddd-sync              # Update mapping.yaml
-/ddd-sync --discover   # Find untracked code, suggest specs
-/ddd-sync --fix-drift  # Re-implement drifted flows
-/ddd-sync --full       # All of the above
-
-# Scope arguments work on implement, test, update
-/ddd-implement --all                   # Whole project
-/ddd-implement users                   # All flows in a domain
-/ddd-implement users/user-register     # Single flow
+# Scope: --all (project), domain, domain/flow
+/ddd-implement --all
 ```
 
 ### Install Commands
@@ -123,7 +77,7 @@ DDD/
     └── errors-template.yaml         # Reusable: standardized error codes
 ```
 
-> **Commands** live in the [claude-commands](https://github.com/mhcandan/claude-commands) repo.
+> **Commands** live in the [claude-commands](https://github.com/cybersoloss/claude-commands) repo.
 
 ## What's Here vs What's Not
 
@@ -152,9 +106,3 @@ cp templates/errors-template.yaml specs/shared/errors.yaml
 ```
 
 Or skip manual setup entirely — `/ddd-create` generates everything including these files.
-
-## The DDD Tool
-
-The desktop app (Tauri + React) is built in a separate repo: **[mhcandan/ddd-tool](https://github.com/mhcandan/ddd-tool)**
-
-28 node types, 3-level canvas navigation, LLM design assistant, Git integration, validation engine, production generators (OpenAPI, Docker, K8s, CI/CD), project memory, drift detection, and reconciliation.
