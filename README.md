@@ -89,8 +89,6 @@ cd claude-commands && ./install.sh
 ```
 DDD/
 ├── DDD-USAGE-GUIDE.md              # How to write DDD specs (fetched by commands at runtime)
-├── ddd-specification-complete.md    # Full spec: concepts, features, data model
-├── ddd-implementation-guide.md      # Build instructions: types, stores, components
 ├── ddd-quickstart.md                # Quick start guide for using DDD
 └── templates/
     ├── architecture-template.yaml   # Reusable: project structure & conventions
@@ -105,20 +103,16 @@ DDD/
 | This repo | The [ddd-tool](https://github.com/mhcandan/ddd-tool) repo |
 |-----------|------------|
 | What DDD is | The actual desktop app |
-| How to build the tool | TypeScript, Rust, React code |
-| Reusable templates | Build system, dependencies |
-| Design decisions | CI/CD, releases |
+| Usage Guide (YAML format reference) | Specification + Implementation Guide |
+| Reusable templates | TypeScript, Rust, React code |
+| Design decisions | Build system, dependencies, CI/CD |
 
 ## Key Documents
 
 ### [DDD Usage Guide](DDD-USAGE-GUIDE.md)
 The definitive reference for writing DDD specs. Covers all 28 node types, YAML formats, connection patterns, supplementary spec files, validation rules, design patterns, and complete examples. This is what `/ddd-create` fetches at runtime to generate correct specs.
 
-### Specification (~280 KB)
-The complete spec covering: multi-level canvas, 20+ node types, agent & orchestration flows, LLM design assistant, Claude Code integration, bidirectional drift detection, diagram-derived test generation, design validation, production infrastructure generation, and more.
-
-### Implementation Guide (~420 KB)
-Step-by-step build instructions with near-complete code for every component: types, Zustand stores, React components, Tauri commands, utilities. Organized into phases and sessions.
+> **Specification + Implementation Guide** have moved to the [ddd-tool](https://github.com/mhcandan/ddd-tool) repo — they are the source of truth for building the DDD Tool app.
 
 ### Templates
 Copy these into any project's `specs/` folder to bootstrap a DDD project manually:

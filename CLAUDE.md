@@ -28,8 +28,6 @@ cd DDD && git remote add public https://github.com/cybersoloss/DDD.git
 | File | Purpose |
 |------|---------|
 | `DDD-USAGE-GUIDE.md` | Primary reference — all YAML formats, node types, spec fields, conventions |
-| `ddd-specification-complete.md` | Full specification — architecture, lifecycle, command specs |
-| `ddd-implementation-guide.md` | Implementation patterns and code generation rules |
 | `ddd-quickstart.md` | Four-step quickstart for new users |
 | [claude-commands](https://github.com/cybersoloss/claude-commands) | All DDD slash commands (install via claude-commands repo) |
 | `templates/` | Architecture, config, and errors YAML templates |
@@ -55,7 +53,8 @@ Cross-cutting: /ddd-status    Meta: /ddd-evolve
 | **claude-commands** | All slash commands — DDD + general dev (code-review, security-scan, etc.) | mhcandan/claude-commands | cybersoloss/claude-commands |
 
 ## Conventions
-- `DDD-USAGE-GUIDE.md` is the single source of truth for YAML formats — other docs reference it, not duplicate it
+- `DDD-USAGE-GUIDE.md` is the source of truth for designing DDD projects and YAML format reference — other docs reference it, not duplicate it
+- Specification + Implementation Guide live in the [ddd-tool](https://github.com/mhcandan/ddd-tool) repo (source of truth for building the DDD Tool app)
 - Node type proposals require: description, spec fields, sourceHandle values, and at least two real-world use cases
 - Spec format changes require discussion first (open an issue before PR)
 - 28 node types: trigger, input, process, decision, terminal, data_store, service_call, ipc_call, event, loop, parallel, sub_flow, llm_call, delay, cache, transform, collection, parse, crypto, batch, transaction, agent_loop, guardrail, human_gate, orchestrator, smart_router, handoff, agent_group
