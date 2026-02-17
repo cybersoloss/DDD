@@ -51,6 +51,9 @@ Cross-cutting: /ddd-status    Meta: /ddd-evolve
 | **ddd-tool** | Desktop app (Tauri 2.0 + React) | mhcandan/ddd-tool | cybersoloss/ddd-tool |
 | **claude-commands** | All slash commands — DDD + general dev (code-review, security-scan, etc.) | mhcandan/claude-commands | cybersoloss/claude-commands |
 
+## Important
+- When pulling DDD repo changes, also pull [claude-commands](https://github.com/cybersoloss/claude-commands) — the DDD commands must stay in sync with the Usage Guide
+
 ## Conventions
 - `DDD-USAGE-GUIDE.md` is the source of truth for designing DDD projects and YAML format reference — other docs reference it, not duplicate it
 - Specification + Implementation Guide live in the [ddd-tool](https://github.com/mhcandan/ddd-tool) repo (source of truth for building the DDD Tool app)
