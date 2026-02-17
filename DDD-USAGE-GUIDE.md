@@ -217,7 +217,7 @@ depends_on:
 
 ## 4. Supplementary Spec Files
 
-These files are **NOT read by the DDD Tool UI**. They are context files that `/ddd-implement` reads to generate correct implementation code. Create them at the root of `specs/` so Claude Code can reference them during implementation.
+These files provide context for code generation and project configuration. Most are read by `/ddd-implement` and other slash commands. Some (like `system.yaml` zones and data flows) are also used by the DDD Tool for L1/L2 visualization. Create them at the root of `specs/`.
 
 ### 4.1 system.yaml
 
@@ -414,7 +414,8 @@ Project conventions, infrastructure, and API design standards:
 project_structure:
   src/
     routes/: Express route handlers
-    services/: Business logic
+    services/: Business logic (one service file per flow)
+    repositories/: Data access layer (shared across flows)
     models/: Prisma models
     middleware/: Auth, validation, error handling
     utils/: Shared utilities
@@ -482,6 +483,16 @@ deployment:
   strategy: rolling update
   health_check: /health
   readiness_check: /ready
+
+cross_cutting_patterns:
+  # Populated by /ddd-reflect and /ddd-promote as implementation wisdom is captured.
+  # Each pattern defines a project-wide convention applied by /ddd-implement.
+  # See Section 12.3 for full schema and examples.
+  # Example:
+  #   soft_delete:
+  #     description: "All reads exclude soft-deleted records"
+  #     used_by_domains: [users, orders, billing]
+  #     convention: "Add deletedAt: null to all data_store read filters"
 ```
 
 ### 4.3 config.yaml
@@ -530,6 +541,8 @@ optional:
     description: Requests per minute per IP
 ```
 
+> **Note:** The `templates/config-template.yaml` uses a map-of-objects format (`DATABASE_URL: { type, format, ... }`) with additional fields like `format`, `min`, `max`, `enum`. Both formats are accepted — use whichever fits your project. `/ddd-create` generates the array format shown above.
+
 ### 4.4 errors.yaml
 
 **Path:** `specs/shared/errors.yaml`
@@ -539,7 +552,7 @@ Structured error codes with HTTP status mappings:
 ```yaml
 errors:
   VALIDATION_ERROR:
-    http_status: 400
+    http_status: 422
     message_template: "Validation failed: {details}"
     log_level: warn
 
@@ -660,7 +673,11 @@ relationships:
 
 transitions:
   field: role
-  states: []
+  states:
+    - from: user
+      to: [admin]
+    - from: admin
+      to: [user]
   on_invalid: reject
 ```
 
@@ -674,6 +691,7 @@ transitions:
 | `format` | string? | Format hint (e.g., "email") |
 | `default` | any? | Default value |
 | `values` | string[]? | Allowed values (for enum type) |
+| `ref` | string? | Reference to a shared enum in `shared/types.yaml` (e.g., `platform`). Use instead of duplicating `values` |
 | `constraints` | object? | `{ unique?, max_length?, min?, max? }` |
 | `encrypted` | boolean? | Field value is encrypted at rest |
 
@@ -746,56 +764,6 @@ value_objects:
 
 > **Note:** Reference shared enums in schemas with `type: enum, ref: platform` instead of duplicating `values:` arrays. `/ddd-implement` reads this file to generate shared type definitions.
 
-### 4.7 shared/layers.yaml
-
-**Path:** `specs/shared/layers.yaml`
-
-Cross-cutting concern layers that span multiple nodes and domains. Layers define infrastructure behavior (retry policies, stealth config, circuit breakers) that applies to specific node types across specific domains.
-
-```yaml
-layers:
-  - id: stealth
-    name: Stealth / Anti-Detection
-    description: "Rotating user agents, proxy pools, cookie jars, headless browser fallback"
-    applies_to:
-      nodes: [service_call, parse]
-      domains: [monitoring, discovery]
-    config:
-      user_agent_pool: 50
-      proxy_rotation: per_request
-      cookie_jar: per_domain
-      headless_fallback: true
-      rate_limits:
-        twitter: { rpm: 30, daily: 500 }
-        google: { rpm: 10, daily: 100 }
-
-  - id: retry-policy
-    name: Retry Policy
-    description: "Exponential backoff with circuit breaker"
-    applies_to:
-      nodes: [service_call, batch]
-      domains: [monitoring, discovery, publishing]
-    config:
-      max_retries: 3
-      backoff: exponential
-      initial_delay_ms: 1000
-      circuit_breaker:
-        failure_threshold: 5
-        reset_timeout_ms: 60000
-```
-
-#### Layer
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique layer ID |
-| `name` | string | Display name |
-| `description` | string? | What this layer does |
-| `applies_to` | object | `{ nodes: string[], domains: string[] }` — which node types and domains this layer affects |
-| `config` | `Record<string, unknown>` | Layer-specific configuration |
-
-> **Note:** Layers don't change node specs — they're read by `/ddd-implement` to generate infrastructure code (retry wrappers, proxy config, rate limiters). In the DDD Tool, affected nodes show a layer badge.
-
 ---
 
 ## 5. Flow YAML
@@ -829,7 +797,7 @@ nodes:
     type: input
     position: { x: 250, y: 170 }
     connections:
-      - targetNodeId: process-ghi789
+      - targetNodeId: decision-jkl012
         sourceHandle: "valid"
       - targetNodeId: terminal-validation-error
         sourceHandle: "invalid"
@@ -848,31 +816,31 @@ nodes:
       description: Registration form data
     label: Registration Form
 
-  - id: process-ghi789
-    type: process
+  - id: decision-jkl012
+    type: decision
     position: { x: 250, y: 300 }
     connections:
-      - targetNodeId: decision-jkl012
+      - targetNodeId: process-ghi789
+        sourceHandle: "true"
+      - targetNodeId: terminal-error
+        sourceHandle: "false"
+    spec:
+      condition: email.is_available?
+      trueLabel: "Available"
+      falseLabel: "Already taken"
+      description: Check if email already registered
+    label: Email Available?
+
+  - id: process-ghi789
+    type: process
+    position: { x: 250, y: 430 }
+    connections:
+      - targetNodeId: terminal-success
     spec:
       action: Hash password and create user record
       service: UserService.register
       description: Create user in database
     label: Create User
-
-  - id: decision-jkl012
-    type: decision
-    position: { x: 250, y: 430 }
-    connections:
-      - targetNodeId: terminal-success
-        sourceHandle: "true"
-      - targetNodeId: terminal-error
-        sourceHandle: "false"
-    spec:
-      condition: user.exists?
-      trueLabel: "No (new user)"
-      falseLabel: "Yes (duplicate)"
-      description: Check if email already registered
-    label: Email Exists?
 
   - id: terminal-success
     type: terminal
@@ -948,7 +916,7 @@ Every node has:
 | `id` | string | Unique node ID |
 | `type` | DddNodeType | One of the 28 node types |
 | `position` | `{ x, y }` | Canvas position |
-| `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior? }` |
+| `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior?, label? }` |
 | `spec` | object | Type-specific configuration (see below) |
 | `label` | string | Display name on canvas |
 | `observability` | object? | Logging/metrics/tracing config |
@@ -2064,7 +2032,7 @@ security:
 
 ## 8. Connection Patterns
 
-Connections define the flow graph. Each connection is `{ targetNodeId, sourceHandle?, targetHandle? }`.
+Connections define the flow graph. Each connection is `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior?, label? }` (see Section 5 for `data`, `behavior`, and `label` details).
 
 **Convention:** For nodes with multiple output paths, always use `sourceHandle` to label each path. This makes the flow graph unambiguous for both the DDD Tool and `/ddd-implement`.
 
