@@ -237,8 +237,7 @@ tech_stack:
   cache: Redis 7
   queue: BullMQ
   auth: JWT + bcrypt
-
-> **Note:** The `queue` field determines event infrastructure: when set (e.g., `BullMQ`), `/ddd-scaffold` generates queue-based event infrastructure and `/ddd-implement` uses it for async events. When absent, use an in-process EventEmitter for domain events.
+  # queue field determines event infrastructure (see note below)
 
 environments:
   - name: development
@@ -281,6 +280,8 @@ integrations:
       requests_per_second: 25
     timeout_ms: 30000
 ```
+
+> **Note:** The `queue` field determines event infrastructure: when set (e.g., `BullMQ`), `/ddd-scaffold` generates queue-based event infrastructure and `/ddd-implement` uses it for async events. When absent, use an in-process EventEmitter for domain events.
 
 #### IntegrationConfig
 
@@ -2263,7 +2264,7 @@ connections:
   - targetNodeId: next-node-id
 ```
 
-> **Note:** Orchestrator nodes manage multiple agents internally (sequential, parallel, or adaptive strategy). The orchestrated result exits via a single unnamed output handle.
+> **Note:** Orchestrator nodes manage multiple agents internally (supervisor, round_robin, broadcast, or consensus strategy). The orchestrated result exits via a single unnamed output handle.
 
 ### Handoff (single output)
 ```yaml
@@ -2271,7 +2272,7 @@ connections:
   - targetNodeId: next-node-id
 ```
 
-> **Note:** Handoff transfers context to a target agent. In `mode: terminate`, the downstream connection receives no further data. In `mode: continue`, the result is passed through the single unnamed output.
+> **Note:** Handoff transfers context to a target agent. In `mode: transfer`, the downstream connection receives no further data. In `mode: consult`, the result is passed through the single unnamed output. In `mode: collaborate`, ongoing coordination occurs between agents.
 
 ### Agent Group (single output)
 ```yaml
@@ -2317,7 +2318,7 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 - Agent Group must have 2+ members
 
 ### Extended Nodes (Error)
-- Data Store must have operation and model
+- Data Store must have operation (and model when store_type is database)
 - Service Call must have method and URL
 - Event must have direction and event_name
 - Loop must have collection and iterator
@@ -3320,6 +3321,9 @@ nodes:
     position: { x: 250, y: 170 }
     connections:
       - targetNodeId: agent-001
+        sourceHandle: "pass"
+      - targetNodeId: terminal-blocked
+        sourceHandle: "block"
     spec:
       position: input
       checks:
@@ -3401,6 +3405,15 @@ nodes:
       description: Ticket has been resolved
     label: Resolved
 
+  - id: terminal-blocked
+    type: terminal
+    position: { x: 450, y: 270 }
+    connections: []
+    spec:
+      outcome: policy violation
+      description: Input blocked by guardrail
+    label: Blocked
+
 metadata:
   created: "2025-01-10T10:00:00Z"
   modified: "2025-01-10T10:00:00Z"
@@ -3420,7 +3433,7 @@ metadata:
 8. **Node IDs must be unique** within a flow — use a prefix matching the type (e.g., `input-001`, `process-002`)
 9. **Position doesn't affect logic** — positions are for canvas layout only, connections define the actual flow
 10. **Cross-cutting concerns are optional** — only add observability/security when needed for implementation hints
-11. **Always use sourceHandle on branching nodes** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), ipc_call (success/error), loop (body/done), parallel (branch-N/done), cache (hit/miss)
+11. **Always use sourceHandle on branching nodes** — input (valid/invalid), decision (true/false), data_store (success/error), service_call (success/error), ipc_call (success/error), loop (body/done), parallel (branch-N/done), cache (hit/miss), collection (result/empty), parse (success/error), crypto (success/error), batch (done/error), transaction (committed/rolled_back), guardrail (pass/block), agent_loop (done/error), llm_call (success/error), smart_router (route-N)
 12. **Create supplementary specs early** — system.yaml, architecture.yaml, config.yaml, errors.yaml, and schemas give `/ddd-implement` the context it needs to generate correct code
 13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, `manual`, `sse`, `ws`, or `pattern:` to communicate trigger type
 14. **Add status and body to terminals** — custom fields on terminal specs tell `/ddd-implement` exactly what HTTP response to generate
@@ -3831,7 +3844,7 @@ Connection `sourceHandle` values map to control flow:
 | `"success"` | Success branch (equivalent to unnamed) |
 | `"error"` | `catch` block / error handler |
 | `"true"` / `"false"` | `if`/`else` branches |
-| `"timeout"` | Timeout-specific catch |
+| `"hit"` / `"miss"` | Cache hit/miss branches |
 
 Connection `behavior` maps to error handling strategy:
 
@@ -3839,7 +3852,7 @@ Connection `behavior` maps to error handling strategy:
 |----------|----------------|
 | `continue` | `try { ... } catch(e) { logger.warn(e); }` — log and proceed |
 | `stop` | `throw e;` — propagate to flow-level error handler |
-| `retry` | Wrap call in retry loop (count from node's `retry_count` or default 3) |
+| `retry` | Wrap call in retry loop (count from node's `retry.max_attempts` or default 3) |
 | `circuit_break` | Use circuit breaker (e.g., `opossum`) with threshold from node spec |
 
 ### Middleware and Validation
@@ -3847,7 +3860,7 @@ Connection `behavior` maps to error handling strategy:
 | Spec Source | Generated Artifact |
 |------------|-------------------|
 | `input` node `fields[]` with `type` + `required` | Zod schema (`z.object({ ... })`) |
-| `input` node `validation_preset` | Pre-built validator (e.g., `validateEmail()`) |
+| `input` node `validation` rules | Validation logic (e.g., `z.string().email()`) |
 | `trigger` with `auth` | Auth middleware (`requireAuth`, `requireRole`) |
 | `trigger` with `rate_limit` | Rate limiter middleware |
 | `guardrail` node | Check function called before downstream logic |
@@ -3887,10 +3900,11 @@ Generate tests based on flow structure:
 | Agent Node | Implementation Pattern |
 |-----------|----------------------|
 | `agent_loop` | While-loop calling LLM with tool definitions. Each iteration: send messages → get response → if tool_call, execute tool → append result → repeat. Exit on final answer or `max_iterations`. |
-| `orchestrator` (sequential) | Call each agent in `agents[]` order, passing accumulated context. |
-| `orchestrator` (parallel) | `Promise.all` over `agents[]`, merge results. |
-| `orchestrator` (adaptive) | LLM decides next agent based on current state; loop until done. |
+| `orchestrator` (supervisor) | Supervisor LLM decides which agent to call next based on current state; loop until done. |
+| `orchestrator` (round_robin) | Call each agent in `agents[]` order, passing accumulated context. |
+| `orchestrator` (broadcast) | `Promise.all` over `agents[]`, merge results via `result_merge_strategy`. |
+| `orchestrator` (consensus) | All agents run, supervisor picks or combines results per `result_merge_strategy`. |
 | `smart_router` | Evaluate input against each route's `condition`, pick highest-confidence match, route to that agent. |
-| `handoff` | Save current context, call target agent with `transfer_data`, optionally `mode: terminate` (fire-and-forget) or `mode: continue` (return result). |
-| `human_gate` | Persist pending state, send notification (email/Slack/webhook per `notification`), expose approval endpoint. On response, resume flow via the matching `approval_options[].id` handle. |
-| `agent_group` | Run all agents in group (parallel or round-robin per `strategy`), collect results, apply `aggregation` to combine. |
+| `handoff` | Save current context, call target agent with `context_transfer`. `mode: transfer` (fire-and-forget), `mode: consult` (return result), or `mode: collaborate` (ongoing coordination). |
+| `human_gate` | Persist pending state, send notification (email/Slack/webhook per `notification_channels`), expose approval endpoint. On response, resume flow via the matching `approval_options[].id` handle. |
+| `agent_group` | Run all agents in group per `coordination.selection_strategy`, collect results, combine via shared memory. |
