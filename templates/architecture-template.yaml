@@ -893,7 +893,7 @@ architecture:
 #   2. Create specs/config.yaml with your environment variables
 #   3. Create specs/shared/errors.yaml with your error codes
 #   4. Create domain flows in specs/domains/{domain}/flows/
-#   5. Run: ddd validate to check your specs
-#   6. Run: ddd generate to scaffold code
+#   5. Open in DDD Tool to visualize and validate your specs
+#   6. Run: /ddd-scaffold to set up project skeleton, then /ddd-implement to generate code
 #
 # ═══════════════════════════════════════════════════════════════════════════════
