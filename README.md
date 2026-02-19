@@ -84,10 +84,17 @@ See the [Usage Guide — Shortfalls & Evolve](DDD-USAGE-GUIDE.md#shortfalls--evo
 ```bash
 git clone https://github.com/cybersoloss/claude-commands.git
 cd claude-commands && ./install.sh
-# Restart Claude Code to load the commands
 ```
 
-Copies DDD command files into `~/.claude/commands/`. Won't overwrite existing commands.
+Or manually:
+
+```bash
+git clone https://github.com/cybersoloss/claude-commands.git
+mkdir -p ~/.claude/commands
+cp claude-commands/ddd-*.md claude-commands/DDD-commands.md ~/.claude/commands/
+```
+
+Restart Claude Code to load the commands. Won't overwrite existing commands.
 
 ## Try It in 5 Minutes
 
