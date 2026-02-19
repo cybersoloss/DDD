@@ -1,4 +1,4 @@
-# Contributing to DDD
+# Contributing to Design Driven Development
 
 Thanks for your interest in contributing to Design Driven Development!
 
@@ -6,7 +6,7 @@ Thanks for your interest in contributing to Design Driven Development!
 
 ### Reporting Issues
 
-- Use [GitHub Issues](https://github.com/mhcandan/DDD/issues) to report problems or suggest improvements
+- Use [GitHub Issues](https://github.com/cybersoloss/DDD/issues) to report problems or suggest improvements
 - For methodology questions or discussions, open a Discussion instead of an Issue
 - Include examples when suggesting spec format changes
 
@@ -34,8 +34,8 @@ Thanks for your interest in contributing to Design Driven Development!
 
 ### What's Out of Scope Here
 
-- **DDD Tool** (desktop app) contributions go to [mhcandan/ddd-tool](https://github.com/mhcandan/ddd-tool)
-- **Slash commands** contributions go to [mhcandan/claude-commands](https://github.com/mhcandan/claude-commands)
+- **Design Driven Development Tool** (desktop app) contributions go to [cybersoloss/ddd-tool](https://github.com/cybersoloss/ddd-tool)
+- **Slash commands** contributions go to [cybersoloss/claude-commands](https://github.com/cybersoloss/claude-commands)
 
 ## Code of Conduct
 

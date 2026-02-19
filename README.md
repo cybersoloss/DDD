@@ -2,7 +2,9 @@
 
 **Design software visually. Let AI implement it.**
 
-DDD is a methodology for building software through visual flow diagrams that output YAML specs. Specs and code are both sources of truth at different levels — specs define what/why, code accumulates how. The Reflect phase feeds implementation wisdom back into specs.
+Design Driven Development is a methodology for building software through visual flow diagrams that output YAML specs. Specs and code are both sources of truth at different levels — specs define what/why, code accumulates how. The Reflect phase feeds implementation wisdom back into specs.
+
+> **Note:** The abbreviation "DDD" is used throughout this project for brevity. This is not related to Eric Evans' Domain-Driven Design, which is an entirely separate methodology. We use the full name "Design Driven Development" to avoid confusion.
 
 ## How It Works
 
@@ -21,7 +23,7 @@ DDD is a methodology for building software through visual flow diagrams that out
                                                   verify tests pass       enrich specs
 ```
 
-**Create** → describe your project, `/ddd-create` generates full YAML specs. **Design** → review in [DDD Tool](https://github.com/mhcandan/ddd-tool) desktop app. **Build** → `/ddd-scaffold` + `/ddd-implement` + `/ddd-test`. **Reflect** → `/ddd-sync` + `/ddd-reflect` + `/ddd-promote` to feed code wisdom back into specs.
+**Create** → describe your project, `/ddd-create` generates full YAML specs. **Design** → review in the [Design Driven Development Tool](https://github.com/cybersoloss/ddd-tool) desktop app. **Build** → `/ddd-scaffold` + `/ddd-implement` + `/ddd-test`. **Reflect** → `/ddd-sync` + `/ddd-reflect` + `/ddd-promote` to feed code wisdom back into specs.
 
 The **specs directory** is the contract between phases. The human bridges them — reviewing design decisions that AI can't make alone.
 
@@ -29,7 +31,7 @@ The **specs directory** is the contract between phases. The human bridges them �
 
 ## Commands
 
-Eleven Claude Code slash commands power the workflow:
+Eleven Claude Code slash commands power the Design Driven Development workflow:
 
 | Phase | Command | What it does |
 |-------|---------|-------------|
@@ -81,9 +83,9 @@ DDD/
 
 ## What's Here vs What's Not
 
-| This repo | The [ddd-tool](https://github.com/mhcandan/ddd-tool) repo |
+| This repo | The [Design Driven Development Tool](https://github.com/cybersoloss/ddd-tool) repo |
 |-----------|------------|
-| What DDD is | The actual desktop app |
+| What Design Driven Development is | The actual desktop app |
 | Usage Guide (YAML format reference) | Specification + Implementation Guide |
 | Reusable templates | TypeScript, Rust, React code |
 | Design decisions | Build system, dependencies, CI/CD |
@@ -91,12 +93,12 @@ DDD/
 ## Key Documents
 
 ### [DDD Usage Guide](DDD-USAGE-GUIDE.md)
-The definitive reference for writing DDD specs. Covers all 28 node types, YAML formats, connection patterns, supplementary spec files, validation rules, design patterns, and complete examples. This is what `/ddd-create` fetches at runtime to generate correct specs.
+The definitive reference for writing Design Driven Development specs. Covers all 28 node types, YAML formats, connection patterns, supplementary spec files, validation rules, design patterns, and complete examples. This is what `/ddd-create` fetches at runtime to generate correct specs.
 
-> **Specification + Implementation Guide** have moved to the [ddd-tool](https://github.com/mhcandan/ddd-tool) repo — they are the source of truth for building the DDD Tool app.
+> **Specification + Implementation Guide** have moved to the [Design Driven Development Tool](https://github.com/cybersoloss/ddd-tool) repo — they are the source of truth for building the DDD Tool app.
 
 ### Templates
-Copy these into any project's `specs/` folder to bootstrap a DDD project manually:
+Copy these into any project's `specs/` folder to bootstrap a Design Driven Development project manually:
 
 ```bash
 mkdir -p specs/shared
