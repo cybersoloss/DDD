@@ -107,8 +107,8 @@ todo-app/
 ## Learn More
 
 For detailed DDD specification docs, see:
-- `~/dev/DDD/DDD-USAGE-GUIDE.md` — complete reference for writing specs
-- `~/dev/DDD/templates/` — reusable YAML templates for common patterns
+- [DDD Usage Guide](../../DDD-USAGE-GUIDE.md) — complete reference for writing specs
+- [Templates](../../templates/) — reusable YAML templates for common patterns
 
 ## Next Steps
 
