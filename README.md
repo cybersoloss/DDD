@@ -91,6 +91,8 @@ cd claude-commands && ./install.sh
 
 ## Try It in 5 Minutes
 
+**Prerequisites:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, plus the [DDD commands](#install-commands) (`git clone https://github.com/cybersoloss/claude-commands.git ~/.claude/commands`).
+
 The [examples/todo-app/](examples/todo-app/) directory contains a complete spec set for a simple todo app (2 domains, 4 flows). Open it to see what DDD specs look like, or use it as a starting point:
 
 ```bash
