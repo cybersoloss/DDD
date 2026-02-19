@@ -2560,6 +2560,168 @@ Moves approved annotations into permanent specs. This is how implementation wisd
 7. Updates mapping.yaml specHash (spec files changed)
 8. Reports what was promoted and where
 
+### Shortfalls & Evolve: End-to-End Example
+
+The `--shortfalls` flag on `/ddd-create` and the `/ddd-evolve` command form a feedback loop that lets DDD improve itself based on real project experience. Here's a complete walkthrough.
+
+#### Step 1: Generate specs with shortfall tracking
+
+```
+/ddd-create A real-time collaborative whiteboard with users, boards, shapes,
+            and presence tracking. TypeScript, Hono, PostgreSQL, Redis. --shortfalls
+```
+
+While creating specs, Claude tracks every framework limitation it hits — places where a structured node type doesn't exist, where fields are missing, where a workaround was needed. These get written to `specs/shortfalls.yaml`.
+
+#### Step 2: Review the shortfall report
+
+The generated `specs/shortfalls.yaml` has 7 categories:
+
+```yaml
+# specs/shortfalls.yaml
+project: collaborative-whiteboard
+generated: "2026-02-19T10:00:00Z"
+ddd_version: "1.0"
+
+missing_node_types:
+  - name: "websocket_broadcast"
+    severity: high
+    description: "Broadcast a message to all connected WebSocket clients in a room"
+    used_instead: "process node with free-text description"
+    flows_affected:
+      - "boards/shape-update"
+      - "boards/cursor-move"
+    example_use_case: "When a user moves a shape, broadcast the new position to all
+                       other users viewing the same board in real-time"
+
+inadequate_existing_nodes:
+  - node_type: "data_store"
+    severity: medium
+    limitation: "No support for Redis pub/sub operations — only CRUD"
+    suggestion: "Add store_type: 'pubsub' with operations: publish, subscribe, unsubscribe"
+    flows_affected:
+      - "presence/track-cursor"
+
+missing_spec_fields:
+  - location: "trigger"
+    field_name: "connection_lifecycle"
+    severity: high
+    description: "WebSocket triggers need to express on_connect, on_message, and
+                  on_disconnect as separate entry points within the same flow"
+    workaround: "Created three separate flows instead of one"
+
+connection_limitations:
+  - severity: medium
+    limitation: "Cannot express a bidirectional data channel between two nodes"
+    context: "Shape sync requires sending updates to the client while also
+              receiving updates — current connections are unidirectional"
+    suggestion: "Add a 'bidirectional' flag on connections or a 'channel' node type"
+
+workarounds:
+  - flow: "boards/shape-update"
+    node_id: "process-kR9mX2vL"
+    node_type_used: "process"
+    intended_operation: "Broadcast shape delta to all WebSocket clients in the room"
+    why_no_fit: "No node type handles WebSocket fan-out to multiple clients"
+    proposed_node_type: "websocket_broadcast or enhance event node with
+                         delivery: 'websocket_room'"
+    severity: high
+
+cross_cutting_gaps:
+  - concern: "rate_limiting"
+    severity: medium
+    description: "Shape move events fire at 60fps — need per-client throttling
+                  before processing"
+    current_expression: "Described in process node free-text"
+    suggestion: "Add a rate_limit field on trigger nodes with window_ms and max_count"
+
+summary:
+  total_shortfalls: 8
+  by_severity:
+    critical: 0
+    high: 3
+    medium: 4
+    low: 1
+  top_recommendation: "Add WebSocket/real-time primitives — ws triggers lack
+                       lifecycle hooks and there's no broadcast node type"
+```
+
+The report is project-specific. Each entry references actual flows and nodes from the design.
+
+#### Step 3: Accumulate shortfalls across projects
+
+Shortfalls from a single project are weak signal. Run multiple projects with `--shortfalls` to see patterns:
+
+```
+/ddd-create projA --shortfalls    # → projA/specs/shortfalls.yaml
+/ddd-create projB --shortfalls    # → projB/specs/shortfalls.yaml
+/ddd-create projC --shortfalls    # → projC/specs/shortfalls.yaml
+```
+
+#### Step 4: Analyze with /ddd-evolve
+
+Feed all shortfall files into `/ddd-evolve`:
+
+```
+/ddd-evolve --dir ~/code/projA --dir ~/code/projB --dir ~/code/projC
+```
+
+Or pass files directly:
+
+```
+/ddd-evolve ~/code/projA/specs/shortfalls.yaml ~/code/projB/specs/shortfalls.yaml
+```
+
+`/ddd-evolve` deduplicates across projects, evaluates each shortfall through 6 filters (already possible? recurring? specific? breaking? adequate workaround? intentional?), and classifies each as:
+
+| Classification | Meaning |
+|----------------|---------|
+| `REAL_GAP` | Genuine framework limitation, seen across projects |
+| `ENHANCEMENT` | Nice-to-have improvement, not blocking |
+| `VAGUE` | Too vague to act on — needs more data |
+| `ALREADY_POSSIBLE` | DDD already supports this, shortfall was a misunderstanding |
+| `BY_DESIGN` | Intentional limitation — fixing would break the model |
+| `PROJECT_SPECIFIC` | Only relevant to one project, not a systemic gap |
+
+Output: `ddd-evolution-plan.yaml` with tiered recommendations.
+
+#### Step 5: Interactive review
+
+```
+/ddd-evolve --review ddd-evolution-plan.yaml
+```
+
+Walk through each item. For each shortfall, `/ddd-evolve` presents its analysis and evidence. You decide: **approve**, **defer**, or **reject**. Decisions are recorded back into the plan file.
+
+#### Step 6: Apply approved changes
+
+```
+/ddd-evolve --apply ddd-evolution-plan.yaml
+```
+
+Executes only the approved items — updates spec templates, commands, tool validator, or documentation. Requires a reviewed plan (won't run on unreviewed items).
+
+#### The 7 Shortfall Categories
+
+| Category | What it captures | Example |
+|----------|-----------------|---------|
+| `missing_node_types` | Node concepts that don't exist at all | WebSocket broadcast, file watcher |
+| `inadequate_existing_nodes` | Existing nodes that lack needed capabilities | data_store missing pub/sub ops |
+| `missing_spec_fields` | Fields that should exist on nodes/flows/triggers | Trigger missing lifecycle hooks |
+| `connection_limitations` | Edge behaviors that can't be expressed | Bidirectional data channels |
+| `layer_gaps` | Information invisible at L1/L2/L3 layers | Cross-domain latency not shown on system map |
+| `workarounds` | Every `process` node used because no structured type fit | Broadcast described in free-text |
+| `cross_cutting_gaps` | Patterns spanning multiple flows with no structural support | Rate limiting, feature flags |
+
+#### Severity Levels
+
+| Level | Meaning |
+|-------|---------|
+| `critical` | Blocked design intent — can't express the system correctly |
+| `high` | Significant workaround needed — lossy or fragile |
+| `medium` | Minor workaround — functional but inelegant |
+| `low` | Cosmetic or nice-to-have |
+
 ---
 
 ## 12. mapping.yaml

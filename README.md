@@ -58,6 +58,25 @@ Eleven Claude Code slash commands power the Design Driven Development workflow:
 /ddd-implement --all
 ```
 
+### Evolving the Framework
+
+```bash
+# Track framework limitations while designing
+/ddd-create My SaaS app with real-time collab. TypeScript, Hono. --shortfalls
+# → generates specs + specs/shortfalls.yaml with gap analysis
+
+# Accumulate shortfalls across projects, then analyze
+/ddd-evolve --dir ~/code/projA --dir ~/code/projB
+
+# Review each finding interactively (approve/defer/reject)
+/ddd-evolve --review ddd-evolution-plan.yaml
+
+# Apply approved changes to the DDD framework
+/ddd-evolve --apply ddd-evolution-plan.yaml
+```
+
+See the [Usage Guide — Shortfalls & Evolve](DDD-USAGE-GUIDE.md#shortfalls--evolve-end-to-end-example) for a full walkthrough with example output.
+
 ### Install Commands
 
 ```bash
