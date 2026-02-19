@@ -82,16 +82,16 @@ See the [Usage Guide — Shortfalls & Evolve](DDD-USAGE-GUIDE.md#shortfalls--evo
 ### Install Commands
 
 ```bash
-# Clone the commands repo and install
 git clone https://github.com/cybersoloss/claude-commands.git
 cd claude-commands && ./install.sh
-
 # Restart Claude Code to load the commands
 ```
 
+Copies DDD command files into `~/.claude/commands/`. Won't overwrite existing commands.
+
 ## Try It in 5 Minutes
 
-**Prerequisites:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, plus the [DDD commands](#install-commands) (`git clone https://github.com/cybersoloss/claude-commands.git ~/.claude/commands`).
+**Prerequisites:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed, plus the [DDD commands](#install-commands).
 
 The [examples/todo-app/](examples/todo-app/) directory contains a complete spec set for a simple todo app (2 domains, 4 flows). Open it to see what DDD specs look like, or use it as a starting point:
 
@@ -117,30 +117,20 @@ DDD/
 
 > **Commands** live in the [claude-commands](https://github.com/cybersoloss/claude-commands) repo.
 
-## What's Here vs What's Not
-
-| This repo | The [Design Driven Development Tool](https://github.com/cybersoloss/ddd-tool) repo |
-|-----------|------------|
-| What Design Driven Development is | The actual desktop app |
-| Usage Guide (YAML format reference) | Specification + Implementation Guide |
-| Reusable templates | TypeScript, Rust, React code |
-| Design decisions | Build system, dependencies, CI/CD |
-
 ## Key Documents
 
 ### [DDD Usage Guide](DDD-USAGE-GUIDE.md)
 The definitive reference for writing Design Driven Development specs. Covers all 28 node types, YAML formats, connection patterns, supplementary spec files, validation rules, design patterns, and complete examples. This is what `/ddd-create` fetches at runtime to generate correct specs.
 
-> **Specification + Implementation Guide** have moved to the [Design Driven Development Tool](https://github.com/cybersoloss/ddd-tool) repo — they are the source of truth for building the DDD Tool app.
+### [Examples](examples/)
+Complete spec sets you can open in the DDD Tool or feed to `/ddd-implement`.
 
-### Templates
-Copy these into any project's `specs/` folder to bootstrap a Design Driven Development project manually:
+### [Templates](templates/)
+Reusable YAML templates for `architecture.yaml`, `config.yaml`, and `errors.yaml`. These are included automatically when you run `/ddd-create` — the templates are here for reference.
 
-```bash
-mkdir -p specs/shared
-cp templates/architecture-template.yaml specs/architecture.yaml
-cp templates/config-template.yaml specs/config.yaml
-cp templates/errors-template.yaml specs/shared/errors.yaml
-```
+## Related Repos
 
-Or skip manual setup entirely — `/ddd-create` generates everything including these files.
+| Repo | What it is | Who it's for |
+|------|-----------|-------------|
+| [ddd-tool](https://github.com/cybersoloss/ddd-tool) | Desktop app — visual flow editor | Users designing specs on canvas |
+| [claude-commands](https://github.com/cybersoloss/claude-commands) | Claude Code slash commands | Users running DDD commands in the terminal |
