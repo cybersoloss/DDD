@@ -1,0 +1,27 @@
+required:
+  - name: DATABASE_URL
+    type: string
+    description: PostgreSQL connection string
+    example: "postgresql://user:pass@localhost:5432/todo_db"
+    sensitive: true
+
+  - name: JWT_SECRET
+    type: string
+    description: Secret key for JWT signing
+    sensitive: true
+
+optional:
+  - name: PORT
+    type: number
+    default: 3000
+    description: Server port
+
+  - name: LOG_LEVEL
+    type: string
+    default: "info"
+    description: Logging level (debug, info, warn, error)
+
+  - name: CORS_ORIGINS
+    type: string
+    default: "*"
+    description: Comma-separated allowed origins

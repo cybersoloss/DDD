@@ -1,0 +1,30 @@
+errors:
+  VALIDATION_ERROR:
+    http_status: 422
+    message_template: "Validation failed: {details}"
+    log_level: warn
+
+  UNAUTHORIZED:
+    http_status: 401
+    message_template: "Authentication required"
+    log_level: warn
+
+  FORBIDDEN:
+    http_status: 403
+    message_template: "Insufficient permissions"
+    log_level: warn
+
+  NOT_FOUND:
+    http_status: 404
+    message_template: "{resource} not found"
+    log_level: warn
+
+  DUPLICATE_ENTRY:
+    http_status: 409
+    message_template: "{resource} already exists"
+    log_level: warn
+
+  INTERNAL_ERROR:
+    http_status: 500
+    message_template: "An unexpected error occurred"
+    log_level: error

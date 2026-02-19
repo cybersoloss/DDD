@@ -1,5 +1,7 @@
 # Design Driven Development (DDD)
 
+[![Alpha](https://img.shields.io/badge/status-alpha-orange.svg)]() [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Design software visually. Let AI implement it.**
 
 Design Driven Development is a methodology for building software through visual flow diagrams that output YAML specs. Specs and code are both sources of truth at different levels — specs define what/why, code accumulates how. The Reflect phase feeds implementation wisdom back into specs.
@@ -87,11 +89,24 @@ cd claude-commands && ./install.sh
 # Restart Claude Code to load the commands
 ```
 
+## Try It in 5 Minutes
+
+The [examples/todo-app/](examples/todo-app/) directory contains a complete spec set for a simple todo app (2 domains, 4 flows). Open it to see what DDD specs look like, or use it as a starting point:
+
+```bash
+cd examples/todo-app
+/ddd-scaffold
+/ddd-implement --all
+/ddd-test --all
+```
+
 ## Repository Structure
 
 ```
 DDD/
 ├── DDD-USAGE-GUIDE.md              # How to write DDD specs (fetched by commands at runtime)
+├── examples/
+│   └── todo-app/                   # Complete example project (try it in 5 minutes)
 └── templates/
     ├── architecture-template.yaml   # Reusable: project structure & conventions
     ├── config-template.yaml         # Reusable: environment variables schema

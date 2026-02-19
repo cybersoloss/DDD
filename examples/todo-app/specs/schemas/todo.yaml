@@ -1,0 +1,35 @@
+name: Todo
+description: Todo task item
+inherits: _base
+fields:
+  - name: title
+    type: string
+    required: true
+    constraints:
+      max_length: 500
+
+  - name: description
+    type: string
+    required: false
+    constraints:
+      max_length: 2000
+
+  - name: completed
+    type: boolean
+    required: true
+    default: false
+
+  - name: user_id
+    type: uuid
+    required: true
+    description: Owner of this todo
+
+indexes:
+  - fields: [user_id]
+  - fields: [user_id, completed]
+
+relationships:
+  - name: user
+    type: belongs_to
+    target: User
+    foreign_key: user_id

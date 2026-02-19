@@ -1,0 +1,14 @@
+{
+  "domains": [
+    {
+      "name": "Users",
+      "description": "User management and authentication",
+      "role": "entity"
+    },
+    {
+      "name": "Todos",
+      "description": "Todo items and task management",
+      "role": "entity"
+    }
+  ]
+}

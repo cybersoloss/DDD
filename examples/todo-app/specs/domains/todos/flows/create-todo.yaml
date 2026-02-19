@@ -1,0 +1,119 @@
+flow:
+  id: create-todo
+  name: Create Todo
+  type: traditional
+  domain: todos
+  description: Create a new todo item for authenticated user
+
+trigger:
+  id: trigger-E8jK1vM4
+  type: trigger
+  position: { x: 250, y: 50 }
+  connections:
+    - targetNodeId: input-A2pQ7nH6
+  spec:
+    event: "HTTP POST /api/todos"
+    source: API Gateway
+    description: Create todo request received
+  label: API Request
+
+nodes:
+  - id: input-A2pQ7nH6
+    type: input
+    position: { x: 250, y: 170 }
+    connections:
+      - targetNodeId: decision-D9bL3sW8
+        sourceHandle: "valid"
+      - targetNodeId: terminal-invalid
+        sourceHandle: "invalid"
+    spec:
+      fields:
+        - name: title
+          type: string
+          required: true
+        - name: description
+          type: string
+          required: false
+      validation: "Title required, max 500 chars"
+      description: Todo data from request
+    label: Validate Input
+
+  - id: decision-D9bL3sW8
+    type: decision
+    position: { x: 250, y: 300 }
+    connections:
+      - targetNodeId: process-G5tX2rF9
+        sourceHandle: "true"
+      - targetNodeId: terminal-unauthorized
+        sourceHandle: "false"
+    spec:
+      condition: "user_authenticated"
+      trueLabel: "Authenticated"
+      falseLabel: "Not authenticated"
+      description: "Check JWT token in Authorization header"
+    label: User Authenticated?
+
+  - id: process-G5tX2rF9
+    type: process
+    position: { x: 250, y: 430 }
+    connections:
+      - targetNodeId: event-I7cV1xN3
+    spec:
+      action: "Create todo record"
+      service: "TodoService.create"
+      description: "Insert todo into database with user_id"
+    label: Create Todo
+
+  - id: event-I7cV1xN3
+    type: event
+    position: { x: 250, y: 560 }
+    connections:
+      - targetNodeId: terminal-success
+    spec:
+      event_name: "TodoCreated"
+      schema: "Todo"
+      description: "Emit todo created event"
+    label: Emit TodoCreated
+
+  - id: terminal-success
+    type: terminal
+    position: { x: 150, y: 690 }
+    connections: []
+    spec:
+      outcome: success
+      description: "Return created todo"
+      status: 201
+      body:
+        message: "Todo created successfully"
+        todo: "$.todo"
+    label: Success
+
+  - id: terminal-unauthorized
+    type: terminal
+    position: { x: 400, y: 300 }
+    connections: []
+    spec:
+      outcome: error
+      description: "Return 401 Unauthorized"
+      status: 401
+      body:
+        error: "UNAUTHORIZED"
+        message: "Authentication required"
+    label: Not Authenticated
+
+  - id: terminal-invalid
+    type: terminal
+    position: { x: 450, y: 170 }
+    connections: []
+    spec:
+      outcome: error
+      description: "Return 422 Validation Error"
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+    label: Invalid Input
+
+metadata:
+  created: "2025-02-19T00:00:00Z"
+  modified: "2025-02-19T00:00:00Z"

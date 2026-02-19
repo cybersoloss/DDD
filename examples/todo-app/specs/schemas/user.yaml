@@ -1,0 +1,38 @@
+name: User
+description: User account for authentication
+inherits: _base
+fields:
+  - name: email
+    type: string
+    required: true
+    format: email
+    constraints:
+      unique: true
+      max_length: 255
+
+  - name: password_hash
+    type: string
+    required: true
+    encrypted: true
+    constraints:
+      max_length: 255
+
+  - name: name
+    type: string
+    required: true
+    constraints:
+      max_length: 100
+
+  - name: last_login_at
+    type: datetime
+    required: false
+
+indexes:
+  - fields: [email]
+    unique: true
+
+relationships:
+  - name: todos
+    type: has_many
+    target: Todo
+    foreign_key: user_id

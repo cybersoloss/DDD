@@ -1,0 +1,32 @@
+name: Todos
+description: Todo items and task management
+owns_schemas: ["Todo"]
+
+flows:
+  - id: create-todo
+    name: Create Todo
+    description: Create a new todo item
+    type: traditional
+
+  - id: list-todos
+    name: List Todos
+    description: List all todos for authenticated user
+    type: traditional
+
+publishes_events:
+  - event: TodoCreated
+    schema: Todo
+    from_flow: create-todo
+    description: Fired after todo is created
+
+consumes_events:
+  - event: UserRegistered
+    from_flow: users/user-register
+    handled_by_flow: create-todo
+    description: "Optional: create welcome todo for new users"
+
+layout:
+  flows:
+    create-todo: { x: 100, y: 100 }
+    list-todos: { x: 100, y: 300 }
+  portals: {}

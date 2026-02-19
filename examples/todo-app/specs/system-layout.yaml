@@ -1,0 +1,7 @@
+domains:
+  users:
+    x: 60
+    y: 40
+  todos:
+    x: 440
+    y: 40

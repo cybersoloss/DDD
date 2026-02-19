@@ -1,0 +1,94 @@
+flow:
+  id: list-todos
+  name: List Todos
+  type: traditional
+  domain: todos
+  description: List all todos for authenticated user
+
+trigger:
+  id: trigger-S9lY2kV5
+  type: trigger
+  position: { x: 250, y: 50 }
+  connections:
+    - targetNodeId: decision-O4mZ8tJ1
+  spec:
+    event: "HTTP GET /api/todos"
+    source: API Gateway
+    description: List todos request received
+  label: API Request
+
+nodes:
+  - id: decision-O4mZ8tJ1
+    type: decision
+    position: { x: 250, y: 170 }
+    connections:
+      - targetNodeId: data_store-C6fP3bW7
+        sourceHandle: "true"
+      - targetNodeId: terminal-unauthorized
+        sourceHandle: "false"
+    spec:
+      condition: "user_authenticated"
+      trueLabel: "Authenticated"
+      falseLabel: "Not authenticated"
+      description: "Check JWT token in Authorization header"
+    label: User Authenticated?
+
+  - id: data_store-C6fP3bW7
+    type: data_store
+    position: { x: 250, y: 300 }
+    connections:
+      - targetNodeId: terminal-success
+        sourceHandle: "success"
+      - targetNodeId: terminal-error
+        sourceHandle: "error"
+    spec:
+      action: "List todos for user"
+      entity: "Todo"
+      query_type: "findMany"
+      filter: "user_id = $.user_id"
+      description: "Query todos from database filtered by user"
+    label: Query Todos by User
+
+  - id: terminal-success
+    type: terminal
+    position: { x: 150, y: 430 }
+    connections: []
+    spec:
+      outcome: success
+      description: "Return list of todos"
+      status: 200
+      body:
+        message: "Todos retrieved successfully"
+        todos: "$.todos"
+        count: "$.count"
+    label: Success
+
+  - id: terminal-unauthorized
+    type: terminal
+    position: { x: 400, y: 170 }
+    connections: []
+    spec:
+      outcome: error
+      description: "Return 401 Unauthorized"
+      status: 401
+      body:
+        error: "UNAUTHORIZED"
+        message: "Authentication required"
+    label: Not Authenticated
+
+  - id: terminal-error
+    type: terminal
+    position: { x: 400, y: 300 }
+    connections: []
+    spec:
+      outcome: error
+      description: "Return 500 Internal Error"
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to retrieve todos"
+    label: Database Error
+
+metadata:
+  created: "2025-02-19T00:00:00Z"
+  modified: "2025-02-19T00:00:00Z"

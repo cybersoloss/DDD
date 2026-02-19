@@ -1,0 +1,31 @@
+name: Users
+description: User management and authentication
+owns_schemas:
+  - User
+flows:
+  - id: user-register
+    name: User Registration
+    description: Register a new user account
+    type: traditional
+  - id: user-login
+    name: User Login
+    description: Authenticate and issue JWT token
+    type: traditional
+publishes_events:
+  - event: UserRegistered
+    schema: User
+    from_flow: user-register
+    description: Fired after successful registration
+  - event: UserLoggedIn
+    from_flow: user-login
+    description: Fired after successful login
+consumes_events: []
+layout:
+  flows:
+    user-register:
+      x: 60
+      y: 40
+    user-login:
+      x: 380
+      y: 40
+  portals: {}

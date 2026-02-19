@@ -1,0 +1,147 @@
+flow:
+  id: user-login
+  name: User Login
+  type: traditional
+  domain: users
+  description: Authenticate user and issue JWT token
+
+trigger:
+  id: trigger-B4xH2nJ8
+  type: trigger
+  position: { x: 250, y: 50 }
+  connections:
+    - targetNodeId: input-R6mS3tK9
+  spec:
+    event: "HTTP POST /api/users/login"
+    source: API Gateway
+    description: Login request received
+  label: API Request
+
+nodes:
+  - id: input-R6mS3tK9
+    type: input
+    position: { x: 250, y: 170 }
+    connections:
+      - targetNodeId: data_store-W1pL5jQ3
+        sourceHandle: "valid"
+      - targetNodeId: terminal-invalid
+        sourceHandle: "invalid"
+    spec:
+      fields:
+        - name: email
+          type: string
+          required: true
+        - name: password
+          type: string
+          required: true
+      validation: "Email and password required"
+      description: Login credentials
+    label: Validate Input
+
+  - id: data_store-W1pL5jQ3
+    type: data_store
+    position: { x: 250, y: 300 }
+    connections:
+      - targetNodeId: decision-X7nF4vD2
+        sourceHandle: "success"
+      - targetNodeId: terminal-not-found
+        sourceHandle: "error"
+    spec:
+      action: "Find user by email"
+      entity: "User"
+      query_type: "findUnique"
+      description: "Query user from database by email"
+    label: Find User by Email
+
+  - id: decision-X7nF4vD2
+    type: decision
+    position: { x: 250, y: 430 }
+    connections:
+      - targetNodeId: process-Z9cA1eM6
+        sourceHandle: "true"
+      - targetNodeId: terminal-invalid-password
+        sourceHandle: "false"
+    spec:
+      condition: "password_valid"
+      trueLabel: "Valid"
+      falseLabel: "Invalid"
+      description: "Verify password hash"
+    label: Password Valid?
+
+  - id: process-Z9cA1eM6
+    type: process
+    position: { x: 250, y: 560 }
+    connections:
+      - targetNodeId: event-C3lB8qH2
+    spec:
+      action: "Generate JWT token"
+      service: "AuthService.generateToken"
+      description: "Create JWT with user ID"
+    label: Generate JWT
+
+  - id: event-C3lB8qH2
+    type: event
+    position: { x: 250, y: 690 }
+    connections:
+      - targetNodeId: terminal-success
+    spec:
+      event_name: "UserLoggedIn"
+      description: "Emit user logged in event"
+    label: Emit UserLoggedIn
+
+  - id: terminal-success
+    type: terminal
+    position: { x: 150, y: 820 }
+    connections: []
+    spec:
+      outcome: success
+      description: "Return user and JWT token"
+      status: 200
+      body:
+        message: "Login successful"
+        user: "$.user"
+        token: "$.jwt_token"
+    label: Success
+
+  - id: terminal-not-found
+    type: terminal
+    position: { x: 400, y: 300 }
+    connections: []
+    spec:
+      outcome: error
+      description: "Return 404 Not Found"
+      status: 404
+      body:
+        error: "NOT_FOUND"
+        message: "User not found"
+    label: User Not Found
+
+  - id: terminal-invalid-password
+    type: terminal
+    position: { x: 400, y: 430 }
+    connections: []
+    spec:
+      outcome: error
+      description: "Return 401 Unauthorized"
+      status: 401
+      body:
+        error: "UNAUTHORIZED"
+        message: "Invalid email or password"
+    label: Invalid Credentials
+
+  - id: terminal-invalid
+    type: terminal
+    position: { x: 450, y: 170 }
+    connections: []
+    spec:
+      outcome: error
+      description: "Return 422 Validation Error"
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+    label: Invalid Input
+
+metadata:
+  created: "2025-02-19T00:00:00Z"
+  modified: "2025-02-19T00:00:00Z"

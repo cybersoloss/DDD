@@ -1,0 +1,17 @@
+name: Todo App
+version: "1.0.0"
+description: Simple todo application with user authentication and task management
+
+tech_stack:
+  language: TypeScript
+  runtime: Node.js 20
+  framework: Express 4
+  database: PostgreSQL 16
+  orm: Prisma
+  auth: JWT + bcrypt
+
+environments:
+  - name: development
+    url: http://localhost:3000
+  - name: production
+    url: https://api.example.com
