@@ -24,7 +24,9 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "Bash(git rebase:*)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(xargs:*)",
+      "Bash(bash push-public.sh)"
     ]
   }
 }
