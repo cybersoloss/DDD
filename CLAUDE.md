@@ -9,6 +9,8 @@ The methodology, specification, and reference documentation for **Design Driven 
 
 **Push to both:** `git push-all` — pushes to origin normally, then pushes to public with `CLAUDE.md` and `.claude/` excluded (force-push). These stay on mhcandan only, never on cybersoloss.
 
+**IMPORTANT — Always use `git push-all` instead of `git push`.** When the user asks to "push" or "commit and push", run `git push-all`. Never use `git push origin` — it skips the public mirror.
+
 **GitHub accounts:** `mhcandan` (primary dev), `cybersoloss` (public). mhcandan is collaborator on cybersoloss repos — no account switching needed.
 
 **Handle community PRs:**
