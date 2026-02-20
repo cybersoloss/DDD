@@ -24,6 +24,9 @@ git clone https://github.com/mhcandan/DDD.git
 cd DDD && git remote add public https://github.com/cybersoloss/DDD.git
 ```
 
+## Before Editing
+**Before editing any file in this repo**, read `DDD-USAGE-GUIDE.md` — it is the source of truth for all YAML formats, node types, spec fields, and conventions. Commands in claude-commands (`~/.claude/commands/ddd-*.md`) must stay in sync with it.
+
 ## Key Files
 | File | Purpose |
 |------|---------|
@@ -33,15 +36,15 @@ cd DDD && git remote add public https://github.com/cybersoloss/DDD.git
 
 ## Four-Phase Lifecycle
 ```
-Phase 1: CREATE        Phase 2: DESIGN        Phase 3: BUILD          Phase 4: REFLECT
+Phase 1: CREATE        Phase 2: DESIGN         Phase 3: BUILD          Phase 4: REFLECT
 Human intent → Specs   Human reviews in Tool   Specs → Code            Code wisdom → Specs
 
-/ddd-create            (DDD Tool)             /ddd-scaffold            /ddd-reverse
-/ddd-update (any)                             /ddd-implement           /ddd-sync
-                                              /ddd-test                /ddd-reflect
-                                                                       /ddd-promote
+/ddd-create            (DDD Tool)              /ddd-scaffold           /ddd-reflect
+/ddd-reverse                                   /ddd-implement          /ddd-promote
+                                               /ddd-test
 
-Cross-cutting: /ddd-status    Meta: /ddd-evolve
+Cross-cutting (any phase): /ddd-status, /ddd-update, /ddd-sync
+Meta-level: /ddd-evolve
 ```
 
 ## Related Repos
