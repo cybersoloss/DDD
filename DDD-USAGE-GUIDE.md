@@ -1228,9 +1228,9 @@ Different component types use different subsets of PageSection fields. Here's wh
 | Component | Key Fields | Notes |
 |-----------|------------|-------|
 | `stat-card` | `fields.value`, `fields.subtitle`, `fields.urgency` (with `rules`), `actions` (e.g., `click: {navigate}`) | Single metric display |
-| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll` | Scrollable list |
-| `card-grid` | `data_source`, `fields.columns` (responsive: desktop/tablet/mobile), `item_template` (image/title/description/footer), `item_actions`, `empty_state` | Responsive grid |
-| `detail-card` | `data_source`, `fields` mapping with `$.field` syntax, `actions` (edit/delete/archive), optional `tabs` | Single record view |
+| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll`, optional `interactions` | Scrollable list |
+| `card-grid` | `data_source`, `fields.columns` (responsive: desktop/tablet/mobile), `item_template` (image/title/description/footer), `item_actions`, `empty_state`, optional `interactions` | Responsive grid |
+| `detail-card` | `data_source`, `fields` mapping with `$.field` syntax (optional `editable`), `actions` (edit/delete/archive), optional `tabs` | Single record view |
 | `button-group` | `buttons` (ButtonSpec[]) with `label`, `flow`, `args`, `variant`, `icon`, `visible_when`, `confirm` | Action buttons |
 | `page-header` | `fields` (title, subtitle), `breadcrumbs`, `actions` (button-group for page-level actions) | Page title area |
 | `status-bar` | `fields.items` array with `label`, `value` ($.field), `color_when` conditions | Status indicators |
@@ -1238,6 +1238,43 @@ Different component types use different subsets of PageSection fields. Here's wh
 | `filter-bar` | `fields` (FormField[] for filter inputs), binds to sibling section's `query` | Inline filters for lists/grids |
 
 > To use a shared component, set `component` to the shared component's ID from `pages.yaml` → `shared_components`.
+
+**Interactions** — optional field on `item-list` and `card-grid` for expressing UI interaction patterns:
+
+```yaml
+interactions:
+  - pattern: reorder          # drag-drop reorder
+    update_flow: domain/flow-id  # backend flow to persist new order
+  - pattern: bulk-select      # checkbox selection with bulk action bar
+    actions:                  # bulk actions available when items selected
+      - label: "Delete Selected"
+        flow: domain/bulk-delete
+        confirm: true
+  - pattern: inline-edit      # click-to-edit fields in list items
+    editable_fields: ["title", "status"]
+    update_flow: domain/update-item
+```
+
+Supported patterns: `reorder`, `bulk-select`, `inline-edit`.
+
+**Editable fields** — optional on `detail-card` fields for inline editing:
+
+```yaml
+fields:
+  title:
+    value: "$.title"
+    editable: true
+    update_flow: content/update-content
+  status:
+    value: "$.status"
+    editable: true
+    update_flow: content/update-content
+  created_at:
+    value: "$.created_at"
+    # not editable — no editable flag
+```
+
+When `editable: true` is set on a field, the UI renders a click-to-edit control. The `update_flow` specifies which backend flow handles the field update.
 
 #### FormSpec
 
@@ -1657,6 +1694,8 @@ The entry point of every flow. Exactly one per flow.
 | `source` | string | Where the trigger comes from (e.g., "API Gateway") |
 | `filter` | `Record<string, unknown>`? | Event payload filter — flow only triggers when filter matches (supports dot notation and operators) |
 | `debounce_ms` | number? | Debounce delay in milliseconds. When set, `/ddd-implement` wraps the event handler in a debounce function. Only meaningful for `event:`, `ipc:`, `shortcut`, and `ui:` triggers. |
+| `rate_limit` | object? | `{ window_ms: number, max_requests: number, key_by?: 'ip' \| 'user' \| 'api_key', on_exceeded?: 'reject' \| 'queue' \| 'delay' }` — per-endpoint rate limiting. `/ddd-implement` generates middleware. |
+| `signature` | object? | `{ algorithm: 'hmac-sha256' \| 'hmac-sha1', key_source: { env: string }, header: string }` — webhook signature validation. `/ddd-implement` verifies before handler. |
 | `description` | string | Details |
 
 **Trigger type conventions** — use these patterns in the `event` field to communicate trigger semantics:
@@ -2291,24 +2330,73 @@ Introduce a deliberate wait before continuing. Useful for rate limiting, anti-bo
 | `description` | string | Why this delay exists |
 
 #### cache
-Check cache before expensive operations. Has two output handles: `"hit"` and `"miss"`. Use `sourceHandle` on connections.
+Cache operations: check (read-through with hit/miss), set (explicit write), invalidate (delete key). Default operation is `'check'` which has two output handles: `"hit"` and `"miss"`. The `'set'` and `'invalidate'` operations have a single unnamed output (no branching). Use `sourceHandle` on connections for `'check'` operation.
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
+| `operation` | string? | `'check' \| 'set' \| 'invalidate'` — defaults to `'check'` |
 | `key` | string | Cache key template (e.g., "search:{query}") |
-| `ttl_ms` | number | Time-to-live in milliseconds |
+| `ttl_ms` | number? | Time-to-live in milliseconds (for `check` and `set`) |
+| `value` | string? | Value expression to store (required for `set`, e.g., `"$.settings"`) |
 | `store` | string | `'redis' \| 'memory'` |
 | `description` | string | What is being cached |
 
+```yaml
+# Read-through pattern (default — check operation)
+spec:
+  key: "settings:$.user_id"
+  ttl_ms: 300000
+  store: redis
+  description: Check settings cache before database lookup
+
+# Explicit write-through (set operation)
+spec:
+  operation: set
+  key: "settings:$.user_id"
+  value: "$.settings"
+  ttl_ms: 300000
+  store: redis
+  description: Cache settings after database fetch
+
+# Cache invalidation (invalidate operation)
+spec:
+  operation: invalidate
+  key: "settings:$.user_id"
+  store: redis
+  description: Invalidate settings cache after update
+```
+
 #### transform
-Structured data mapping between formats. Prefer over process nodes when the operation is pure data transformation.
+Structured data mapping between formats. Prefer over process nodes when the operation is pure data transformation. Supports two modes: schema-to-schema mapping (default) and expression mode for computed fields.
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `input_schema` | string | Source data format reference |
-| `output_schema` | string | Target data format reference |
-| `field_mappings` | `Record<string, string>` | Output field to input field/expression mapping |
+| `input_schema` | string? | Source data format reference (for schema mapping mode) |
+| `output_schema` | string? | Target data format reference (for schema mapping mode) |
+| `field_mappings` | `Record<string, string>` | Output field to input field/expression mapping. In expression mode, values can be expressions (e.g., `"$.items.length"`, `"$.score * 100"`) |
+| `mode` | string? | `'schema' \| 'expression'` — defaults to `'schema'`. Expression mode allows computed fields without requiring input/output schema references |
 | `description` | string | What transformation is performed |
+
+```yaml
+# Schema-to-schema mapping (default mode)
+spec:
+  input_schema: ContentSource
+  output_schema: FeedEntry
+  field_mappings:
+    title: "$.source.name"
+    url: "$.source.feed_url"
+    type: "$.source.source_type"
+
+# Expression mode — computed fields for response shaping
+spec:
+  mode: expression
+  field_mappings:
+    total_items: "$.aggregates.count"
+    average_score: "Math.round($.aggregates.avg_score * 100) / 100"
+    categories: "$.aggregates.by_category"
+    generated_at: "$.now"
+  description: Format analytics aggregates into API response shape
+```
 
 #### llm_call
 Single LLM invocation (not an agent loop).
@@ -2352,15 +2440,16 @@ spec:
 ```
 
 #### collection
-Collection operations: filter, sort, deduplicate, merge, group_by, aggregate, reduce, flatten. Use instead of process nodes for any collection transformation. Has two output handles: `"result"` (the transformed collection) and `"empty"` (collection is empty after operation).
+Collection operations: filter, sort, deduplicate, merge, group_by, aggregate, reduce, flatten, first, last. Use instead of process nodes for any collection transformation. Has two output handles: `"result"` (the transformed collection or extracted element) and `"empty"` (collection is empty after operation).
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `operation` | string | `'filter' \| 'sort' \| 'deduplicate' \| 'merge' \| 'group_by' \| 'aggregate' \| 'reduce' \| 'flatten'` |
+| `operation` | string | `'filter' \| 'sort' \| 'deduplicate' \| 'merge' \| 'group_by' \| 'aggregate' \| 'reduce' \| 'flatten' \| 'first' \| 'last'` |
 | `input` | string | Input collection reference (e.g., `"$.sources"`) |
 | `predicate` | string? | Filter expression (for `filter`) |
 | `key` | string? | Field key (for `deduplicate`, `sort`, `group_by`) |
 | `direction` | string? | `'asc' \| 'desc'` (for `sort`) |
+| `count` | number? | Number of elements to take (for `first`/`last`, default 1). When count=1, output is a single element; when count>1, output is an array |
 | `accumulator` | object? | `{ init: any, expression: string }` (for `reduce`/`aggregate`) |
 | `output` | string | Output variable name |
 | `description` | string | Details |
@@ -2390,6 +2479,21 @@ spec:
     init: []
     expression: "acc.concat(item.new_posts)"
   output: "all_posts"
+
+# First example — take top result from sorted list
+spec:
+  operation: first
+  input: "$.sorted_reviewers"
+  output: "top_reviewer"
+  description: Select the first reviewer from sorted list
+
+# Last N example — take last 5 items
+spec:
+  operation: last
+  input: "$.activity_log"
+  count: 5
+  output: "recent_activities"
+  description: Get 5 most recent activities
 ```
 
 #### parse
@@ -2692,7 +2796,7 @@ Connections define the flow graph. Each connection is `{ targetNodeId, sourceHan
 | `llm_call` | `"success"` | `"error"` | Unnamed handle = `"success"` |
 | `loop` | `"body"` | `"done"` | |
 | `parallel` | `"branch-0"`, `"branch-1"`, ... | `"done"` | |
-| `cache` | `"hit"` | `"miss"` | |
+| `cache` | `"hit"` | `"miss"` | For `'check'` operation (default). `'set'` and `'invalidate'` use single unnamed output |
 | `collection` | `"result"` | `"empty"` | |
 | `parse` | `"success"` | `"error"` | |
 | `crypto` | `"success"` | `"error"` | |
