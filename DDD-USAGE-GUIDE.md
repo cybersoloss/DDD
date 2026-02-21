@@ -3338,7 +3338,7 @@ flows:
     fileHashes:                    # Per-file hashes for reverse drift detection
       src/routes/auth.ts: abc123...
       src/services/user-service.ts: def456...
-    syncState: synced              # synced | spec_ahead | code_ahead | diverged
+    syncState: in_sync              # in_sync | spec_ahead | code_ahead | diverged | new_logic
     annotationCount: 0             # Number of pending annotations from /ddd-reflect
   users/user-login:
     spec: specs/domains/users/flows/user-login.yaml
@@ -3350,6 +3350,20 @@ flows:
       - src/services/auth-service.ts
     syncState: spec_ahead
     annotationCount: 2
+
+pages:
+  dashboard:
+    spec: specs/ui/dashboard.yaml
+    specHash: <SHA-256 of spec content>
+    implementedAt: "2025-01-15T10:30:00Z"
+    mode: new
+    files:
+      - src/pages/dashboard.tsx
+      - src/components/dashboard/StatsCard.tsx
+    fileHashes:
+      src/pages/dashboard.tsx: ghi789...
+    syncState: in_sync
+    annotationCount: 0
 ```
 
 **Drift detection:** If the specHash no longer matches the flow YAML content, the flow has "drifted" and needs resolution — but NOT necessarily re-implementation. See Section 12.1 for the correct drift resolution workflow.
@@ -3410,7 +3424,14 @@ Only update the hash when BOTH answers are YES.
 
 ### 12.2 Annotations Schema
 
-**Path:** `.ddd/annotations/{domain}/{flow}.yaml`
+#### Annotation Paths
+
+Annotations are organized by pillar:
+
+- **Logic (flows):** `.ddd/annotations/{domain}/{flow}.yaml`
+- **Interface (pages):** `.ddd/annotations/ui/{page-id}.yaml`
+- **Data (schemas):** `.ddd/annotations/schemas/{model}.yaml`
+- **Infrastructure:** `.ddd/annotations/infrastructure.yaml`
 
 Annotations capture implementation wisdom — patterns and details that code has but specs don't describe. They are created by `/ddd-reflect` and promoted into permanent specs by `/ddd-promote`.
 
@@ -3448,6 +3469,13 @@ implementation_details:
 | `content_hashing` | Deduplication via content hashes, hash algorithm choices |
 | `error_handling` | Retry patterns, circuit breakers, graceful degradation |
 | `custom` | Project-specific patterns not in the standard categories |
+
+**Pattern types by pillar:**
+
+- **Logic (flows):** `stealth_http | api_key_resolution | encryption | soft_delete | content_hashing | error_handling | custom`
+- **Interface (pages):** `component_composition | data_fetching | state_management | form_validation | responsive_layout | accessibility | animation | error_handling | custom`
+- **Data (schemas):** `index_optimization | migration_pattern | seed_data | constraint | query_optimization | custom`
+- **Infrastructure:** `docker_config | startup_orchestration | dev_tooling | ci_cd | resource_limits | custom`
 
 **Status lifecycle:**
 ```
