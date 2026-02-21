@@ -1202,6 +1202,25 @@ refresh: manual
 | `loading` | `'skeleton' \| 'spinner' \| 'blur'` | Loading state style |
 | `error` | `'retry-banner' \| 'error-page' \| 'toast'` | Error state style |
 | `refresh` | `'pull-to-refresh' \| 'auto-30s' \| 'manual' \| 'none'`? | Data refresh strategy |
+| `keyboard_shortcuts` | KeyboardShortcut[]? | Page-level keyboard shortcut bindings. `/ddd-implement` generates `useEffect` with `document.keydown` listeners. For global (cross-page) shortcuts, also add `keyboard_shortcuts` at the top level of `pages.yaml`. |
+
+**KeyboardShortcut fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `keys` | string | Key combination (e.g., `"Cmd+N"`, `"Ctrl+Shift+P"`, `"Escape"`) |
+| `label` | string | Human-readable label (shown in keyboard shortcut hints UI) |
+| `action` | ShortcutAction | What happens when the shortcut fires |
+
+**ShortcutAction fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | `'call_flow' \| 'navigate' \| 'toggle'` |
+| `flow` | string? | Backend flow to call (for `call_flow`) in `domain/flow-id` format |
+| `args` | `Record<string, unknown>`? | Arguments passed to the flow (for `call_flow`) |
+| `path` | string? | Route to navigate to (for `navigate`) |
+| `target` | string? | Section or form ID to toggle (for `toggle`) |
 
 #### PageSection
 
@@ -1227,8 +1246,8 @@ Different component types use different subsets of PageSection fields. Here's wh
 
 | Component | Key Fields | Notes |
 |-----------|------------|-------|
-| `stat-card` | `fields.value`, `fields.subtitle`, `fields.urgency` (with `rules`), `actions` (e.g., `click: {navigate}`) | Single metric display |
-| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll`, optional `interactions` | Scrollable list |
+| `stat-card` | `fields.value`, `fields.subtitle`, `fields.urgency` (with `rules`), `actions` (e.g., `click: {navigate}`), optional `trend` (`{ value: "$.prev", direction: 'auto' \| 'up' \| 'down', format: 'delta' \| 'percent' \| 'raw' }`) | Single metric display |
+| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll`, optional `interactions`, optional `group_by` (`{ field: "$.category", label_field?: "$.label", show_count?: boolean, collapsible?: boolean }`) | Scrollable list with optional section grouping |
 | `card-grid` | `data_source`, `fields.columns` (responsive: desktop/tablet/mobile), `item_template` (image/title/description/footer), `item_actions`, `empty_state`, optional `interactions` | Responsive grid |
 | `detail-card` | `data_source`, `fields` mapping with `$.field` syntax (optional `editable`), `actions` (edit/delete/archive), optional `tabs` | Single record view |
 | `button-group` | `buttons` (ButtonSpec[]) with `label`, `flow`, `args`, `variant`, `icon`, `visible_when`, `confirm` | Action buttons |
@@ -1286,13 +1305,25 @@ When `editable: true` is set on a field, the UI renders a click-to-edit control.
 | `position` | string? | Layout position |
 | `fields` | FormField[] | Form fields |
 | `submit` | FormSubmit | Submit configuration |
+| `auto_save` | FormAutoSave? | Auto-save configuration. When set, replaces the submit button with a debounced save — no button is rendered. |
+
+**FormAutoSave fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `debounce_ms` | number | Save is triggered this many milliseconds after the last change |
+| `flow` | string | Backend flow to call on save (`domain/flow-id`) |
+| `key_field` | string? | Form field used as the save key for optimistic updates (e.g., `"id"`) |
+
+When `auto_save` is set, `/ddd-implement` generates a `useEffect` with debounced save logic and renders a `'Saving...' / 'Saved' / 'Error'` status indicator instead of a submit button. Use for document editors, note-taking forms, settings pages, and any long-form editing where explicit submit is undesirable.
 
 #### FormField
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Field name (sent to backend) |
-| `type` | string | Input type: `'text' \| 'number' \| 'select' \| 'multi-select' \| 'search-select' \| 'date' \| 'datetime' \| 'date-range' \| 'textarea' \| 'toggle' \| 'tag-input' \| 'file' \| 'color' \| 'slider'` |
+| `type` | string | Input type: `'text' \| 'number' \| 'select' \| 'multi-select' \| 'search-select' \| 'date' \| 'datetime' \| 'date-range' \| 'textarea' \| 'toggle' \| 'tag-input' \| 'file' \| 'color' \| 'slider' \| 'markdown'` |
+| `markdown_config` | object? | Only valid when `type: 'markdown'`. `{ mode?: 'toggle' \| 'split', toolbar?: boolean, min_height?: number }` — `toggle` (default) shows edit and preview tabs; `split` shows them side by side. `/ddd-implement` renders an appropriate markdown editor component (e.g., `@uiw/react-md-editor`). |
 | `label` | string | Display label |
 | `placeholder` | string? | Placeholder text |
 | `required` | boolean? | Whether field is required (default: false) |
@@ -1606,6 +1637,22 @@ connections:
       - { name: password, type: string }
       - { name: name, type: string }
 ```
+
+### Conditional Connections
+
+Connections can optionally include a `condition` field for single-step optional processing — when the condition evaluates to false at runtime, this edge is skipped entirely.
+
+```yaml
+connections:
+  - targetNodeId: data_store-createHistory
+    sourceHandle: success
+    condition: "$.changed_fields.length > 0"
+  - targetNodeId: event-notifyUser
+    sourceHandle: success
+    condition: "$.user.notifications_enabled"
+```
+
+Use `condition` on connections when an optional processing step should be skipped based on runtime data. This eliminates decision nodes used purely as single-step guards and keeps the canvas clean. For branching logic where both paths have meaningful downstream processing, `decision` nodes remain the right choice.
 
 ### Connection Behavior
 
@@ -1944,7 +1991,9 @@ Data storage operation. Supports databases, filesystem, and in-memory stores. Us
 | Spec Field | Type | Values |
 |------------|------|--------|
 | `store_type` | string? | `'database' \| 'filesystem' \| 'memory'` — defaults to `'database'` if omitted (backwards compatible) |
-| `operation` | string | Database: `'create' \| 'read' \| 'update' \| 'delete' \| 'upsert' \| 'create_many' \| 'update_many' \| 'delete_many'`. Memory: `'get' \| 'set' \| 'merge' \| 'reset' \| 'subscribe' \| 'update_where'` (CRUD aliases also accepted) |
+| `operation` | string | Database: `'create' \| 'read' \| 'update' \| 'delete' \| 'upsert' \| 'create_many' \| 'update_many' \| 'delete_many' \| 'aggregate'`. Memory: `'get' \| 'set' \| 'merge' \| 'reset' \| 'subscribe' \| 'update_where'` (CRUD aliases also accepted) |
+| `aggregate_fields` | object[]? | Only for `operation: aggregate`. Array of `{ function: 'count' \| 'sum' \| 'avg' \| 'min' \| 'max', field: string, alias: string }` — `field` is omitted for `count`. `/ddd-implement` generates a `GROUP BY` query returning the aliased columns. |
+| `group_by` | string[]? | Only for `operation: aggregate`. List of field names to group by (e.g., `["status", "category"]`). Omit for ungrouped aggregations (returns a single row). |
 | `model` | string | Entity/table name (database) |
 | `data` | `Record<string, string>` | Fields to write (for create/update) |
 | `query` | `Record<string, string>` | Query conditions (for read/update/delete) |
@@ -1954,7 +2003,7 @@ Data storage operation. Supports databases, filesystem, and in-memory stores. Us
 | `batch` | boolean? | Batch operation (process entire collection in one DB call) |
 | `upsert_key` | string[]? | Fields for upsert conflict resolution (required when operation is 'upsert') |
 | `include` | IncludeRelation[]? | Eager-load related records (joins) |
-| `returning` | boolean? | Return affected records (for create_many/update_many/delete_many) |
+| `returning` | boolean? | Return the affected record(s) after the operation. Valid for all operation types — not just bulk. For single `create`/`update`, the ORM returns the record by default; setting `returning: true` makes this intent explicit in the spec and enables `/ddd-implement` to generate typed return handling. |
 | `safety` | string? | `'strict' \| 'lenient'` — when `'strict'`, `/ddd-implement` wraps all property accesses from this read in null-safe patterns (optional chaining, default values). Default: `'strict'`. |
 
 **Filesystem fields** (when `store_type: 'filesystem'`):
@@ -2098,6 +2147,7 @@ External API call. Use `sourceHandle` values `"success"` and `"error"` on connec
 | `error_mapping` | `Record<string, string>` | Status code to error code mapping |
 | `request_config` | RequestConfig? | Outbound request behavior configuration |
 | `integration` | string? | Reference to integration defined in system.yaml |
+| `oauth_config` | object? | OAuth2 token lifecycle management. When set, `/ddd-implement` generates automatic token refresh before the request. Can be omitted when the integration reference in `system.yaml` already defines `auth.type: oauth2` — in that case the integration's token config is inherited automatically. |
 | `description` | string | Details |
 
 **Error mapping example:**
@@ -2124,6 +2174,17 @@ spec:
 | `proxy` | string? | `'pool' \| 'direct' \| 'tor'` |
 | `tls_fingerprint` | string? | `'randomize' \| 'chrome' \| 'firefox' \| 'default'` |
 | `fallback` | string? | `'headless_browser' \| 'none'` — fallback for bot-resistant sites |
+
+**oauth_config** — automatic OAuth2 token lifecycle (when `oauth_config` is set on a service_call):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `token_store` | string | Reference to the data_store node or model that holds the stored OAuth tokens (e.g., `"OAuthToken"`) |
+| `refresh_url` | string | Token refresh endpoint URL |
+| `client_id_env` | string | Environment variable name containing the OAuth client ID |
+| `client_secret_env` | string | Environment variable name containing the OAuth client secret |
+
+When `oauth_config` is set, `/ddd-implement` generates pre-call logic that: loads stored tokens, checks expiry, refreshes via `refresh_url` if expired, re-encrypts and stores the new tokens, then proceeds with the authenticated request. This eliminates the need for a repeated process node pattern in every OAuth-connected flow. When `integration` references a system.yaml integration with `auth.type: oauth2`, the oauth lifecycle is inherited automatically — `oauth_config` can be omitted.
 
 #### ipc_call
 Local IPC or native function call (Tauri commands, Electron IPC, React Native bridge, etc.). Use `sourceHandle` values `"success"` and `"error"` on connections for success/error routing.
@@ -2251,6 +2312,7 @@ Run branches concurrently. The `branches` field documents what each branch does 
 | `branches` | `ParallelBranch[]` | Branch definitions (see below). Also accepts `string[]` for simple cases, or a `number` (e.g., `branches: 3`) — the DDD Tool coerces numbers into generated labels (`"Branch 1"`, `"Branch 2"`, etc.) |
 | `join` | string | `'all' \| 'any' \| 'n_of'` |
 | `join_count` | number | Required if join is `n_of` |
+| `failure_policy` | string? | `'all_required' \| 'any_required' \| 'best_effort'` — default: `'all_required'`. When `best_effort`: the `done` handle always fires regardless of individual branch errors; `$.branch_errors` contains per-branch error details. Use this for dashboard flows where some data sources can fail without blocking the overall result. |
 | `timeout_ms` | number | Max wait time |
 | `description` | string | Details |
 
@@ -2261,6 +2323,7 @@ Run branches concurrently. The `branches` field documents what each branch does 
 | `id` | string? | Branch identifier |
 | `label` | string | Branch description |
 | `condition` | string? | Skip branch if condition evaluates to false |
+| `output_key` | string? | Variable name used in flow context (`$`) for this branch's result. Makes namespacing explicit and visible on the canvas. When omitted, branches must manually use distinct variable names to avoid collisions. |
 
 ```yaml
 # Conditional branches — only run branches where condition is true
@@ -2408,7 +2471,7 @@ Single LLM invocation (not an agent loop).
 | `prompt_template` | string | Prompt with `{variable}` placeholders |
 | `temperature` | number | 0.0 - 1.0 |
 | `max_tokens` | number | Max output tokens |
-| `structured_output` | `Record<string, unknown>` | Expected output schema |
+| `structured_output` | `Record<string, unknown>` | Expected output schema. Property values support a `ref` shorthand to resolve enum values from `shared/types.yaml` without duplication: `{ type: string, ref: my_enum_name }` — `/ddd-implement` resolves the ref and injects the enum values as a JSON Schema `enum` constraint. |
 | `retry` | object | `{ max_attempts?, backoff_ms?, strategy?: 'fixed' \| 'linear' \| 'exponential', jitter?: boolean }` |
 | `context_sources` | `Record<string, ContextSource>`? | Formal variable bindings with optional transforms |
 | `description` | string | Details |
@@ -2440,17 +2503,20 @@ spec:
 ```
 
 #### collection
-Collection operations: filter, sort, deduplicate, merge, group_by, aggregate, reduce, flatten, first, last. Use instead of process nodes for any collection transformation. Has two output handles: `"result"` (the transformed collection or extracted element) and `"empty"` (collection is empty after operation).
+Collection operations: filter, sort, deduplicate, merge, group_by, aggregate, reduce, flatten, first, last, join. Use instead of process nodes for any collection transformation. Has two output handles: `"result"` (the transformed collection or extracted element) and `"empty"` (collection is empty after operation). The `join` operation cross-references two arrays — inner join, left join, or anti-join (items in left with no match in right).
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `operation` | string | `'filter' \| 'sort' \| 'deduplicate' \| 'merge' \| 'group_by' \| 'aggregate' \| 'reduce' \| 'flatten' \| 'first' \| 'last'` |
-| `input` | string | Input collection reference (e.g., `"$.sources"`) |
+| `operation` | string | `'filter' \| 'sort' \| 'deduplicate' \| 'merge' \| 'group_by' \| 'aggregate' \| 'reduce' \| 'flatten' \| 'first' \| 'last' \| 'join'` |
+| `input` | string | Input collection reference (e.g., `"$.sources"`). For `join`, this is the left array. |
 | `predicate` | string? | Filter expression (for `filter`) |
 | `key` | string? | Field key (for `deduplicate`, `sort`, `group_by`) |
 | `direction` | string? | `'asc' \| 'desc'` (for `sort`) |
 | `count` | number? | Number of elements to take (for `first`/`last`, default 1). When count=1, output is a single element; when count>1, output is an array |
 | `accumulator` | object? | `{ init: any, expression: string }` (for `reduce`/`aggregate`) |
+| `right` | string? | Right array for `join` (e.g., `"$.next_actions"`) |
+| `on` | string? | Join predicate for `join` — expression using `item` (left element) and `right` (right element), e.g., `"item.id === right.project_id"` |
+| `join_type` | string? | Join semantics for `join`: `'inner'` (only matching pairs), `'left'` (all left items, right data or null), `'anti'` (left items with no matching right item). Default: `'inner'`. |
 | `output` | string | Output variable name |
 | `description` | string | Details |
 
