@@ -13,15 +13,19 @@ my-project/
   ddd-project.json              # Project config (domains list)
   specs/
     system.yaml                  # Tech stack, project identity
-    architecture.yaml            # Conventions, infrastructure, API design
+    architecture.yaml            # Conventions, API design, cross-cutting patterns
     config.yaml                  # Environment variable schema
+    infrastructure.yaml          # Services, ports, startup order, deployment
     system-layout.yaml           # L1 canvas positions (auto-managed by DDD Tool)
     shared/
       errors.yaml                # Error codes with HTTP status mappings
       types.yaml                 # Shared enums and value objects
     schemas/
       _base.yaml                 # Base model (id, timestamps, soft delete)
-      {model}.yaml               # Data model definitions
+      {model}.yaml               # Data model definitions (fields, indexes, seed)
+    ui/
+      pages.yaml                 # Page registry, navigation, app type
+      {page-id}.yaml             # Per-page spec: sections, components, data bindings
     domains/
       {domain-id}/
         domain.yaml              # Domain config: flows, events, layout
@@ -749,6 +753,71 @@ transitions:
 
 > **Note:** When a schema has `transitions`, `/ddd-implement` generates validation logic that enforces valid state changes and rejects (or warns/logs) invalid ones.
 
+#### Indexes
+
+Database indexes for query performance. These are design decisions — "this data is always queried by X" — not implementation details.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fields` | string[] | Column names (composite index if multiple) |
+| `unique` | boolean? | Unique constraint (default: false) |
+| `type` | string? | Index type (`'btree'` \| `'hash'` \| `'gin'` \| `'gist'`). Default: btree |
+| `description` | string? | Why this index exists |
+
+```yaml
+indexes:
+  - fields: [email]
+    unique: true
+  - fields: [category, user_id]
+    description: "Inbox items filtered by category per user"
+  - fields: [source_id]
+    unique: true
+    description: "Prevent duplicate imports from same source"
+  - fields: [tags]
+    type: gin
+    description: "Array contains queries on tags"
+```
+
+> **Note:** `/ddd-scaffold` reads indexes to generate database migration definitions. `/ddd-implement` reads them to understand available query patterns.
+
+#### Seed
+
+Initial data that must exist for the system to function. Enums with fixed values, default records, reference data.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Seed set name |
+| `description` | string? | What this data is and why it's needed |
+| `strategy` | `'migration' \| 'fixture' \| 'script'` | How to apply — migration (runs once, part of DB setup), fixture (test/dev data, re-runnable), script (custom logic) |
+| `data` | array? | Inline seed records (for small, fixed datasets) |
+| `source` | string? | Reference to external data source (for large imports) |
+| `count_estimate` | number? | Approximate record count (for imports without inline data) |
+
+```yaml
+seed:
+  - name: gtd-categories
+    description: "9 GTD categories — system-defined, immutable"
+    strategy: migration
+    data:
+      - { id: inbox, label: Inbox, sort_order: 1 }
+      - { id: projects, label: Projects, sort_order: 2 }
+      - { id: next-actions, label: "Next Actions", sort_order: 3 }
+      - { id: waiting-for, label: "Waiting For", sort_order: 4 }
+      - { id: someday-maybe, label: "Someday/Maybe", sort_order: 5 }
+      - { id: reference, label: Reference, sort_order: 6 }
+      - { id: review, label: Review, sort_order: 7 }
+      - { id: ideas, label: Ideas, sort_order: 8 }
+      - { id: archive, label: Archive, sort_order: 9 }
+
+  - name: initial-apple-notes-import
+    description: "Existing Apple Notes from user's GTD folder structure"
+    strategy: script
+    source: "Apple Notes via osascript sync"
+    count_estimate: 200
+```
+
+> **Note:** `/ddd-scaffold` reads seed data with `strategy: migration` to generate initial database seed files. Seed data with `strategy: fixture` is generated as test helper data. Seed data with `strategy: script` is documented but requires custom implementation.
+
 ### 4.6 shared/types.yaml
 
 **Path:** `specs/shared/types.yaml`
@@ -791,6 +860,514 @@ value_objects:
 | `description` | string? | What this value object represents |
 
 > **Note:** Reference shared enums in schemas with `type: enum, ref: platform` instead of duplicating `values:` arrays. `/ddd-implement` reads this file to generate shared type definitions.
+
+### 4.7 UI Specs
+
+**Path:** `specs/ui/pages.yaml` (page registry) + `specs/ui/{page-id}.yaml` (per-page specs)
+
+UI specs define the interface pillar — pages, components, navigation, data bindings, forms, and visual states. They are declarative (component trees with data bindings), not flow-based. Each page spec references backend flow specs via `data_source` fields, linking the interface and logic pillars.
+
+#### pages.yaml — Page Registry
+
+The central registry of all pages, their routes, and navigation structure:
+
+```yaml
+# specs/ui/pages.yaml
+app_type: web                        # web | mobile | desktop | cli
+framework: Next.js 14
+router: app                          # app (Next.js app router) | pages | hash | native
+state_management: zustand             # zustand | redux | context | none
+component_library: shadcn/ui          # shadcn/ui | mui | chakra | ant | custom | none
+
+theme:
+  color_scheme: light                 # light | dark | system
+  primary_color: "#2563eb"
+  font_family: "Inter"
+  border_radius: 8
+
+pages:
+  - id: dashboard
+    route: /
+    name: Dashboard
+    description: "Main view — inbox count, today's actions, project health"
+    layout: sidebar
+  - id: inbox
+    route: /inbox
+    name: Inbox Processing
+    description: "Process inbox items one-at-a-time with AI suggestions"
+    layout: centered
+  - id: settings
+    route: /settings
+    name: Settings
+    description: "Connector config, TELOS editing, taxonomy management"
+    layout: sidebar
+
+navigation:
+  type: sidebar                       # sidebar | topbar | tabs | drawer | none
+  items:
+    - { page: dashboard, icon: home, label: Dashboard }
+    - { page: inbox, icon: inbox, label: Inbox, badge: inbox_count }
+    - { page: settings, icon: settings, label: Settings }
+
+shared_components:
+  - id: item-card
+    description: "Displays a GTD item with title, source, category badge, and actions"
+    used_by: [dashboard, inbox]
+  - id: ai-suggestion
+    description: "Shows AI category suggestion with confidence, reasoning, accept/reject buttons"
+    used_by: [inbox]
+```
+
+#### PagesConfig Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `app_type` | `'web' \| 'mobile' \| 'desktop' \| 'cli'` | Application type — determines which component patterns apply |
+| `framework` | string | Frontend framework (e.g., "Next.js 14", "React 18", "React Native") |
+| `router` | string? | Router type (e.g., "app", "pages", "hash", "native") |
+| `state_management` | string? | Client-side state approach (e.g., "zustand", "redux", "context") |
+| `component_library` | string? | UI component library (e.g., "shadcn/ui", "mui", "chakra") |
+| `theme` | ThemeConfig? | Global theme settings |
+| `pages` | PageEntry[] | All pages in the application |
+| `navigation` | NavigationConfig? | Navigation structure |
+| `shared_components` | SharedComponent[]? | Reusable components used across multiple pages |
+
+#### ThemeConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `color_scheme` | `'light' \| 'dark' \| 'system'` | Default color scheme |
+| `primary_color` | string? | Primary brand color (hex) |
+| `font_family` | string? | Primary font |
+| `border_radius` | number? | Default border radius in px |
+
+#### PageEntry
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Page ID (kebab-case) — used as filename for per-page spec |
+| `route` | string | URL route (e.g., "/", "/inbox", "/settings/:tab") |
+| `name` | string | Display name |
+| `description` | string? | What this page does |
+| `layout` | `'sidebar' \| 'full' \| 'centered' \| 'split' \| 'stacked'` | Page layout style |
+| `auth_required` | boolean? | Whether this page requires authentication (default: false) |
+
+#### NavigationConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `'sidebar' \| 'topbar' \| 'tabs' \| 'drawer' \| 'none'` | Navigation style |
+| `items` | NavigationItem[] | Navigation entries |
+
+#### NavigationItem
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `page` | string | Page ID reference |
+| `icon` | string? | Icon name (framework-specific, e.g., "home", "inbox") |
+| `label` | string | Display label |
+| `badge` | string? | Dynamic badge value — references a data field (e.g., "inbox_count") |
+
+#### SharedComponent
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Component ID (kebab-case) |
+| `description` | string | What this component renders |
+| `used_by` | string[] | Page IDs that use this component |
+| `props` | ComponentProp[]? | Component props interface |
+
+#### Per-Page Spec — {page-id}.yaml
+
+Each page gets its own spec file with detailed sections, components, data bindings, and states:
+
+```yaml
+# specs/ui/dashboard.yaml
+page: dashboard
+route: /
+
+sections:
+  - id: inbox-summary
+    component: stat-card
+    position: top-left
+    label: "Inbox"
+    data_source: dashboard/get-dashboard-data     # references backend flow
+    fields:
+      value: "$.inbox_count"
+      subtitle: "items to process"
+      urgency:
+        field: "$.inbox_count"
+        rules:
+          - { threshold: 50, level: critical, color: red }
+          - { threshold: 20, level: warning, color: amber }
+          - { threshold: 0, level: normal, color: green }
+    actions:
+      click: { navigate: /inbox }
+
+  - id: todays-actions
+    component: item-list
+    position: main
+    label: "Today's Next Actions"
+    data_source: gtd-engine/list-items
+    query:
+      category: next-actions
+      context: "$.current_context"
+      sort: priority
+    empty_state:
+      message: "No actions for today"
+      icon: check-circle
+    item_template:
+      title: "$.title"
+      subtitle: "$.context · $.time_estimate"
+      badge: "$.priority"
+    item_actions:
+      - label: Done
+        icon: check
+        flow: gtd-engine/categorize-item
+        args: { category: archive }
+        confirm: false
+      - label: Defer
+        icon: clock
+        flow: gtd-engine/update-item
+        args: { due_date: tomorrow }
+
+  - id: projects-health
+    component: card-grid
+    position: main
+    label: "Projects"
+    data_source: dashboard/get-dashboard-data
+    fields:
+      items: "$.projects"
+    item_template:
+      title: "$.name"
+      subtitle: "$.next_action_count actions"
+      status:
+        field: "$.has_next_action"
+        true: { label: Active, color: green }
+        false: { label: Stuck, color: red }
+
+  - id: sync-status
+    component: status-bar
+    position: footer
+    data_source: dashboard/realtime-updates       # WebSocket
+    fields:
+      items: "$.connector_statuses"
+    item_template:
+      label: "$.connector_name"
+      status: "$.status"
+      last_sync: "$.last_sync_at"
+
+forms: []                                          # No forms on dashboard
+
+state:
+  store: dashboard-store                           # references domain.yaml stores
+  initial_fetch: [dashboard/get-dashboard-data]    # API calls on page load
+  realtime: dashboard/realtime-updates             # WebSocket subscription
+
+loading: skeleton                                  # skeleton | spinner | blur
+error: retry-banner                                # retry-banner | error-page | toast
+refresh: pull-to-refresh                           # pull-to-refresh | auto-30s | manual | none
+```
+
+Example of a page with forms:
+
+```yaml
+# specs/ui/inbox.yaml
+page: inbox
+route: /inbox
+
+sections:
+  - id: inbox-header
+    component: page-header
+    position: top
+    label: "Inbox"
+    data_source: inbox/get-inbox-stats
+    fields:
+      count: "$.total"
+      subtitle: "$.total items · $.ai_suggested auto-suggested"
+    actions:
+      - label: Auto-process
+        icon: zap
+        flow: inbox/process-inbox-item
+        args: { mode: batch }
+        confirm: true
+        confirm_message: "Auto-process all items above confidence threshold?"
+
+  - id: current-item
+    component: detail-card
+    position: main
+    label: "Current Item"
+    data_source: inbox/process-inbox-item
+    fields:
+      title: "$.item.title"
+      body: "$.item.body"
+      source: "$.item.source.type"
+      captured_at: "$.item.source.captured_at"
+      ai_suggestion:
+        category: "$.item.ai.suggested_category"
+        confidence: "$.item.ai.confidence"
+        reasoning: "$.item.ai.reasoning"
+
+  - id: categorize-actions
+    component: button-group
+    position: bottom
+    label: "Categorize"
+    buttons:
+      - label: "Accept AI"
+        icon: check
+        variant: primary
+        flow: inbox/accept-suggestion
+        visible_when: "$.item.ai.confidence > 0"
+      - label: Projects
+        flow: inbox/override-suggestion
+        args: { category: projects }
+      - label: "Next Actions"
+        flow: inbox/override-suggestion
+        args: { category: next-actions }
+      - label: "Waiting For"
+        flow: inbox/override-suggestion
+        args: { category: waiting-for }
+      - label: Reference
+        flow: inbox/override-suggestion
+        args: { category: reference }
+      - label: "Someday/Maybe"
+        flow: inbox/override-suggestion
+        args: { category: someday-maybe }
+      - label: Archive
+        flow: inbox/override-suggestion
+        args: { category: archive }
+        variant: ghost
+
+forms:
+  - id: enrich-item
+    label: "Enrich"
+    description: "Add context, energy, time estimate, project link"
+    position: sidebar
+    fields:
+      - name: contexts
+        type: multi-select
+        label: "Context"
+        options_source: shared/types.yaml#context
+        placeholder: "Select contexts..."
+      - name: energy
+        type: select
+        label: "Energy"
+        options: [low, medium, high]
+      - name: time_estimate
+        type: select
+        label: "Time"
+        options: [5min, 15min, 30min, 1h, "2h+"]
+      - name: project_id
+        type: search-select
+        label: "Project"
+        search_source: gtd-engine/list-items
+        search_args: { category: projects }
+        display_field: title
+        value_field: id
+        allow_empty: true
+      - name: tags
+        type: tag-input
+        label: "Tags"
+        autocomplete_source: gtd-engine/list-items
+        autocomplete_field: tags
+      - name: due_date
+        type: date
+        label: "Due Date"
+        allow_empty: true
+    submit:
+      flow: gtd-engine/update-item
+      label: "Save"
+
+state:
+  store: inbox-store
+  initial_fetch: [inbox/get-inbox-stats, inbox/process-inbox-item]
+  realtime: null
+
+loading: skeleton
+error: retry-banner
+refresh: manual
+```
+
+#### PageSpec Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `page` | string | Page ID (must match a `pages` entry in pages.yaml) |
+| `route` | string | URL route (matches pages.yaml) |
+| `sections` | PageSection[] | Visual sections of the page |
+| `forms` | FormSpec[]? | Forms on this page |
+| `state` | PageState? | Client-side state configuration |
+| `loading` | `'skeleton' \| 'spinner' \| 'blur'` | Loading state style |
+| `error` | `'retry-banner' \| 'error-page' \| 'toast'` | Error state style |
+| `refresh` | `'pull-to-refresh' \| 'auto-30s' \| 'manual' \| 'none'`? | Data refresh strategy |
+
+#### PageSection
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Section ID (unique within page) |
+| `component` | string | Component type (e.g., "stat-card", "item-list", "card-grid", "detail-card", "button-group", "page-header", "status-bar") or shared component ID |
+| `position` | string? | Layout position (e.g., "top", "main", "sidebar", "footer", "top-left") |
+| `label` | string | Section heading |
+| `data_source` | string? | Backend flow reference in `domain/flow-id` format |
+| `query` | `Record<string, unknown>`? | Query parameters passed to the data source |
+| `fields` | `Record<string, unknown>`? | Data field mappings using `$.field` syntax |
+| `item_template` | `Record<string, unknown>`? | Template for rendering list/grid items |
+| `empty_state` | EmptyState? | What to show when data is empty |
+| `actions` | `Record<string, unknown>`? | Section-level actions (click handlers, navigation) |
+| `item_actions` | ItemAction[]? | Per-item action buttons |
+| `buttons` | ButtonSpec[]? | Button group entries (for button-group component) |
+| `visible_when` | string? | Conditional visibility expression |
+
+#### FormSpec
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Form ID |
+| `label` | string | Form heading |
+| `description` | string? | Help text shown above the form |
+| `position` | string? | Layout position |
+| `fields` | FormField[] | Form fields |
+| `submit` | FormSubmit | Submit configuration |
+
+#### FormField
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Field name (sent to backend) |
+| `type` | string | Input type: `'text' \| 'number' \| 'select' \| 'multi-select' \| 'search-select' \| 'date' \| 'datetime' \| 'textarea' \| 'toggle' \| 'tag-input' \| 'file' \| 'color' \| 'slider'` |
+| `label` | string | Display label |
+| `placeholder` | string? | Placeholder text |
+| `required` | boolean? | Whether field is required (default: false) |
+| `options` | string[]? | Static options (for select/multi-select) |
+| `options_source` | string? | Dynamic options from spec reference (e.g., `shared/types.yaml#context`) |
+| `search_source` | string? | Backend flow for search-select autocomplete |
+| `search_args` | `Record<string, unknown>`? | Arguments passed to search source |
+| `autocomplete_source` | string? | Backend flow for tag autocomplete |
+| `autocomplete_field` | string? | Field to extract from autocomplete results |
+| `display_field` | string? | Field to display in dropdowns |
+| `value_field` | string? | Field to use as value in dropdowns |
+| `allow_empty` | boolean? | Whether empty/null is valid |
+| `default` | any? | Default value |
+| `validation` | string? | Validation rule description |
+| `visible_when` | string? | Conditional visibility expression |
+
+#### FormSubmit
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `flow` | string | Backend flow to call on submit (`domain/flow-id`) |
+| `label` | string | Submit button label |
+| `variant` | string? | Button variant (e.g., "primary", "secondary") |
+| `success_message` | string? | Toast/notification on success |
+| `redirect` | string? | Page to navigate to on success |
+
+#### ItemAction
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `label` | string | Button label |
+| `icon` | string? | Icon name |
+| `flow` | string | Backend flow to call (`domain/flow-id`) |
+| `args` | `Record<string, unknown>`? | Arguments passed to the flow |
+| `confirm` | boolean? | Show confirmation dialog (default: false) |
+| `confirm_message` | string? | Custom confirmation message |
+| `variant` | string? | Button variant |
+| `visible_when` | string? | Conditional visibility expression |
+
+#### ButtonSpec
+
+Same fields as ItemAction, used in `button-group` component sections.
+
+#### EmptyState
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Message to display |
+| `icon` | string? | Icon name |
+| `action` | object? | Optional CTA button `{ label, navigate?, flow? }` |
+
+#### PageState
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `store` | string? | Client-side store name (references `stores` in domain.yaml) |
+| `initial_fetch` | string[]? | Backend flows to call on page load |
+| `realtime` | string? | WebSocket/SSE flow for real-time updates (null = no realtime) |
+
+> **Note:** UI specs are declarative — they describe what the page shows and how it binds to data, not how to render it. `/ddd-implement` reads these specs alongside the backend flow specs to generate page components with proper data fetching, state management, form handling, and loading/error states. `/ddd-scaffold` creates the page file structure from `pages.yaml`.
+
+### 4.8 infrastructure.yaml
+
+**Path:** `specs/infrastructure.yaml`
+
+Defines the services needed to run the project, how they connect, and how to start them. Kept slim — focused on what's needed to run and connect services, not a full DevOps specification.
+
+```yaml
+# specs/infrastructure.yaml
+services:
+  - id: backend
+    type: server
+    runtime: "Node.js 20"
+    framework: "Express 4"
+    entry: src/server/index.ts
+    port: 3001
+    health: /api/v1/health
+    depends_on: [database, cache]
+    dev_command: "npx tsx watch src/server/index.ts"
+
+  - id: frontend
+    type: server
+    runtime: "Next.js 14"
+    entry: src/app/
+    port: 3000
+    depends_on: [backend]
+    dev_command: "npx next dev"
+
+  - id: database
+    type: datastore
+    engine: "PostgreSQL 16"
+    port: 5432
+    setup: "npx prisma db push"
+
+  - id: cache
+    type: datastore
+    engine: "Redis 7"
+    port: 6379
+
+startup_order: [database, cache, backend, frontend]
+
+deployment:
+  local:
+    strategy: process-manager
+  production:
+    strategy: docker-compose
+```
+
+#### ServiceConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Service identifier |
+| `type` | `'server' \| 'datastore' \| 'worker' \| 'proxy'` | Service type |
+| `runtime` | string? | Runtime/engine (e.g., "Node.js 20", "PostgreSQL 16") |
+| `framework` | string? | Framework (e.g., "Express 4", "Next.js 14") |
+| `entry` | string? | Entry point file or directory |
+| `port` | number? | Port number |
+| `health` | string? | Health check endpoint path |
+| `depends_on` | string[]? | Service IDs this service requires |
+| `dev_command` | string? | Command to start in development |
+| `setup` | string? | One-time setup command (e.g., DB migration) |
+| `engine` | string? | Engine name for datastores |
+
+#### DeploymentConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `local` | object | `{ strategy: 'process-manager' \| 'docker-compose' }` |
+| `production` | object? | `{ strategy: 'docker-compose' \| 'kubernetes' \| 'serverless', reverse_proxy?: string, ssl?: string }` |
+
+> **Note:** `/ddd-scaffold` reads `infrastructure.yaml` to generate startup scripts, `docker-compose.yaml` (if production strategy is docker-compose), and `package.json` scripts. `/ddd-implement` reads it to configure API client base URLs and WebSocket endpoints in frontend code.
 
 ---
 
@@ -2228,14 +2805,14 @@ The fastest way to create a DDD project is with the `/ddd-create` command in Cla
             assignments and deadlines, and email notifications
 ```
 
-This generates the complete spec structure — `ddd-project.json`, supplementary specs, schemas, domain YAML, and flow YAML — ready for visual review.
+This generates the complete spec structure — `ddd-project.json`, supplementary specs (including UI specs, infrastructure, schemas with indexes/seed), domain YAML, and flow YAML — covering all four foundational pillars (Logic, Data, Interface, Infrastructure) — ready for visual review.
 
 **Full workflow:**
 
-1. **Create** (Phase 1) — Run `/ddd-create` with a project description
+1. **Create** (Phase 1) — Run `/ddd-create` with a project description. Generates specs for all four pillars: backend flows (Logic), schemas with indexes and seed data (Data), UI page specs (Interface), and infrastructure config (Infrastructure)
 2. **Design** (Phase 2) — Open the project in DDD Tool to visualize, validate, and refine specs on the canvas
-3. **Scaffold** (Phase 3) — Run `/ddd-scaffold` to set up project skeleton from specs
-4. **Implement** (Phase 3) — Run `/ddd-implement --all` to generate flow code + tests
+3. **Scaffold** (Phase 3) — Run `/ddd-scaffold` to set up project skeleton from specs — backend structure, frontend pages, database with seed data, startup scripts
+4. **Implement** (Phase 3) — Run `/ddd-implement --all` to generate backend flow code, frontend page components, and tests
 5. **Test** (Phase 3) — Run `/ddd-test --all` to verify all tests pass
 6. **Reflect** (Phase 4) — Run `/ddd-sync` to check alignment, `/ddd-reflect` to capture implementation wisdom, `/ddd-promote` to move approved patterns into specs
 7. **Iterate** — Use `/ddd-status` to check state, `/ddd-update` to modify specs, `/ddd-implement` to update code
@@ -2250,9 +2827,11 @@ You can also create specs by hand:
 2. Create supplementary spec files: `specs/system.yaml`, `specs/architecture.yaml`, `specs/config.yaml`, `specs/shared/errors.yaml`, schema files in `specs/schemas/` (see Section 4)
 3. Create domain YAML files: `specs/domains/{domain}/domain.yaml` (see Section 3)
 4. Create flow YAML files: `specs/domains/{domain}/flows/{flow}.yaml` (see Section 5)
-5. Open in DDD Tool to visualize and validate
-6. Run `/ddd-scaffold` to set up project infrastructure
-7. Run `/ddd-implement` to generate flow code
+5. Create UI specs: `specs/ui/pages.yaml` + per-page specs in `specs/ui/` (see Section 4.7)
+6. Create infrastructure spec: `specs/infrastructure.yaml` (see Section 4.8)
+7. Open in DDD Tool to visualize and validate
+8. Run `/ddd-scaffold` to set up project skeleton (backend, frontend, database, startup scripts)
+9. Run `/ddd-implement` to generate flow code and page components
 
 ---
 
@@ -2269,7 +2848,7 @@ Generates a complete DDD project from a natural-language description and/or desi
 
 | Flag | Purpose |
 |------|---------|
-| `--from <path-or-url>` | Use a design file as reference input. Supports images (PNG, JPG), PDFs, markdown, text, YAML, and URLs (Figma, Miro). Extracts domains, flows, data models, events, and architecture from the design. |
+| `--from <path-or-url>` | Use a design file as reference input. Supports images (PNG, JPG), PDFs, markdown, text, YAML, and URLs (Figma, Miro). Extracts domains, flows, data models, UI screens, events, and architecture from the design. |
 | `--shortfalls` | Generate `specs/shortfalls.yaml` — a structured gap analysis report documenting DDD framework limitations encountered during design (7 categories: missing node types, inadequate nodes, missing fields, connection limitations, layer gaps, workarounds, cross-cutting gaps). Feed into `/ddd-evolve` for analysis. |
 
 **Examples:**
@@ -2283,26 +2862,34 @@ Generates a complete DDD project from a natural-language description and/or desi
 ```
 
 **What it does:**
+
+`/ddd-create` generates specs for all four foundational pillars of software: **Logic** (backend flows), **Data** (schemas with indexes and seed), **Interface** (UI page specs), and **Infrastructure** (services, ports, startup).
+
 1. Fetches the latest DDD Usage Guide for spec format reference
 2. If this is an existing project (`ddd-project.json` exists): reads `architecture.yaml` for `cross_cutting_patterns`, existing domain specs for event wiring, and `.ddd/annotations/` for implementation wisdom. New flows automatically inherit applicable cross-cutting patterns.
-3. If `--from` is provided, reads the design file (images, PDFs, markdown, URLs) and extracts domains, flows, data models, events, and tech stack
-4. Analyzes the description and/or design file (asks clarifying questions if brief)
-5. Creates the full project structure:
-   - `ddd-project.json` with domain list
-   - `specs/system.yaml`, `specs/architecture.yaml` (with `cross_cutting_patterns: {}` placeholder), `specs/config.yaml`
-   - `specs/shared/errors.yaml`, `specs/shared/types.yaml` (if needed)
-   - `specs/schemas/` with `_base.yaml` and per-model schemas
-   - `specs/domains/{domain}/domain.yaml` with flows and event wiring
-   - `specs/domains/{domain}/flows/{flow}.yaml` with full node graphs using all node types (including `collection`, `parse`, `crypto`, `batch`, `transaction`, `cache`, `delay`, `transform`, `ipc_call`) and trigger conventions (`shortcut {keys}`, `timer {interval_ms}`, `ui:{action}`, `ipc:{event}`)
+3. If `--from` is provided, reads the design file (images, PDFs, markdown, URLs) and extracts domains, flows, data models, UI screens/pages, events, and tech stack
+4. Analyzes the description and/or design file. If the description is brief, asks clarifying questions about all four pillars:
+   - **Logic**: What are the main domains? Key flows? External services? Agent/AI flows?
+   - **Data**: What are the data models? Key relationships? Initial/seed data?
+   - **Interface**: What pages/screens? Navigation? Forms? What should the user see and interact with?
+   - **Infrastructure**: What services need to run? Which ports? What datastores?
+5. Creates the full project structure across all four pillars:
+   - **Project config**: `ddd-project.json` with domain list
+   - **Logic**: `specs/domains/{domain}/domain.yaml` with flows and event wiring, `specs/domains/{domain}/flows/{flow}.yaml` with full node graphs
+   - **Data**: `specs/schemas/` with `_base.yaml` and per-model schemas (including `indexes` and `seed`), `specs/shared/errors.yaml`, `specs/shared/types.yaml`
+   - **Interface**: `specs/ui/pages.yaml` (page registry, navigation, theme) + `specs/ui/{page}.yaml` per page (sections, components, data bindings, forms, states)
+   - **Infrastructure**: `specs/infrastructure.yaml` (services, ports, startup order, dev commands)
+   - **Cross-cutting**: `specs/system.yaml`, `specs/architecture.yaml` (with `cross_cutting_patterns: {}` placeholder), `specs/config.yaml`
 6. Validates all flows (trigger → terminals, wired branches, event matching)
-7. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
-8. Shows summary with domain counts, file list, event wiring, and next steps
+7. Validates UI specs (data_source references exist as backend flows, form field types are valid)
+8. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
+9. Shows summary with domain counts, page counts, file list, event wiring, and next steps
 
 **After running:**
 1. Open the project in DDD Tool to review visually
 2. Refine flows on the canvas if needed
-3. Run `/ddd-scaffold` to set up project infrastructure
-4. Run `/ddd-implement --all` to generate flow code
+3. Run `/ddd-scaffold` to set up project skeleton (backend, frontend pages, database, startup scripts)
+4. Run `/ddd-implement --all` to generate flow code and page components
 
 ### /ddd-scaffold
 
@@ -2311,15 +2898,18 @@ Sets up the project skeleton and shared infrastructure from specs. This is the f
 **Usage:** `/ddd-scaffold`
 
 **What it does:**
-1. Reads system.yaml, architecture.yaml, config.yaml, errors.yaml, types.yaml, and all schema files
+1. Reads all spec files: system.yaml, architecture.yaml, config.yaml, infrastructure.yaml, errors.yaml, types.yaml, schema files, and UI specs
 2. Initializes the project (package.json, tsconfig, dependencies, directory structure)
-3. Generates shared infrastructure: config loader, error handler, database schema, app entry point, integration clients, event bus, test setup
-4. Generates cross-cutting utility files from `architecture.yaml` → `cross_cutting_patterns` (e.g., stealth HTTP wrapper, encryption helpers, soft-delete filters) using each pattern's `utility`, `config`, and `convention` fields
-5. Creates environment files (.env.example, .gitignore)
-6. Verifies build compiles and example test passes
-7. Initializes `.ddd/mapping.yaml` and `.ddd/annotations/` directory
+3. **Backend scaffold**: Generates shared infrastructure — config loader, error handler, database schema (with indexes from schemas), app entry point, integration clients, event bus, test setup
+4. **Frontend scaffold**: Creates page files and component structure from `specs/ui/pages.yaml` — route definitions, layout components, navigation, shared components. Installs frontend dependencies from pages.yaml config (component library, state management)
+5. **Data scaffold**: Generates database seed files from schemas with `seed` sections. Migration strategy seeds run as part of DB setup, fixture strategy seeds are generated as test helpers
+6. **Infrastructure scaffold**: Generates startup scripts from `infrastructure.yaml` — `package.json` scripts for dev commands, `docker-compose.yaml` (if production strategy is docker-compose), startup order documentation
+7. Generates cross-cutting utility files from `architecture.yaml` → `cross_cutting_patterns`
+8. Creates environment files (.env.example, .gitignore)
+9. Verifies build compiles and example test passes
+10. Initializes `.ddd/mapping.yaml` and `.ddd/annotations/` directory
 
-**After running:** Run `/ddd-implement --all` to generate flow-level code into the scaffolded project.
+**After running:** Run `/ddd-implement --all` to generate flow-level code and page components into the scaffolded project.
 
 ### /ddd-implement
 
@@ -2335,13 +2925,14 @@ Generates implementation code from DDD specs.
 **What it does:**
 1. Fetches the latest DDD Usage Guide for spec format reference
 2. Reads `ddd-project.json` and flow YAML specs
-3. Reads supplementary specs (system.yaml, architecture.yaml including `cross_cutting_patterns`, config.yaml, errors.yaml, schemas/) for implementation context
+3. Reads supplementary specs (system.yaml, architecture.yaml including `cross_cutting_patterns`, config.yaml, errors.yaml, schemas/, infrastructure.yaml, ui/) for implementation context
 4. Checks `.ddd/mapping.yaml` for existing implementations
-5. Follows the node graph: trigger → nodes → terminals, implementing all node types (including `collection`, `parse`, `crypto`, `batch`, `transaction`, `cache`, `delay`, `transform`, `ipc_call`)
-6. Applies cross-cutting patterns from `architecture.yaml` to matching nodes — e.g., `stealth_http` to external service calls, `soft_delete` to read operations, `encryption` to credential writes, `api_key_resolution` to flows needing API keys
-7. Generates tests (happy path, decision branches, error states, input validation)
-8. Runs tests and fixes until passing
-9. Updates `.ddd/mapping.yaml` with specHash, file list, and fileHashes
+5. **Backend**: Follows the node graph: trigger → nodes → terminals, implementing all node types (including `collection`, `parse`, `crypto`, `batch`, `transaction`, `cache`, `delay`, `transform`, `ipc_call`)
+6. **Frontend**: Reads `specs/ui/{page}.yaml` and generates page components with data fetching (from `data_source` references), forms (from `forms` specs), state management (from `state` config), and loading/error/empty states. Uses `infrastructure.yaml` to configure API client base URLs
+7. Applies cross-cutting patterns from `architecture.yaml` to matching nodes — e.g., `stealth_http` to external service calls, `soft_delete` to read operations, `encryption` to credential writes, `api_key_resolution` to flows needing API keys
+8. Generates tests (happy path, decision branches, error states, input validation)
+9. Runs tests and fixes until passing
+10. Updates `.ddd/mapping.yaml` with specHash, file list, and fileHashes
 
 ### /ddd-update
 
