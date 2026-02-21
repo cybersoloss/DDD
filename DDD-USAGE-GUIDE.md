@@ -977,6 +977,8 @@ shared_components:
 | `used_by` | string[] | Page IDs that use this component |
 | `props` | ComponentProp[]? | Component props interface |
 
+> **Extraction rule:** If the same UI pattern (e.g., a notification badge, entity card, AI suggestion panel) appears in 2+ pages, extract it as a shared component in `pages.yaml` → `shared_components` and reference by ID in page specs.
+
 #### Per-Page Spec — {page-id}.yaml
 
 Each page gets its own spec file with detailed sections, components, data bindings, and states:
@@ -1219,6 +1221,22 @@ refresh: manual
 | `buttons` | ButtonSpec[]? | Button group entries (for button-group component) |
 | `visible_when` | string? | Conditional visibility expression |
 
+#### Component Type Field Reference
+
+Different component types use different subsets of PageSection fields. Here's what each expects:
+
+| Component | Key Fields | Notes |
+|-----------|------------|-------|
+| `stat-card` | `fields.value`, `fields.subtitle`, `fields.urgency` (with `rules`), `actions` (e.g., `click: {navigate}`) | Single metric display |
+| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll` | Scrollable list |
+| `card-grid` | `data_source`, `fields.columns` (responsive: desktop/tablet/mobile), `item_template` (image/title/description/footer), `item_actions`, `empty_state` | Responsive grid |
+| `detail-card` | `data_source`, `fields` mapping with `$.field` syntax, `actions` (edit/delete/archive), optional `tabs` | Single record view |
+| `button-group` | `buttons` (ButtonSpec[]) with `label`, `flow`, `args`, `variant`, `icon`, `visible_when`, `confirm` | Action buttons |
+| `page-header` | `fields` (title, subtitle), `breadcrumbs`, `actions` (button-group for page-level actions) | Page title area |
+| `status-bar` | `fields.items` array with `label`, `value` ($.field), `color_when` conditions | Status indicators |
+
+> To use a shared component, set `component` to the shared component's ID from `pages.yaml` → `shared_components`.
+
 #### FormSpec
 
 | Field | Type | Description |
@@ -1343,6 +1361,12 @@ deployment:
   production:
     strategy: docker-compose
 ```
+
+**Design principles:**
+- Every service mentioned in `system.yaml` tech stack MUST appear in `infrastructure.yaml` — no implicit services
+- Ports must not conflict — assign unique ports to each service
+- `depends_on` must form a DAG (no circular dependencies)
+- `startup_order` must list every service ID exactly once
 
 #### ServiceConfig
 
@@ -2880,10 +2904,12 @@ Generates a complete DDD project from a natural-language description and/or desi
    - **Interface**: `specs/ui/pages.yaml` (page registry, navigation, theme) + `specs/ui/{page}.yaml` per page (sections, components, data bindings, forms, states)
    - **Infrastructure**: `specs/infrastructure.yaml` (services, ports, startup order, dev commands)
    - **Cross-cutting**: `specs/system.yaml`, `specs/architecture.yaml` (with `cross_cutting_patterns: {}` placeholder), `specs/config.yaml`
-6. Validates all flows (trigger → terminals, wired branches, event matching)
-7. Validates UI specs (data_source references exist as backend flows, form field types are valid)
-8. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
-9. Shows summary with domain counts, page counts, file list, event wiring, and next steps
+6. Produces a **four-pillar extraction table** before generating any files — enumerating all domains/flows (Logic), pages/sections (Interface), schemas (Data), and services (Infrastructure) with counts per pillar. This table is a countable commitment that prevents pillar starvation
+7. Generates specs in order: Data → Interface → Infrastructure → Logic (detail-heavy Logic goes last so lighter pillars aren't starved)
+8. Validates all flows (trigger → terminals, wired branches, event matching)
+9. Validates UI specs (data_source references exist as backend flows, form field types are valid)
+10. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
+11. Shows summary with per-pillar counts, file list, event wiring, and next steps
 
 **After running:**
 1. Open the project in DDD Tool to review visually
