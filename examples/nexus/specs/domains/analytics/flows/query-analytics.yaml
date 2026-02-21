@@ -1,0 +1,143 @@
+flow:
+  id: query-analytics
+  name: Query Analytics
+  type: traditional
+  domain: analytics
+  description: Query analytics data with date range filtering, granularity, and caching
+
+trigger:
+  id: trigger-Gp7nKs4R
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-Lx3bVm8W
+  spec:
+    event: "HTTP GET /api/v1/analytics"
+    source: API Gateway
+    description: Query analytics data with filters
+  label: GET Analytics
+
+nodes:
+  - id: input-Lx3bVm8W
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: cache-Dn9fRt2J
+        sourceHandle: valid
+      - targetNodeId: terminal-Yh5wPk7B
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: date_range
+          type: string
+          required: true
+        - name: granularity
+          type: string
+          required: false
+        - name: metrics
+          type: array
+          required: false
+      validation: "date_range required; granularity enum: hour, day, week, month; metrics is array of metric names"
+      description: Validate analytics query parameters
+    label: Validate Query
+
+  - id: cache-Dn9fRt2J
+    type: cache
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: terminal-Qm4cAx6N
+        sourceHandle: hit
+      - targetNodeId: data_store-Fw8kTp1H
+        sourceHandle: miss
+    spec:
+      key: "analytics:$.date_range:$.granularity"
+      ttl_ms: 300000
+      store: redis
+      description: Check Redis cache for previously computed analytics results
+    label: Check Cache
+
+  - id: terminal-Qm4cAx6N
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      description: Return cached analytics data
+      status: 200
+      body:
+        data: "$.cached_data"
+        source: "cache"
+    label: Cache Hit
+
+  - id: data_store-Fw8kTp1H
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: process-Bv6jNr3S
+        sourceHandle: success
+      - targetNodeId: terminal-Rx2dWm9L
+        sourceHandle: error
+    spec:
+      operation: read
+      model: AnalyticsEvent
+      query:
+        occurred_at: "$.date_range"
+      description: Read analytics events matching the date range using composite index [event_type, created_at]
+    label: Read Events
+
+  - id: process-Bv6jNr3S
+    type: process
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-Ht8gKv5C
+    spec:
+      action: Aggregate analytics results by requested granularity and metrics
+      service: AnalyticsService.aggregate
+      inputs: ["$.analytics_events", "$.granularity", "$.metrics"]
+      outputs: ["$.aggregated_results"]
+      description: Aggregate raw events into time-bucketed metrics
+    label: Aggregate Results
+
+  - id: terminal-Ht8gKv5C
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      description: Return aggregated analytics results
+      status: 200
+      body:
+        data: "$.aggregated_results"
+        date_range: "$.date_range"
+        granularity: "$.granularity"
+    label: Query Results
+
+  - id: terminal-Yh5wPk7B
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Invalid query parameters
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+    label: Invalid Query
+
+  - id: terminal-Rx2dWm9L
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to read analytics events from database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to query analytics data"
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

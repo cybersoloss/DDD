@@ -1,0 +1,67 @@
+flow:
+  id: record-event
+  name: Record Event
+  type: traditional
+  domain: analytics
+  description: Record analytics events from domain event bus into the analytics store
+
+trigger:
+  id: trigger-Bf5rLs8K
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-Hm2wCp4X
+  spec:
+    event:
+      - "event:ContentPublished"
+      - "event:ContentApproved"
+      - "event:ContentRejected"
+    source: Message Bus
+    description: Listens to content lifecycle events for analytics recording
+  label: Content Event
+
+nodes:
+  - id: data_store-Hm2wCp4X
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-Qv7jNd3G
+        sourceHandle: success
+      - targetNodeId: terminal-Zx9aTk6F
+        sourceHandle: error
+    spec:
+      operation: create
+      model: AnalyticsEvent
+      data:
+        event_type: "$.event_type"
+        event_data: "$.event_payload"
+        source_domain: "$.source_domain"
+        occurred_at: "$.timestamp"
+      description: Persist analytics event with JSONB event_data payload
+    label: Store Event
+
+  - id: terminal-Qv7jNd3G
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      description: Event recorded successfully
+    label: Recorded
+
+  - id: terminal-Zx9aTk6F
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to persist analytics event
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to record analytics event"
+    label: Store Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

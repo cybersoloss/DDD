@@ -1,0 +1,204 @@
+flow:
+  id: assign-reviewer
+  name: Assign Reviewer
+  type: traditional
+  domain: editorial
+  description: Assign a reviewer to content, with auto-assignment by workload or manual selection
+
+trigger:
+  id: trigger-4ss1gnrv
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-v4l1drv
+  spec:
+    event: "HTTP POST /api/v1/editorial/assign"
+    source: API Gateway
+    description: Assign reviewer endpoint
+  label: Assign Reviewer Request
+
+nodes:
+  - id: input-v4l1drv
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: decision-4ut0asn
+        sourceHandle: valid
+      - targetNodeId: terminal-1nv4l1d
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: content_id
+          type: uuid
+          required: true
+        - name: reviewer_id
+          type: uuid
+          required: false
+      validation: "content_id must be valid UUID; reviewer_id optional UUID"
+      description: Validate assignment request
+    label: Validate Input
+
+  - id: decision-4ut0asn
+    type: decision
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-r3adrvws
+        sourceHandle: "true"
+      - targetNodeId: data_store-upd4sgn
+        sourceHandle: "false"
+    spec:
+      condition: "$.reviewer_id === null"
+      trueLabel: "Auto-assign"
+      falseLabel: "Manual assignment"
+      description: Check if auto-assignment is needed
+    label: Auto-Assignment?
+
+  - id: data_store-r3adrvws
+    type: data_store
+    position: { x: 200, y: 440 }
+    connections:
+      - targetNodeId: collection-s0rtload
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r1
+        sourceHandle: error
+    spec:
+      operation: read
+      model: User
+      query:
+        role: reviewer
+        status: active
+      description: Load available reviewers
+    label: Load Reviewers
+
+  - id: collection-s0rtload
+    type: collection
+    position: { x: 200, y: 570 }
+    connections:
+      - targetNodeId: process-t4k3frst
+        sourceHandle: result
+      - targetNodeId: terminal-n0rv1wrs
+        sourceHandle: empty
+    spec:
+      operation: sort
+      input: "$.reviewers"
+      key: "workload_count"
+      direction: asc
+      output: "sorted_reviewers"
+      description: Sort reviewers by workload ascending
+    label: Sort by Workload
+
+  - id: process-t4k3frst
+    type: process
+    position: { x: 200, y: 700 }
+    connections:
+      - targetNodeId: data_store-upd4sgn
+    spec:
+      action: Select the first reviewer from sorted list
+      service: EditorialService.selectReviewer
+      inputs: ["$.sorted_reviewers"]
+      outputs: ["$.selected_reviewer_id"]
+      description: Take the reviewer with lowest workload
+    label: Select Reviewer
+
+  - id: data_store-upd4sgn
+    type: data_store
+    position: { x: 400, y: 830 }
+    connections:
+      - targetNodeId: event-4ss1gned
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r2
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Content
+      query: { id: "$.content_id" }
+      data:
+        assigned_to: "$.selected_reviewer_id || $.reviewer_id"
+        status: pending_review
+      description: Update content with assigned reviewer
+    label: Update Assignment
+
+  - id: event-4ss1gned
+    type: event
+    position: { x: 400, y: 960 }
+    connections:
+      - targetNodeId: terminal-s4cc3ss
+    spec:
+      direction: emit
+      event_name: ReviewerAssigned
+      payload:
+        content_id: "$.content_id"
+        reviewer_id: "$.selected_reviewer_id || $.reviewer_id"
+      async: true
+      description: Notify that a reviewer has been assigned
+    label: Emit ReviewerAssigned
+
+  - id: terminal-s4cc3ss
+    type: terminal
+    position: { x: 400, y: 1090 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Reviewer assigned"
+        content_id: "$.content_id"
+        reviewer_id: "$.selected_reviewer_id || $.reviewer_id"
+      description: Reviewer successfully assigned
+    label: Success
+
+  - id: terminal-1nv4l1d
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+      description: Invalid input data
+    label: Invalid Input
+
+  - id: terminal-db3rr0r1
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to load reviewers"
+      description: Database error loading reviewers
+    label: DB Error (Reviewers)
+
+  - id: terminal-db3rr0r2
+    type: terminal
+    position: { x: 650, y: 830 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to update content assignment"
+      description: Database error updating assignment
+    label: DB Error (Update)
+
+  - id: terminal-n0rv1wrs
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      status: 404
+      body:
+        error: "NOT_FOUND"
+        message: "No available reviewers found"
+      description: No reviewers available for auto-assignment
+    label: No Reviewers
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

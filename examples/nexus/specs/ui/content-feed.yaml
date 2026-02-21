@@ -1,0 +1,85 @@
+page: content-feed
+route: /content
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "Content Feed"
+    actions:
+      - label: Import
+        icon: upload
+        flow: ingestion/import-csv-content
+        variant: secondary
+      - label: "Manual Entry"
+        icon: plus
+        variant: primary
+        navigate: /content/new
+
+  - id: filters
+    component: filter-bar
+    position: top
+    label: "Filters"
+    fields:
+      - name: search
+        type: text
+        label: "Search"
+        placeholder: "Search content..."
+      - name: status
+        type: select
+        label: "Status"
+        options: [draft, pending, approved, published, rejected, archived]
+        allow_empty: true
+      - name: content_type
+        type: multi-select
+        label: "Content Type"
+        options_source: shared/types.yaml#content_status
+      - name: date_range
+        type: date-range
+        label: "Date Range"
+
+  - id: content-grid
+    component: card-grid
+    position: main
+    label: "Content"
+    data_source: content/get-content
+    fields:
+      columns:
+        desktop: 3
+        tablet: 2
+        mobile: 1
+    item_template:
+      title: "$.title"
+      subtitle: "$.source_type · $.created_at"
+      badge: "$.status"
+      footer: "Quality: $.quality_score"
+    item_actions:
+      - label: View
+        icon: eye
+        navigate: "/content/$.id"
+      - label: Delete
+        icon: trash
+        flow: content/delete-content
+        args: { id: "$.id" }
+        variant: destructive
+        confirm: true
+        confirm_message: "Permanently delete this content?"
+    pagination:
+      type: cursor
+      page_size: 20
+    empty_state:
+      message: "No content matches your filters"
+      icon: search
+      action:
+        label: "Clear Filters"
+
+forms: []
+
+state:
+  store: content-store
+  initial_fetch: [content/get-content]
+  realtime: null
+
+loading: skeleton
+error: retry-banner
+refresh: manual

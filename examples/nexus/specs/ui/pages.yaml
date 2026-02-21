@@ -1,0 +1,101 @@
+app_type: web
+framework: Next.js 14
+router: app
+state_management: zustand
+component_library: shadcn/ui
+
+theme:
+  color_scheme: light
+  primary_color: "#2563eb"
+  font_family: "Inter"
+  border_radius: 8
+
+pages:
+  - id: dashboard
+    route: /
+    name: Dashboard
+    description: "Overview — content stats, pending reviews, recent content, system health"
+    layout: sidebar
+  - id: content-feed
+    route: /content
+    name: Content Feed
+    description: "Browse and manage all content with filters"
+    layout: sidebar
+  - id: content-detail
+    route: /content/:id
+    name: Content Detail
+    description: "View and edit individual content items"
+    layout: sidebar
+  - id: editorial-queue
+    route: /editorial
+    name: Editorial Queue
+    description: "Review pending content for approval"
+    layout: sidebar
+  - id: review-panel
+    route: /editorial/:id/review
+    name: Review Panel
+    description: "Side-by-side content review with approval actions"
+    layout: split
+  - id: analytics
+    route: /analytics
+    name: Analytics
+    description: "Content engagement charts and top-performing content"
+    layout: sidebar
+  - id: sources
+    route: /sources
+    name: Content Sources
+    description: "Manage content ingestion sources"
+    layout: sidebar
+  - id: publishing
+    route: /publishing
+    name: Publishing
+    description: "Schedule and track content publishing"
+    layout: sidebar
+  - id: users-admin
+    route: /admin/users
+    name: Users & Admin
+    description: "User management and role assignment"
+    layout: sidebar
+    auth_required: true
+  - id: notification-settings
+    route: /notifications
+    name: Notifications
+    description: "View notifications and configure preferences"
+    layout: sidebar
+  - id: general-settings
+    route: /settings
+    name: Settings
+    description: "General system settings and configuration"
+    layout: sidebar
+  - id: api-key-management
+    route: /settings/api-keys
+    name: API Keys
+    description: "Generate and manage API keys"
+    layout: sidebar
+
+navigation:
+  type: sidebar
+  items:
+    - { page: dashboard, icon: home, label: Dashboard }
+    - { page: content-feed, icon: rss, label: "Content Feed", badge: pending_count }
+    - { page: editorial-queue, icon: clipboard-check, label: "Editorial Queue", badge: review_count }
+    - { page: analytics, icon: bar-chart, label: Analytics }
+    - { page: sources, icon: globe, label: Sources }
+    - { page: publishing, icon: send, label: Publishing }
+    - { page: users-admin, icon: users, label: "Users & Admin" }
+    - { page: notification-settings, icon: bell, label: Notifications }
+    - { page: general-settings, icon: settings, label: Settings }
+
+shared_components:
+  - id: content-card
+    description: "Displays content item with title, source badge, quality score, status, and quick actions"
+    used_by: [dashboard, content-feed, editorial-queue]
+  - id: analytics-chart
+    description: "Reusable chart component for time-series and aggregate data visualization"
+    used_by: [dashboard, analytics]
+  - id: source-badge
+    description: "Colored badge showing content source type (RSS, API, Scraper, etc.)"
+    used_by: [content-feed, content-detail, editorial-queue]
+  - id: quality-indicator
+    description: "Visual quality score display with color coding and confidence level"
+    used_by: [content-detail, review-panel, editorial-queue]

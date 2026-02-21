@@ -1,0 +1,55 @@
+name: Notification
+description: User notifications across multiple delivery channels
+inherits: _base
+fields:
+  - name: user_id
+    type: uuid
+    required: true
+  - name: type
+    type: enum
+    values: [email, push, in_app, desktop]
+    required: true
+  - name: title
+    type: string
+    required: true
+    constraints:
+      max_length: 200
+  - name: body
+    type: text
+    required: true
+  - name: status
+    type: enum
+    values: [pending, sent, read, failed]
+    required: true
+    default: pending
+  - name: sent_at
+    type: datetime
+    required: false
+  - name: read_at
+    type: datetime
+    required: false
+  - name: channel_data
+    type: json
+    required: false
+indexes:
+  - fields: [user_id, status]
+    type: btree
+  - fields: [type, created_at]
+    type: btree
+relationships:
+  - name: user
+    type: belongs_to
+    target: User
+    foreign_key: user_id
+transitions:
+  field: status
+  states:
+    - from: pending
+      to: [sent, failed]
+    - from: sent
+      to: [read]
+    - from: failed
+      to: [pending]
+    - from: read
+      to: []
+  on_invalid: log

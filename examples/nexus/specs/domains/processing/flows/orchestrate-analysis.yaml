@@ -1,0 +1,74 @@
+flow:
+  id: orchestrate-analysis
+  name: Orchestrate Analysis
+  type: agent
+  domain: processing
+  description: Orchestrates multiple analysis agents using a supervisor strategy to coordinate content analysis
+
+trigger:
+  id: trigger-m7r4z3d2
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: orchestrator-n0s9a6e8
+  spec:
+    event: "event:ContentClassified"
+    description: Triggered when content is classified with high confidence
+    filter:
+      confidence:
+        gte: 0.9
+  label: High-Confidence Content Classified
+
+nodes:
+  - id: orchestrator-n0s9a6e8
+    type: orchestrator
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-o5t2b8f1
+        sourceHandle: result
+      - targetNodeId: terminal-p3u7c1g6
+        sourceHandle: error
+    spec:
+      strategy: supervisor
+      model: "claude-sonnet-4-5-20241022"
+      supervisor_prompt: "Coordinate content analysis agents. Assign summarization, classification verification, and quality scoring tasks. Synthesize their results into a comprehensive analysis report."
+      agents:
+        - id: summarizer
+          flow: processing/summarize-single
+          specialization: "Text summarization"
+        - id: classifier
+          flow: processing/classify-content
+          specialization: "Content classification"
+        - id: scorer
+          flow: processing/score-quality
+          specialization: "Quality scoring"
+      shared_memory:
+        - name: content_context
+          type: key_value
+          access: read_write
+      result_merge: supervisor_picks
+      fallback_chain:
+        - summarizer
+        - scorer
+    label: Supervisor Orchestrator
+
+  - id: terminal-o5t2b8f1
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      success: true
+    label: Orchestration Complete
+
+  - id: terminal-p3u7c1g6
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      success: false
+      error: "Orchestration failed"
+    label: Orchestration Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

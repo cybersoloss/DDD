@@ -1,0 +1,42 @@
+name: Users
+description: User management and authentication
+owns_schemas: ["User", "ApiKey", "Role"]
+flows:
+  - id: register-user
+    name: Register User
+    description: Register a new user account
+    type: traditional
+    tags: [public-api]
+  - id: login-user
+    name: Login User
+    description: Authenticate user and issue session token
+    type: traditional
+    tags: [public-api]
+  - id: manage-api-keys
+    name: Manage API Keys
+    description: Create, revoke, and list API keys
+    type: traditional
+  - id: list-users
+    name: List Users
+    description: List all users with optional filters
+    type: traditional
+  - id: update-user-role
+    name: Update User Role
+    description: Change a user's role and permissions
+    type: traditional
+publishes_events:
+  - event: UserRegistered
+    from_flow: register-user
+    description: A new user has registered
+  - event: UserRoleChanged
+    from_flow: update-user-role
+    description: A user's role has been changed
+consumes_events: []
+layout:
+  flows:
+    register-user: { x: 100, y: 100 }
+    login-user: { x: 100, y: 300 }
+    manage-api-keys: { x: 100, y: 500 }
+    list-users: { x: 100, y: 700 }
+    update-user-role: { x: 100, y: 900 }
+  portals: {}

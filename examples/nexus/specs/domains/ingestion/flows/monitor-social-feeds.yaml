@@ -1,0 +1,172 @@
+flow:
+  id: monitor-social-feeds
+  name: Monitor Social Feeds
+  type: traditional
+  domain: ingestion
+  description: Periodically poll social media APIs for content matching configured keywords, deduplicate, and bulk-insert new items
+
+trigger:
+  id: trigger-lK6iW8rQ
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: service_call-mL7jX9sR
+  spec:
+    event: "timer 30000"
+    source: Timer
+    description: Polls social feeds every 30 seconds for matching content
+  label: Timer 30s
+
+nodes:
+  - id: service_call-mL7jX9sR
+    type: service_call
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: parse-nM8kY1tS
+        sourceHandle: success
+      - targetNodeId: terminal-oN9lZ2uT
+        sourceHandle: error
+    spec:
+      method: GET
+      url: "https://api.twitter.com/2/tweets/search/recent"
+      headers:
+        Authorization: "Bearer $.twitter_bearer_token"
+      body:
+        query: "$.configured_keywords"
+        max_results: 100
+      timeout_ms: 15000
+      retry:
+        max_attempts: 3
+        backoff_ms: 2000
+        strategy: exponential
+      integration: twitter_api
+      description: Search Twitter API for tweets matching configured keywords
+    label: Search Twitter API
+
+  - id: terminal-oN9lZ2uT
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to fetch social feed data from Twitter API
+      status: 502
+      body:
+        error: "SERVICE_UNAVAILABLE"
+        message: "Twitter API request failed"
+    label: API Error
+
+  - id: parse-nM8kY1tS
+    type: parse
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: collection-pP1mA3vU
+        sourceHandle: success
+      - targetNodeId: terminal-qQ2nB4wV
+        sourceHandle: error
+    spec:
+      format: json
+      input: "$.raw_response"
+      strategy: strict
+      output: "tweets"
+      description: Parse the JSON response from the Twitter API
+    label: Parse JSON Response
+
+  - id: terminal-qQ2nB4wV
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Malformed JSON response from Twitter API
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "Failed to parse Twitter API response"
+    label: Parse Error
+
+  - id: collection-pP1mA3vU
+    type: collection
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: collection-rR3oC5xW
+        sourceHandle: result
+      - targetNodeId: terminal-uU6rF8aZ
+        sourceHandle: empty
+    spec:
+      operation: filter
+      input: "$.tweets"
+      predicate: "item.created_at > $.last_poll_timestamp"
+      output: "new_tweets"
+      description: Filter to only tweets created since the last poll
+    label: Filter New Items
+
+  - id: collection-rR3oC5xW
+    type: collection
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: batch-sS4pD6yX
+        sourceHandle: result
+      - targetNodeId: terminal-uU6rF8aZ
+        sourceHandle: empty
+    spec:
+      operation: deduplicate
+      input: "$.new_tweets"
+      key: "item.id"
+      output: "unique_tweets"
+      description: Deduplicate tweets by external ID to prevent duplicate content
+    label: Deduplicate by ID
+
+  - id: batch-sS4pD6yX
+    type: batch
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: terminal-uU6rF8aZ
+        sourceHandle: done
+      - targetNodeId: terminal-tT5qE7zY
+        sourceHandle: error
+    spec:
+      input: "$.unique_tweets"
+      operation_template:
+        type: data_store
+        dispatch_field: "item.source_type"
+        configs:
+          twitter:
+            operation: create
+            model: Content
+            data:
+              title: "item.text"
+              external_id: "item.id"
+              source_type: social
+              url: "item.url"
+      concurrency: 5
+      on_error: continue
+      output: "save_results"
+      description: Bulk save unique tweets as content records
+    label: Batch Save Content
+
+  - id: terminal-tT5qE7zY
+    type: terminal
+    position: { x: 650, y: 700 }
+    connections: []
+    spec:
+      outcome: error
+      description: Batch save failed
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to batch save social content"
+    label: Batch Error
+
+  - id: terminal-uU6rF8aZ
+    type: terminal
+    position: { x: 400, y: 830 }
+    connections: []
+    spec:
+      outcome: success
+      description: Social feed monitoring cycle completed
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

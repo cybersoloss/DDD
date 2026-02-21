@@ -1,0 +1,83 @@
+page: review-panel
+route: /editorial/:id/review
+
+sections:
+  - id: content-preview
+    component: detail-card
+    position: left
+    label: "Content Preview"
+    data_source: content/get-content
+    query:
+      id: "$.route.id"
+    fields:
+      title:
+        value: "$.title"
+        display: text
+      body:
+        value: "$.body"
+        display: markdown
+      quality_score:
+        value: "$.quality_score"
+        display: badge
+      ai_classification:
+        value: "$.ai_classification"
+        display: json
+
+  - id: review-actions
+    component: button-group
+    position: right
+    label: "Review Actions"
+    buttons:
+      - label: Approve
+        icon: check
+        variant: primary
+        flow: editorial/approve-content
+        args: { id: "$.route.id" }
+        confirm: true
+        confirm_message: "Approve this content for publishing?"
+      - label: Reject
+        icon: x
+        variant: destructive
+        flow: editorial/reject-content
+        args: { id: "$.route.id" }
+      - label: Escalate
+        icon: alert-triangle
+        variant: secondary
+        flow: editorial/escalate-content
+        args: { id: "$.route.id" }
+
+forms:
+  - id: rejection-reason
+    label: "Rejection Reason"
+    position: right
+    visible_when: "$.show_rejection_form == true"
+    fields:
+      - name: reason
+        type: textarea
+        label: "Reason"
+        required: true
+        validation: "min:10"
+        placeholder: "Explain why this content is being rejected..."
+      - name: severity
+        type: select
+        label: "Severity"
+        options: [minor, major, critical]
+        required: true
+    submit:
+      flow: editorial/reject-content
+      args: { id: "$.route.id" }
+      label: "Submit Rejection"
+      variant: destructive
+      success:
+        message: "Content rejected"
+        redirect: /editorial
+
+state:
+  store: review-store
+  initial_fetch: [content/get-content]
+  local:
+    show_rejection_form: false
+
+loading: skeleton
+error: error-page
+refresh: none

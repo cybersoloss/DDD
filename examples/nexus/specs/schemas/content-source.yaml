@@ -1,0 +1,55 @@
+name: ContentSource
+description: External or internal source from which content is ingested
+inherits: _base
+fields:
+  - name: name
+    type: string
+    required: true
+    constraints:
+      max_length: 200
+  - name: source_type
+    type: enum
+    values: [rss, api, scraper, webhook, manual, filesystem]
+    required: true
+  - name: url
+    type: string
+    required: false
+    format: url
+    constraints:
+      max_length: 2000
+  - name: config
+    type: json
+    required: false
+  - name: is_active
+    type: boolean
+    required: true
+    default: true
+  - name: last_fetched_at
+    type: datetime
+    required: false
+  - name: error_count
+    type: number
+    required: true
+    default: 0
+indexes:
+  - fields: [source_type, is_active]
+    unique: false
+    type: btree
+    description: Filter sources by type and active status
+  - fields: [url]
+    unique: true
+    type: btree
+    description: Ensure unique source URLs
+relationships:
+  - name: contents
+    type: has_many
+    target: Content
+    foreign_key: source_id
+seed:
+  - name: default-sources
+    strategy: fixture
+    data:
+      - name: "TechCrunch RSS"
+        source_type: rss
+        url: "https://techcrunch.com/feed/"
+        is_active: true

@@ -1,0 +1,117 @@
+flow:
+  id: retry-failed-publish
+  name: Retry Failed Publish
+  type: traditional
+  domain: publishing
+  description: Handle failed publish attempts with retry logic or permanent failure notification
+
+trigger:
+  id: trigger-r3tryf41
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-r3adf41l
+  spec:
+    event: "event:PublishFailed"
+    source: Message Bus
+    description: Triggered when a publish attempt fails
+  label: Publish Failed
+
+nodes:
+  - id: data_store-r3adf41l
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: decision-h4sr3try
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r
+        sourceHandle: error
+    spec:
+      operation: read
+      model: PublishRecord
+      query: { id: "$.publish_record_id" }
+      description: Load failure details and retry count
+    label: Load Failure Details
+
+  - id: decision-h4sr3try
+    type: decision
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: event-r33nqu3u
+        sourceHandle: "true"
+      - targetNodeId: ipc_call-n0t1fy
+        sourceHandle: "false"
+    spec:
+      condition: "$.publish_record.retry_count < $.publish_record.max_retries"
+      trueLabel: "Retries remaining"
+      falseLabel: "Max retries reached"
+      description: Check if retry attempts remain
+    label: Retries Remaining?
+
+  - id: event-r33nqu3u
+    type: event
+    position: { x: 200, y: 440 }
+    connections:
+      - targetNodeId: terminal-r33nqu3d
+    spec:
+      direction: emit
+      event_name: PublishContent
+      payload:
+        content_id: "$.publish_record.content_id"
+        retry_count: "$.publish_record.retry_count + 1"
+      target_queue: "publishing"
+      priority: 5
+      delay_ms: 60000
+      async: true
+      description: Re-enqueue publish job with delay for retry
+    label: Re-enqueue Publish
+
+  - id: terminal-r33nqu3d
+    type: terminal
+    position: { x: 200, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      description: Publish job re-enqueued for retry
+    label: Re-enqueued
+
+  - id: ipc_call-n0t1fy
+    type: ipc_call
+    position: { x: 600, y: 440 }
+    connections:
+      - targetNodeId: terminal-f41l3dperm
+        sourceHandle: success
+      - targetNodeId: terminal-f41l3dperm
+        sourceHandle: error
+    spec:
+      command: "show_notification"
+      args:
+        title: "Publish Failed"
+        body: "Content failed after max retries"
+        severity: "error"
+        content_id: "$.publish_record.content_id"
+      bridge: tauri
+      description: Show desktop notification for permanent publish failure
+    label: Notify Failure
+
+  - id: terminal-f41l3dperm
+    type: terminal
+    position: { x: 600, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Content failed permanently after exhausting all retries
+    label: Failed Permanently
+
+  - id: terminal-db3rr0r
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to load publish failure details
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

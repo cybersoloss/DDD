@@ -1,0 +1,119 @@
+flow:
+  id: reset-settings
+  name: Reset Settings
+  type: traditional
+  domain: settings
+  description: Reset all settings to defaults via keyboard shortcut
+
+trigger:
+  id: trigger-wX9uA3lQ
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-xY1vB4mR
+  spec:
+    event: "shortcut Cmd+Shift+R"
+    description: Keyboard shortcut to reset all settings to factory defaults
+  label: Reset Shortcut
+
+nodes:
+  - id: data_store-xY1vB4mR
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-yZ2wC5nS
+        sourceHandle: success
+      - targetNodeId: terminal-bC5zF8qV
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Setting
+      query: { scope: "default" }
+      description: Read default settings template from database
+    label: Read Default Settings
+
+  - id: terminal-bC5zF8qV
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to read default settings from database
+    label: DB Error (Read Defaults)
+
+  - id: data_store-yZ2wC5nS
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-zA3xD6oT
+        sourceHandle: success
+      - targetNodeId: terminal-cD6aG9rW
+        sourceHandle: error
+    spec:
+      store_type: memory
+      operation: reset
+      store: settings-store
+      description: Reset in-memory settings store to clear stale state
+    label: Reset Memory Store
+
+  - id: terminal-cD6aG9rW
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to reset in-memory settings store
+    label: Memory Reset Error
+
+  - id: data_store-zA3xD6oT
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: event-aB4yE7pU
+        sourceHandle: success
+      - targetNodeId: terminal-dE7bH1sX
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Setting
+      query: { scope: "global" }
+      data: "$.default_settings"
+      description: Overwrite current settings with default values
+    label: Apply Default Settings
+
+  - id: terminal-dE7bH1sX
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to update settings with defaults in database
+    label: DB Error (Apply Defaults)
+
+  - id: event-aB4yE7pU
+    type: event
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-eF8cI2tY
+    spec:
+      direction: emit
+      event_name: SettingsReset
+      payload:
+        reset_by: "$.current_user_id"
+        reset_at: "$.now"
+      async: true
+      description: Notify downstream that settings have been reset to defaults
+    label: Emit SettingsReset
+
+  - id: terminal-eF8cI2tY
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      description: Settings reset to defaults successfully
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

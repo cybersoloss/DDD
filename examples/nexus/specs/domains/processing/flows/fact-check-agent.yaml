@@ -1,0 +1,103 @@
+flow:
+  id: fact-check-agent
+  name: Fact Check Agent
+  type: agent
+  domain: processing
+  description: Agent that verifies factual claims in content using web search and knowledge retrieval
+  template: true
+  parameters:
+    content_id:
+      type: uuid
+    content_body:
+      type: string
+  contract:
+    inputs:
+      - name: content_id
+        type: uuid
+        required: true
+      - name: content_body
+        type: string
+        required: true
+    outputs:
+      - name: score
+        type: number
+      - name: reasoning
+        type: string
+
+trigger:
+  id: trigger-f4ctchk1
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: guardrail-f4ctchk2
+  spec:
+    event: "HTTP POST /api/v1/internal/fact-check"
+    description: Internal endpoint for fact-checking a content item
+  label: Fact Check Request
+
+nodes:
+  - id: guardrail-f4ctchk2
+    type: guardrail
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: agent_loop-f4ctchk3
+        sourceHandle: pass
+      - targetNodeId: terminal-f4ctchk5
+        sourceHandle: block
+    spec:
+      position: input
+      checks:
+        - id: content-present
+          rule: "content_body.length > 0"
+    label: Input Guardrail
+
+  - id: agent_loop-f4ctchk3
+    type: agent_loop
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: terminal-f4ctchk4
+        sourceHandle: done
+      - targetNodeId: terminal-f4ctchk5
+        sourceHandle: error
+    spec:
+      model: "claude-sonnet-4-6"
+      system_prompt: "You are a fact-checking agent. Verify the factual claims in the provided content using available search tools. Return a score (0-100) and reasoning."
+      max_iterations: 8
+      temperature: 0.2
+      on_max_iterations: respond
+      tools:
+        - id: search
+          name: search_web
+          description: "Search for information to verify claims"
+        - id: complete
+          name: submit_fact_check
+          description: "Submit the fact-check score and reasoning"
+          is_terminal: true
+    label: Fact Check Agent Loop
+
+  - id: terminal-f4ctchk4
+    type: terminal
+    position: { x: 400, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        score: "$.score"
+        reasoning: "$.reasoning"
+    label: Fact Check Complete
+
+  - id: terminal-f4ctchk5
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "Fact check failed"
+    label: Fact Check Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

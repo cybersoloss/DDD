@@ -1,0 +1,69 @@
+page: notification-settings
+route: /notifications
+layout: sidebar
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "Notifications"
+
+  - id: notification-list
+    component: item-list
+    position: main
+    label: "Recent Notifications"
+    data_source: notifications/get-notification-preferences
+    item_template:
+      title: $.title
+      subtitle: "$.type · $.created_at"
+      badge: $.status
+    empty_state:
+      message: "No notifications"
+      icon: bell-off
+
+forms:
+  - id: preferences
+    label: "Notification Preferences"
+    position: sidebar
+    fields:
+      - name: email_enabled
+        type: toggle
+        label: "Email Notifications"
+        default: true
+      - name: push_enabled
+        type: toggle
+        label: "Push Notifications"
+        default: false
+      - name: desktop_enabled
+        type: toggle
+        label: "Desktop Notifications"
+        default: true
+      - name: digest_frequency
+        type: select
+        label: "Digest Frequency"
+        options: [realtime, hourly, daily, weekly]
+        default: daily
+      - name: quiet_hours_start
+        type: text
+        label: "Quiet Hours Start"
+        placeholder: "22:00"
+      - name: quiet_hours_end
+        type: text
+        label: "Quiet Hours End"
+        placeholder: "07:00"
+    submit:
+      flow: notifications/update-preferences
+      label: "Save Preferences"
+      loading_label: "Saving..."
+      success:
+        message: "Preferences saved"
+      error:
+        message: "Failed to save preferences"
+        retry: true
+
+state:
+  store: notifications-store
+  initial_fetch: [notifications/get-notification-preferences]
+loading: skeleton
+error: toast
+refresh: none

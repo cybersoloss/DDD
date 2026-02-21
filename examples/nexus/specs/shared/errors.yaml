@@ -1,0 +1,70 @@
+errors:
+  VALIDATION_ERROR:
+    http_status: 422
+    message_template: "Validation failed: {details}"
+    log_level: warn
+
+  UNAUTHORIZED:
+    http_status: 401
+    message_template: "Authentication required"
+    log_level: warn
+
+  FORBIDDEN:
+    http_status: 403
+    message_template: "Insufficient permissions"
+    log_level: warn
+
+  NOT_FOUND:
+    http_status: 404
+    message_template: "{resource} not found"
+    log_level: info
+
+  DUPLICATE_ENTRY:
+    http_status: 409
+    message_template: "{resource} already exists"
+    log_level: warn
+
+  RATE_LIMITED:
+    http_status: 429
+    message_template: "Too many requests, try again in {retry_after}s"
+    log_level: warn
+
+  INTERNAL_ERROR:
+    http_status: 500
+    message_template: "An unexpected error occurred"
+    log_level: error
+
+  SERVICE_UNAVAILABLE:
+    http_status: 503
+    message_template: "{service} is temporarily unavailable"
+    log_level: error
+
+  INGESTION_FAILED:
+    http_status: 502
+    message_template: "Content ingestion failed: {source}"
+    log_level: error
+
+  AI_PROCESSING_ERROR:
+    http_status: 500
+    message_template: "AI processing failed: {details}"
+    log_level: error
+
+  PUBLISH_FAILED:
+    http_status: 502
+    message_template: "Publishing failed: {channel}"
+    log_level: error
+
+  INVALID_WEBHOOK_SIGNATURE:
+    http_status: 401
+    message_template: "Webhook signature verification failed"
+    log_level: warn
+
+  CRYPTO_ERROR:
+    http_status: 500
+    message_template: "Cryptographic operation failed"
+    log_level: error
+
+  CONTENT_TRANSITION_INVALID:
+    http_status: 422
+    message_template: "Invalid status transition from {from} to {to}"
+    log_level: warn

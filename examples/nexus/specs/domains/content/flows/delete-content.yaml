@@ -1,0 +1,109 @@
+flow:
+  id: delete-content
+  name: Delete Content
+  type: traditional
+  domain: content
+  description: Soft-delete a content entity by setting deleted_at timestamp
+
+trigger:
+  id: trigger-sM8qW4hF
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-tN9rX5iG
+  spec:
+    event: "HTTP DELETE /api/v1/content/:id"
+    source: API Gateway
+    description: Delete content by ID endpoint
+  label: Delete Content Request
+
+nodes:
+  - id: data_store-tN9rX5iG
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-vP1tZ7kJ
+        sourceHandle: success
+      - targetNodeId: terminal-uO2sY6jH
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query: { id: "$.params.id" }
+      description: Verify content exists before soft-deleting
+    label: Read Content
+
+  - id: terminal-uO2sY6jH
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 404
+      body:
+        error: "NOT_FOUND"
+        message: "Content not found"
+      description: Content with given ID does not exist
+    label: Not Found
+
+  - id: data_store-vP1tZ7kJ
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: event-wQ2uA8lK
+        sourceHandle: success
+      - targetNodeId: terminal-xR3vB9mL
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Content
+      query: { id: "$.params.id" }
+      data:
+        deleted_at: "$.now"
+      description: Soft-delete content by setting deleted_at timestamp
+    label: Soft Delete Content
+
+  - id: terminal-xR3vB9mL
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to delete content"
+      description: Database error during soft delete
+    label: DB Error (Delete)
+
+  - id: event-wQ2uA8lK
+    type: event
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-yS4wC1nM
+    spec:
+      direction: emit
+      event_name: ContentDeleted
+      payload:
+        content_id: "$.params.id"
+        deleted_at: "$.now"
+      async: true
+      description: Notify downstream that content has been deleted
+    label: Emit ContentDeleted
+
+  - id: terminal-yS4wC1nM
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Content deleted"
+        content_id: "$.params.id"
+      description: Content soft-deleted successfully
+    label: Success 200
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

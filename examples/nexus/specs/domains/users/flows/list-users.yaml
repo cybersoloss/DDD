@@ -1,0 +1,75 @@
+flow:
+  id: list-users
+  name: List Users
+  type: traditional
+  domain: users
+  description: List users with cursor-based pagination and sorting
+
+trigger:
+  id: trigger-Fx7nKw3B
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-Rm4cVp8J
+  spec:
+    event: "HTTP GET /api/v1/users"
+    source: API Gateway
+    description: List users endpoint with pagination and sorting
+  label: GET Users
+
+nodes:
+  - id: data_store-Rm4cVp8J
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-Hn6dTx2L
+        sourceHandle: success
+      - targetNodeId: terminal-Wk9fBr5Q
+        sourceHandle: error
+    spec:
+      operation: read
+      model: User
+      pagination:
+        style: cursor
+        default_limit: 20
+        max_limit: 100
+      sort:
+        default: "created_at:desc"
+        allowed: ["name", "created_at", "role"]
+      include:
+        - model: Role
+          via: role
+          as: role_details
+      description: Read users with cursor-based pagination, sorting, and role inclusion
+    label: Read Users
+
+  - id: terminal-Hn6dTx2L
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      description: Return paginated user list
+      status: 200
+      body:
+        data: "$.users"
+        cursor: "$.next_cursor"
+        has_more: "$.has_more"
+    label: User List
+
+  - id: terminal-Wk9fBr5Q
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to read users from database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to retrieve users"
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

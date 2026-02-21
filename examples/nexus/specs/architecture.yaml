@@ -1,0 +1,81 @@
+project_structure:
+  "src/":
+    "server/": Express server entry and middleware
+    "routes/": Express route handlers
+    "services/": Business logic (one service file per flow)
+    "repositories/": Data access layer (shared across flows)
+    "models/": Prisma models
+    "middleware/": Auth, validation, error handling
+    "utils/": Shared utilities
+    "types/": TypeScript type definitions
+    "worker/": BullMQ worker entry and job handlers
+    "app/": Next.js app directory
+  "tests/":
+    "unit/": Unit tests
+    "integration/": Integration tests
+
+naming_conventions:
+  files: kebab-case
+  classes: PascalCase
+  functions: camelCase
+  variables: camelCase
+  constants: UPPER_SNAKE_CASE
+  database_tables: snake_case
+  api_endpoints: kebab-case
+
+dependencies:
+  runtime:
+    - express: "^4.18"
+    - prisma: "^5.0"
+    - zod: "^3.22"
+    - jsonwebtoken: "^9.0"
+    - bcryptjs: "^2.4"
+    - bullmq: "^5.0"
+    - ioredis: "^5.3"
+    - uuid: "^9.0"
+    - rss-parser: "^3.13"
+    - cheerio: "^1.0"
+    - fast-xml-parser: "^4.3"
+    - csv-parse: "^5.5"
+  dev:
+    - vitest: "^1.0"
+    - supertest: "^6.3"
+    - typescript: "^5.3"
+
+infrastructure:
+  containerization: Docker
+  ci_cd: GitHub Actions
+  logging: Pino structured JSON
+
+api_design:
+  versioning: URL prefix (/api/v1)
+  pagination:
+    style: cursor
+    default_limit: 20
+    max_limit: 100
+    response_format:
+      data: "array of items"
+      cursor: "next page cursor"
+      has_more: "boolean"
+  filtering:
+    style: query parameters
+    operators: "eq, ne, gt, gte, lt, lte, in, like"
+  error_format:
+    error:
+      code: "ERROR_CODE"
+      message: "Human-readable message"
+      details: "Optional additional context"
+
+testing:
+  framework: vitest
+  runner: "npx vitest run"
+  coverage_target: 80%
+  patterns:
+    unit: "tests/unit/**/*.test.ts"
+    integration: "tests/integration/**/*.test.ts"
+
+deployment:
+  strategy: rolling update
+  health_check: /api/v1/health
+
+cross_cutting_patterns: {}

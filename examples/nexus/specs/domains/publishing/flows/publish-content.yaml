@@ -1,0 +1,173 @@
+flow:
+  id: publish-content
+  name: Publish Content
+  type: traditional
+  domain: publishing
+  description: Publish approved content to configured channels in parallel
+
+trigger:
+  id: trigger-p4bl1shc
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-r3adcfg
+  spec:
+    event: "event:ContentApproved"
+    source: Message Bus
+    description: Triggered when content is approved by editorial
+  label: Content Approved
+
+nodes:
+  - id: data_store-r3adcfg
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: parallel-ch4nn3ls
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query: { id: "$.content_id" }
+      include:
+        - model: PublishConfig
+          via: content_id
+          as: channel_config
+      description: Load content and channel configuration
+    label: Load Content & Config
+
+  - id: parallel-ch4nn3ls
+    type: parallel
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: sub_flow-s0c14l
+        sourceHandle: "branch-0"
+      - targetNodeId: sub_flow-n3wsl3t
+        sourceHandle: "branch-1"
+      - targetNodeId: sub_flow-w3bs1te
+        sourceHandle: "branch-2"
+      - targetNodeId: data_store-cr34trec
+        sourceHandle: done
+    spec:
+      branches:
+        - id: social
+          label: "Publish to social media"
+          condition: "$.channels.has_social"
+        - id: newsletter
+          label: "Include in newsletter"
+          condition: "$.channels.has_newsletter"
+        - id: website
+          label: "Publish to website"
+          condition: "$.channels.has_website"
+      join: all
+      timeout_ms: 30000
+      description: Publish to all configured channels in parallel
+    label: Publish Channels
+
+  - id: sub_flow-s0c14l
+    type: sub_flow
+    position: { x: 150, y: 440 }
+    connections:
+      - targetNodeId: parallel-ch4nn3ls
+    spec:
+      flow_ref: "publishing/publish-to-social"
+      input_mapping:
+        content_id: "$.content_id"
+      output_mapping:
+        social_post_id: "$.social_result.post_id"
+      description: Publish content to social media channels
+    label: Social Media
+
+  - id: sub_flow-n3wsl3t
+    type: sub_flow
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: parallel-ch4nn3ls
+    spec:
+      flow_ref: "publishing/publish-to-newsletter"
+      input_mapping:
+        content_id: "$.content_id"
+      output_mapping:
+        newsletter_id: "$.newsletter_result.id"
+      description: Include content in newsletter
+    label: Newsletter
+
+  - id: sub_flow-w3bs1te
+    type: sub_flow
+    position: { x: 650, y: 440 }
+    connections:
+      - targetNodeId: parallel-ch4nn3ls
+    spec:
+      flow_ref: "publishing/publish-to-website"
+      input_mapping:
+        content_id: "$.content_id"
+      output_mapping:
+        page_url: "$.website_result.url"
+      description: Publish content to website
+    label: Website
+
+  - id: data_store-cr34trec
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: event-p4bl1shd
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r2
+        sourceHandle: error
+    spec:
+      operation: create
+      model: PublishRecord
+      data:
+        content_id: "$.content_id"
+        channels: "$.publish_results"
+        published_at: "$.now"
+      description: Create publish record with channel results
+    label: Create Publish Record
+
+  - id: event-p4bl1shd
+    type: event
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: terminal-s4cc3ss
+    spec:
+      direction: emit
+      event_name: ContentPublished
+      payload:
+        content_id: "$.content_id"
+        channels: "$.publish_results"
+        published_at: "$.now"
+      async: true
+      description: Notify that content has been published
+    label: Emit ContentPublished
+
+  - id: terminal-s4cc3ss
+    type: terminal
+    position: { x: 400, y: 830 }
+    connections: []
+    spec:
+      outcome: success
+      description: Content published to all channels
+    label: Published
+
+  - id: terminal-db3rr0r
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to load content or channel config
+    label: DB Error (Load)
+
+  - id: terminal-db3rr0r2
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to create publish record
+    label: DB Error (Record)
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

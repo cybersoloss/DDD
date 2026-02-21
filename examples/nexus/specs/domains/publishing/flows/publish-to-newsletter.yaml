@@ -1,0 +1,90 @@
+flow:
+  id: publish-to-newsletter
+  name: Publish to Newsletter
+  type: traditional
+  domain: publishing
+  description: Queue approved content for inclusion in the next scheduled newsletter
+  template: true
+  parameters:
+    content_id:
+      type: uuid
+  contract:
+    inputs:
+      - name: content_id
+        type: uuid
+        required: true
+    outputs:
+      - name: id
+        type: uuid
+
+trigger:
+  id: trigger-n3wsl1
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-n3wsl2
+  spec:
+    event: "HTTP POST /api/v1/internal/newsletter/queue"
+    description: Internal endpoint to queue content for newsletter
+  label: Queue for Newsletter
+
+nodes:
+  - id: data_store-n3wsl2
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: service_call-n3wsl3
+        sourceHandle: success
+      - targetNodeId: terminal-n3wsl5
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query: { id: "$.content_id" }
+      description: Load content for newsletter
+    label: Load Content
+
+  - id: service_call-n3wsl3
+    type: service_call
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: terminal-n3wsl4
+        sourceHandle: success
+      - targetNodeId: terminal-n3wsl5
+        sourceHandle: error
+    spec:
+      method: POST
+      url: "$.integrations.newsletter_service.base_url + /queue"
+      body:
+        content_id: "$.content_id"
+        title: "$.content.title"
+        excerpt: "$.content.excerpt"
+        url: "$.content.canonical_url"
+      description: Queue content in newsletter service
+    label: Queue in Newsletter Service
+
+  - id: terminal-n3wsl4
+    type: terminal
+    position: { x: 400, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        id: "$.response.queue_id"
+    label: Queued
+
+  - id: terminal-n3wsl5
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "Newsletter queue failed"
+    label: Queue Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

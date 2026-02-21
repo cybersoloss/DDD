@@ -1,0 +1,38 @@
+name: Content
+description: Central content entity management and event wiring hub
+owns_schemas: ["Content", "BaseContent", "ContentVersion"]
+flows:
+  - id: create-content
+    name: Create Content
+    description: Create a new content entity
+    type: traditional
+  - id: get-content
+    name: Get Content
+    description: Retrieve a content entity by ID
+    type: traditional
+  - id: update-content
+    name: Update Content
+    description: Update an existing content entity
+    type: traditional
+  - id: delete-content
+    name: Delete Content
+    description: Soft-delete a content entity
+    type: traditional
+publishes_events:
+  - event: ContentCreated
+    from_flow: create-content
+    description: A new content entity has been created
+  - event: ContentUpdated
+    from_flow: update-content
+    description: A content entity has been updated
+  - event: ContentDeleted
+    from_flow: delete-content
+    description: A content entity has been deleted
+consumes_events: []
+layout:
+  flows:
+    create-content: { x: 100, y: 100 }
+    get-content: { x: 100, y: 300 }
+    update-content: { x: 100, y: 500 }
+    delete-content: { x: 100, y: 700 }
+  portals: {}

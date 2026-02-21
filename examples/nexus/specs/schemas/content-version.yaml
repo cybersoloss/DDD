@@ -1,0 +1,36 @@
+name: ContentVersion
+description: Versioned snapshot of content for tracking changes and revision history
+inherits: _base
+fields:
+  - name: content_id
+    type: uuid
+    required: true
+  - name: version_number
+    type: number
+    required: true
+  - name: title
+    type: string
+    required: true
+    constraints:
+      max_length: 500
+  - name: body
+    type: text
+    required: true
+  - name: changed_by
+    type: uuid
+    required: false
+  - name: change_reason
+    type: string
+    required: false
+    constraints:
+      max_length: 500
+indexes:
+  - fields: [content_id, version_number]
+    unique: true
+    type: btree
+    description: Unique version per content item for ordered retrieval
+relationships:
+  - name: content
+    type: belongs_to
+    target: Content
+    foreign_key: content_id

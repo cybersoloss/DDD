@@ -1,0 +1,67 @@
+flow:
+  id: collaborative-review
+  name: Collaborative Review
+  type: agent
+  domain: processing
+  description: Multi-agent collaborative content review using an agent group with shared memory coordination
+
+trigger:
+  id: trigger-u4z8h2l6
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: agent_group-v1a3i9m0
+  spec:
+    event: "HTTP POST /api/v1/content/:id/deep-review"
+    description: API endpoint to trigger a collaborative multi-agent deep review of content
+  label: Deep Review Request
+
+nodes:
+  - id: agent_group-v1a3i9m0
+    type: agent_group
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-w6b5j4n7
+        sourceHandle: result
+      - targetNodeId: terminal-x0c8k7o3
+        sourceHandle: error
+    spec:
+      name: "Content Review Panel"
+      description: "Multi-agent collaborative content review"
+      members:
+        - flow: processing/classify-content
+          domain: processing
+        - flow: processing/score-quality
+          domain: processing
+      shared_memory:
+        - name: review_state
+          type: key_value
+          access: read_write
+      coordination:
+        communication: shared_memory
+        max_active_agents: 3
+        selection_strategy: round_robin
+    label: Content Review Agent Group
+
+  - id: terminal-w6b5j4n7
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      status: 200
+      success: true
+    label: Review Complete
+
+  - id: terminal-x0c8k7o3
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      status: 500
+      success: false
+      error: "Collaborative review failed"
+    label: Review Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

@@ -1,0 +1,59 @@
+name: Publishing
+description: Multi-channel content distribution
+stores:
+  - name: content-store
+    shape:
+      latestPublished: "Content | null"
+    access_pattern: read_write
+flows:
+  - id: publish-content
+    name: Publish Content
+    description: Publish approved content to primary channels
+    type: traditional
+  - id: publish-to-social
+    name: Publish to Social
+    description: Distribute content to social media channels
+    type: traditional
+    tags: [internal]
+  - id: publish-sse-updates
+    name: Publish SSE Updates
+    description: Push real-time updates via server-sent events
+    type: traditional
+  - id: schedule-publication
+    name: Schedule Publication
+    description: Schedule content for future publication
+    type: traditional
+  - id: retry-failed-publish
+    name: Retry Failed Publish
+    description: Retry previously failed publication attempts
+    type: traditional
+  - id: publish-to-newsletter
+    name: Publish to Newsletter
+    description: Queue content for inclusion in the next newsletter
+    type: traditional
+    tags: [internal]
+  - id: publish-to-website
+    name: Publish to Website
+    description: Publish content to the website CMS
+    type: traditional
+    tags: [internal]
+publishes_events:
+  - event: ContentPublished
+    from_flow: publish-content
+    description: Content has been published to a channel
+  - event: PublishFailed
+    from_flow: publish-content
+    description: Content publication has failed
+consumes_events:
+  - event: ContentApproved
+    from_flow: editorial/review-content
+    handled_by_flow: publish-content
+    description: Approved content triggers publication
+layout:
+  flows:
+    publish-content: { x: 100, y: 100 }
+    publish-to-social: { x: 100, y: 300 }
+    publish-sse-updates: { x: 100, y: 500 }
+    schedule-publication: { x: 100, y: 700 }
+    retry-failed-publish: { x: 100, y: 900 }
+  portals: {}

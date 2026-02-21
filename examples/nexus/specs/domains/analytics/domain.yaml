@@ -1,0 +1,52 @@
+name: Analytics
+description: Real-time and historical analytics
+owns_schemas: ["AnalyticsEvent"]
+flows:
+  - id: stream-live-metrics
+    name: Stream Live Metrics
+    description: Stream real-time metrics to connected clients
+    type: traditional
+  - id: record-event
+    name: Record Event
+    description: Record an analytics event for tracking
+    type: traditional
+  - id: generate-daily-report
+    name: Generate Daily Report
+    description: Generate daily analytics report
+    type: traditional
+    tags: [cron]
+  - id: generate-weekly-digest
+    name: Generate Weekly Digest
+    description: Generate weekly analytics digest
+    type: traditional
+    tags: [cron]
+  - id: query-analytics
+    name: Query Analytics
+    description: Query analytics data with filters
+    type: traditional
+    tags: [public-api]
+publishes_events:
+  - event: ReportGenerated
+    from_flow: generate-daily-report
+    description: An analytics report has been generated
+consumes_events:
+  - event: ContentPublished
+    from_flow: publishing/publish-content
+    handled_by_flow: record-event
+    description: Published content triggers analytics recording
+  - event: ContentApproved
+    from_flow: editorial/review-content
+    handled_by_flow: record-event
+    description: Approved content triggers analytics recording
+  - event: ContentRejected
+    from_flow: editorial/reject-content
+    handled_by_flow: record-event
+    description: Rejected content triggers analytics recording
+layout:
+  flows:
+    stream-live-metrics: { x: 100, y: 100 }
+    record-event: { x: 100, y: 300 }
+    generate-daily-report: { x: 100, y: 500 }
+    generate-weekly-digest: { x: 100, y: 700 }
+    query-analytics: { x: 100, y: 900 }
+  portals: {}

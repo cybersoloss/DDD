@@ -1,0 +1,92 @@
+flow:
+  id: send-pattern-alert
+  name: Send Pattern Alert
+  type: traditional
+  domain: notifications
+  description: Send desktop alert when a high-volume ingestion pattern is detected
+
+trigger:
+  id: trigger-hI4fL1wX
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: ipc_call-iJ5gM2xY
+  spec:
+    event: "pattern:HighVolumeIngestion"
+    config:
+      event: ContentIngested
+      group_by: source_type
+      threshold: 50
+      window: "1h"
+    description: Triggered when 50+ ContentIngested events from the same source_type occur within 1 hour
+  label: High Volume Pattern
+
+nodes:
+  - id: ipc_call-iJ5gM2xY
+    type: ipc_call
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-jK6hN3yZ
+        sourceHandle: success
+      - targetNodeId: terminal-lM8jP5aB
+        sourceHandle: error
+    spec:
+      command: show_notification
+      args:
+        title: "High Volume Alert"
+        body: "50+ items from $.source_type in the last hour"
+      bridge: tauri
+      description: Show desktop notification via Tauri IPC bridge
+    label: Desktop Notification
+
+  - id: terminal-lM8jP5aB
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to show desktop notification via Tauri IPC
+    label: IPC Error
+
+  - id: data_store-jK6hN3yZ
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: terminal-kL7iO4zA
+        sourceHandle: success
+      - targetNodeId: terminal-mN9kQ6bC
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Notification
+      data:
+        user_id: "$.current_user_id"
+        type: desktop
+        title: "High Volume Alert"
+        body: "50+ items from $.source_type in the last hour"
+        status: sent
+        sent_at: "$.now"
+      description: Record the desktop notification in the database
+    label: Create Notification Record
+
+  - id: terminal-mN9kQ6bC
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to create notification record in database
+    label: DB Error (Record)
+
+  - id: terminal-kL7iO4zA
+    type: terminal
+    position: { x: 400, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      description: Pattern alert sent and recorded successfully
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

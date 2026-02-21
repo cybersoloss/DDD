@@ -1,0 +1,32 @@
+name: Channel
+description: Publishing channels for content distribution
+inherits: _base
+fields:
+  - name: name
+    type: string
+    required: true
+    constraints:
+      max_length: 100
+  - name: channel_type
+    type: enum
+    values: [social, email, website, rss_out]
+    required: true
+  - name: config
+    type: json
+    required: true
+  - name: is_active
+    type: boolean
+    required: true
+    default: true
+  - name: credentials
+    type: json
+    required: false
+    encrypted: true
+indexes:
+  - fields: [channel_type, is_active]
+    type: btree
+relationships:
+  - name: publish_records
+    type: has_many
+    target: PublishRecord
+    foreign_key: channel_id

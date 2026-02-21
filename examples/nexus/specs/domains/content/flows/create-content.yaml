@@ -1,0 +1,158 @@
+flow:
+  id: create-content
+  name: Create Content
+  type: traditional
+  domain: content
+  description: Create a new content entity with initial version record
+
+trigger:
+  id: trigger-kR4mW7nB
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-pL8qX2vD
+  spec:
+    event: "HTTP POST /api/v1/content"
+    source: API Gateway
+    description: Create content endpoint
+  label: Create Content Request
+
+nodes:
+  - id: input-pL8qX2vD
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-tN3sY6jF
+        sourceHandle: valid
+      - targetNodeId: terminal-wQ5uA9lH
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: title
+          type: string
+          required: true
+        - name: body
+          type: text
+          required: true
+        - name: source_id
+          type: uuid
+          required: true
+        - name: content_type
+          type: enum
+          values: [article, post, news, opinion, tutorial]
+          required: true
+      validation: "title must be non-empty string (max 500), body must be non-empty text, source_id must be valid UUID, content_type must be one of allowed values"
+      description: Validate content creation payload
+    label: Validate Input
+
+  - id: terminal-wQ5uA9lH
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+      description: Invalid input data
+    label: Invalid Input
+
+  - id: data_store-tN3sY6jF
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-vP4tZ8kG
+        sourceHandle: success
+      - targetNodeId: terminal-xR6vB1mJ
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Content
+      data:
+        title: "$.title"
+        body: "$.body"
+        source_id: "$.source_id"
+        content_type: "$.content_type"
+        status: draft
+      description: Create new content entity in database
+    label: Create Content
+
+  - id: terminal-xR6vB1mJ
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to create content"
+      description: Database error creating content
+    label: DB Error (Create Content)
+
+  - id: data_store-vP4tZ8kG
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: event-yS7wC2nK
+        sourceHandle: success
+      - targetNodeId: terminal-zT8xD3oL
+        sourceHandle: error
+    spec:
+      operation: create
+      model: ContentVersion
+      data:
+        content_id: "$.content.id"
+        version_number: 1
+        title: "$.title"
+        body: "$.body"
+      description: Create initial version snapshot for the new content
+    label: Create Initial Version
+
+  - id: terminal-zT8xD3oL
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to create content version"
+      description: Database error creating initial version
+    label: DB Error (Create Version)
+
+  - id: event-yS7wC2nK
+    type: event
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-aU9yE4pM
+    spec:
+      direction: emit
+      event_name: ContentCreated
+      payload:
+        content_id: "$.content.id"
+        title: "$.title"
+        content_type: "$.content_type"
+      async: true
+      description: Notify downstream that new content has been created
+    label: Emit ContentCreated
+
+  - id: terminal-aU9yE4pM
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      status: 201
+      body:
+        message: "Content created"
+        content_id: "$.content.id"
+        version: 1
+      description: Content and initial version created successfully
+    label: Success 201
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

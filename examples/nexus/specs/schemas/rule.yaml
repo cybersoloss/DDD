@@ -1,0 +1,38 @@
+name: Rule
+description: Configurable rules with conditions and actions for automation
+inherits: _base
+fields:
+  - name: name
+    type: string
+    required: true
+    constraints:
+      max_length: 200
+      unique: true
+  - name: description
+    type: text
+    required: false
+  - name: conditions
+    type: json
+    required: true
+  - name: actions
+    type: json
+    required: true
+  - name: is_active
+    type: boolean
+    required: true
+    default: true
+  - name: priority
+    type: number
+    required: true
+    default: 0
+indexes:
+  - fields: [name]
+    type: btree
+    unique: true
+  - fields: [is_active, priority]
+    type: btree
+seed:
+  - name: default-rules
+    strategy: script
+    source: "rules-import.json"
+    count_estimate: 25

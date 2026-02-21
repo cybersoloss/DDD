@@ -1,0 +1,123 @@
+flow:
+  id: schedule-publication
+  name: Schedule Publication
+  type: traditional
+  domain: publishing
+  description: Schedule content for future publication at a specified time
+
+trigger:
+  id: trigger-sch3dp4b
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-v4l1dsch
+  spec:
+    event: "HTTP POST /api/v1/publishing/schedule"
+    source: API Gateway
+    description: Schedule publication endpoint
+  label: Schedule Request
+
+nodes:
+  - id: input-v4l1dsch
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-cr34tsch
+        sourceHandle: valid
+      - targetNodeId: terminal-1nv4l1d
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: content_id
+          type: uuid
+          required: true
+        - name: publish_at
+          type: datetime
+          required: true
+        - name: channels
+          type: array
+          required: true
+      validation: "publish_at must be in the future; channels must be non-empty array"
+      description: Validate schedule publication payload
+    label: Validate Input
+
+  - id: data_store-cr34tsch
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: event-sch3d4ld
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Schedule
+      data:
+        content_id: "$.content_id"
+        publish_at: "$.publish_at"
+        channels: "$.channels"
+        status: scheduled
+      description: Create schedule record
+    label: Create Schedule
+
+  - id: event-sch3d4ld
+    type: event
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-s4cc3ss
+    spec:
+      direction: emit
+      event_name: PublicationScheduled
+      payload:
+        content_id: "$.content_id"
+        schedule_id: "$.schedule.id"
+        publish_at: "$.publish_at"
+        channels: "$.channels"
+      delay_ms: "$.delay_until_publish"
+      async: true
+      description: Emit delayed event to trigger publication at scheduled time
+    label: Emit PublicationScheduled
+
+  - id: terminal-s4cc3ss
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      status: 201
+      body:
+        message: "Publication scheduled"
+        schedule_id: "$.schedule.id"
+        publish_at: "$.publish_at"
+      description: Schedule created successfully
+    label: Scheduled
+
+  - id: terminal-1nv4l1d
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+      description: Invalid schedule input
+    label: Invalid Input
+
+  - id: terminal-db3rr0r
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to create schedule"
+      description: Database error creating schedule
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

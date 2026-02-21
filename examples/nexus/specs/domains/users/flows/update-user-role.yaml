@@ -1,0 +1,144 @@
+flow:
+  id: update-user-role
+  name: Update User Role
+  type: traditional
+  domain: users
+  description: Update a user's role with transition enforcement between user, editor, and admin
+
+trigger:
+  id: trigger-Cs8wNx5G
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-Jv3mRk7P
+  spec:
+    event: "HTTP PUT /api/v1/users/:id/role"
+    source: API Gateway
+    description: Update user role endpoint
+  label: PUT Role
+
+nodes:
+  - id: input-Jv3mRk7P
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-Tn6bFw2L
+        sourceHandle: valid
+      - targetNodeId: terminal-Xr9cDm4Q
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: role
+          type: string
+          required: true
+      validation: "role must be one of: user, editor, admin"
+      description: Validate the target role value
+    label: Validate Role
+
+  - id: data_store-Tn6bFw2L
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-Hk4jNx8R
+        sourceHandle: success
+      - targetNodeId: terminal-Bw7fLp3S
+        sourceHandle: error
+    spec:
+      operation: read
+      model: User
+      query:
+        id: "$.params.id"
+      description: Read the user record to verify existence and current role
+    label: Find User
+
+  - id: data_store-Hk4jNx8R
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: event-Gp5dVr9K
+        sourceHandle: success
+      - targetNodeId: terminal-Mv2nTk6H
+        sourceHandle: error
+    spec:
+      operation: update
+      model: User
+      query:
+        id: "$.params.id"
+      data:
+        role: "$.role"
+      description: "Update user role with transition enforcement: user<->editor<->admin, admin->editor. Invalid transitions are rejected."
+    label: Update Role
+
+  - id: event-Gp5dVr9K
+    type: event
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-Qx8kBw3F
+    spec:
+      direction: emit
+      event_name: UserRoleChanged
+      payload:
+        user_id: "$.user.id"
+        previous_role: "$.user.role"
+        new_role: "$.role"
+      async: true
+      description: Emit UserRoleChanged event for audit and downstream consumers
+    label: Emit UserRoleChanged
+
+  - id: terminal-Qx8kBw3F
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      description: Role updated successfully
+      status: 200
+      body:
+        message: "User role updated"
+        user:
+          id: "$.user.id"
+          role: "$.role"
+    label: Role Updated
+
+  - id: terminal-Xr9cDm4Q
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Invalid role value
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+    label: Invalid Input
+
+  - id: terminal-Bw7fLp3S
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: User not found
+      status: 404
+      body:
+        error: "NOT_FOUND"
+        message: "User not found"
+    label: Not Found
+
+  - id: terminal-Mv2nTk6H
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: "Invalid role transition (e.g., user directly to admin)"
+      status: 422
+      body:
+        error: "CONTENT_TRANSITION_INVALID"
+        message: "Cannot transition from $.user.role to $.role"
+    label: Transition Invalid
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

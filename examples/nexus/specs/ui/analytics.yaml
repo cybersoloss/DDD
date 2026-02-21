@@ -1,0 +1,83 @@
+page: analytics
+route: /analytics
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "Analytics"
+    actions:
+      - label: "Export Report"
+        icon: download
+        flow: analytics/generate-daily-report
+        variant: ghost
+
+  - id: engagement-chart
+    component: chart
+    position: main
+    label: "Content Engagement"
+    chart_type: line
+    data_source: analytics/query-analytics
+    fields:
+      series: "$.engagement_series"
+      labels: "$.dates"
+      values: "$.engagement_values"
+
+  - id: content-by-type
+    component: chart
+    position: main
+    label: "Content by Type"
+    chart_type: pie
+    data_source: analytics/query-analytics
+    fields:
+      labels: "$.content_types"
+      values: "$.type_counts"
+
+  - id: top-content
+    component: item-list
+    position: sidebar
+    label: "Top Performing"
+    data_source: analytics/query-analytics
+    query:
+      sort: engagement
+      order: desc
+      limit: 10
+    item_template:
+      title: "$.title"
+      subtitle: "$.engagement_score views"
+      badge: "$.content_type"
+    empty_state:
+      message: "No engagement data yet"
+      icon: bar-chart
+
+forms:
+  - id: date-filter
+    label: "Date Range"
+    position: top
+    fields:
+      - name: start_date
+        type: date
+        label: "Start Date"
+        required: true
+      - name: end_date
+        type: date
+        label: "End Date"
+        required: true
+      - name: granularity
+        type: select
+        label: "Granularity"
+        options: [hour, day, week, month]
+        default: day
+    submit:
+      flow: analytics/query-analytics
+      label: "Apply"
+      variant: primary
+
+state:
+  store: analytics-store
+  initial_fetch: [analytics/query-analytics]
+  realtime: analytics/stream-live-metrics
+
+loading: skeleton
+error: retry-banner
+refresh: auto-30s

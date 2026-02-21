@@ -1,0 +1,70 @@
+page: users-admin
+route: /admin/users
+layout: sidebar
+auth_required: true
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "User Management"
+    actions:
+      - label: "Invite User"
+        action: show-invite-form
+        variant: primary
+
+  - id: user-list
+    component: item-list
+    position: main
+    data_source: users/list-users
+    item_template:
+      title: $.name
+      subtitle: "$.email · $.role · Joined $.created_at"
+      badge: $.role
+    item_actions:
+      - label: "Edit Role"
+        action: navigate
+        target: /admin/users/$.id
+      - label: "Disable"
+        flow: users/disable-user
+        confirm: "Disable this user?"
+    pagination:
+      type: cursor
+      page_size: 20
+
+forms:
+  - id: invite-user
+    label: "Invite User"
+    position: modal
+    fields:
+      - name: email
+        type: text
+        label: "Email"
+        required: true
+        validation: "email"
+      - name: name
+        type: text
+        label: "Name"
+        required: true
+      - name: role
+        type: select
+        label: "Role"
+        options: [user, editor, admin]
+        default: user
+        required: true
+    submit:
+      flow: users/register-user
+      label: "Send Invitation"
+      loading_label: "Sending..."
+      success:
+        message: "Invitation sent"
+      error:
+        message: "Failed to send invitation"
+        retry: true
+
+state:
+  store: users-store
+  initial_fetch: [users/list-users]
+loading: skeleton
+error: retry-banner
+refresh: manual

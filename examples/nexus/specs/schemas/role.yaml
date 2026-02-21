@@ -1,0 +1,47 @@
+name: Role
+description: User roles with permission sets for access control
+inherits: _base
+fields:
+  - name: name
+    type: string
+    required: true
+    constraints:
+      max_length: 50
+      unique: true
+  - name: label
+    type: string
+    required: true
+    constraints:
+      max_length: 100
+  - name: permissions
+    type: json
+    required: true
+  - name: is_system
+    type: boolean
+    required: true
+    default: false
+indexes:
+  - fields: [name]
+    type: btree
+    unique: true
+relationships:
+  - name: users
+    type: has_many
+    target: User
+    foreign_key: role_id
+seed:
+  - name: system-roles
+    strategy: migration
+    data:
+      - name: user
+        label: "User"
+        permissions: ["content.read"]
+        is_system: true
+      - name: editor
+        label: "Editor"
+        permissions: ["content.read", "content.write", "content.review"]
+        is_system: true
+      - name: admin
+        label: "Admin"
+        permissions: ["content.read", "content.write", "content.review", "users.manage", "settings.manage"]
+        is_system: true

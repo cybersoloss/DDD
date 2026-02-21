@@ -1,0 +1,51 @@
+name: ApiKey
+description: API key credentials for external service providers tied to a user account
+inherits: _base
+fields:
+  - name: user_id
+    type: uuid
+    required: true
+  - name: name
+    type: string
+    required: true
+    constraints:
+      max_length: 100
+  - name: key_hash
+    type: string
+    required: true
+    encrypted: true
+    constraints:
+      max_length: 500
+  - name: key_prefix
+    type: string
+    required: true
+    constraints:
+      max_length: 10
+  - name: provider
+    type: enum
+    values: [openai, anthropic, custom]
+    required: true
+  - name: is_valid
+    type: boolean
+    required: true
+    default: true
+  - name: last_used_at
+    type: datetime
+    required: false
+  - name: expires_at
+    type: datetime
+    required: false
+indexes:
+  - fields: [user_id]
+    unique: false
+    type: btree
+    description: Lookup API keys by owning user
+  - fields: [key_prefix]
+    unique: true
+    type: btree
+    description: Unique prefix for key identification without exposing full key
+relationships:
+  - name: user
+    type: belongs_to
+    target: User
+    foreign_key: user_id

@@ -1,0 +1,80 @@
+flow:
+  id: publish-sse-updates
+  name: Publish SSE Updates
+  type: traditional
+  domain: publishing
+  description: Stream real-time publishing updates to clients via Server-Sent Events
+
+trigger:
+  id: trigger-ss34pdts
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-s4bscr1b
+  spec:
+    event: "sse /api/v1/updates/stream"
+    source: API Gateway
+    description: SSE endpoint for real-time publish updates
+  label: SSE Connection
+
+nodes:
+  - id: data_store-s4bscr1b
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: transform-ss3fmt
+        sourceHandle: success
+      - targetNodeId: terminal-st0r3err
+        sourceHandle: error
+    spec:
+      store_type: memory
+      operation: subscribe
+      store: "content-store"
+      selector: "latestPublished"
+      description: Subscribe to latest published content updates
+    label: Subscribe to Store
+
+  - id: transform-ss3fmt
+    type: transform
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: terminal-ss3strm
+    spec:
+      input_schema: "PublishRecord"
+      output_schema: "SSEEvent"
+      field_mappings:
+        event: "'content-published'"
+        data.content_id: "$.content_id"
+        data.title: "$.content.title"
+        data.channels: "$.channels"
+        data.published_at: "$.published_at"
+        id: "$.publish_record_id"
+      description: Transform publish record into SSE event format
+    label: Format SSE Event
+
+  - id: terminal-ss3strm
+    type: terminal
+    position: { x: 400, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      response_type: sse
+      description: Stream SSE events to connected clients
+    label: SSE Stream
+
+  - id: terminal-st0r3err
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to subscribe to content store"
+      description: Store subscription failed
+    label: Store Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

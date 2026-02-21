@@ -1,0 +1,69 @@
+flow:
+  id: get-notification-preferences
+  name: Get Notification Preferences
+  type: traditional
+  domain: notifications
+  description: Retrieve user notification preferences
+
+trigger:
+  id: trigger-uV8sY4jL
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-vW9tZ5kM
+  spec:
+    event: "HTTP GET /api/v1/notifications/preferences"
+    source: API Gateway
+    description: Get notification preferences for the authenticated user
+  label: Get Preferences Request
+
+nodes:
+  - id: data_store-vW9tZ5kM
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-wX1uA6lN
+        sourceHandle: success
+      - targetNodeId: terminal-xY2vB7mP
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Notification
+      query:
+        user_id: "$.auth.user_id"
+      group_by: type
+      select:
+        type: true
+        enabled: true
+      description: Read user notification preferences grouped by notification type
+    label: Read Preferences
+
+  - id: terminal-wX1uA6lN
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        preferences: "$.preferences"
+        user_id: "$.auth.user_id"
+      description: User notification preferences retrieved successfully
+    label: Success 200
+
+  - id: terminal-xY2vB7mP
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to read notification preferences"
+      description: Database error reading notification preferences
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

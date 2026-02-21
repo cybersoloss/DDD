@@ -1,0 +1,186 @@
+flow:
+  id: update-content
+  name: Update Content
+  type: traditional
+  domain: content
+  description: Update an existing content entity with version snapshot
+
+trigger:
+  id: trigger-hB7fL2wU
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-iC8gM3xV
+  spec:
+    event: "HTTP PUT /api/v1/content/:id"
+    source: API Gateway
+    description: Update content by ID endpoint
+  label: Update Content Request
+
+nodes:
+  - id: input-iC8gM3xV
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-jD9hN4yW
+        sourceHandle: valid
+      - targetNodeId: terminal-nH3lR8cA
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: title
+          type: string
+          required: false
+        - name: body
+          type: text
+          required: false
+        - name: content_type
+          type: enum
+          values: [article, post, news, opinion, tutorial]
+          required: false
+      validation: "At least one field must be provided. title max 500 chars, content_type must be one of allowed values if present"
+      description: Validate content update payload
+    label: Validate Input
+
+  - id: terminal-nH3lR8cA
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+      description: Invalid input data
+    label: Invalid Input
+
+  - id: data_store-jD9hN4yW
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-kE1iP5zX
+        sourceHandle: success
+      - targetNodeId: terminal-oI4mS9dB
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query: { id: "$.params.id" }
+      include:
+        - model: ContentVersion
+          via: has_many
+          as: versions
+      description: Read existing content to verify it exists and get current version count
+    label: Read Existing Content
+
+  - id: terminal-oI4mS9dB
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 404
+      body:
+        error: "NOT_FOUND"
+        message: "Content not found"
+      description: Content with given ID does not exist
+    label: Not Found
+
+  - id: data_store-kE1iP5zX
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: data_store-lF2jQ6aY
+        sourceHandle: success
+      - targetNodeId: terminal-pJ5nT1eC
+        sourceHandle: error
+    spec:
+      operation: create
+      model: ContentVersion
+      data:
+        content_id: "$.params.id"
+        version_number: "$.content.versions.length + 1"
+        title: "$.content.title"
+        body: "$.content.body"
+      description: Create version snapshot of current state before applying update
+    label: Create Version Snapshot
+
+  - id: terminal-pJ5nT1eC
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to create version snapshot"
+      description: Database error creating version snapshot
+    label: DB Error (Version)
+
+  - id: data_store-lF2jQ6aY
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: event-mG3kR7bZ
+        sourceHandle: success
+      - targetNodeId: terminal-qK6oU2fD
+        sourceHandle: error
+    spec:
+      operation: upsert
+      model: Content
+      upsert_key: ["id"]
+      data:
+        title: "$.title"
+        body: "$.body"
+        content_type: "$.content_type"
+      description: Update content fields using upsert by ID
+    label: Upsert Content
+
+  - id: terminal-qK6oU2fD
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to update content"
+      description: Database error updating content
+    label: DB Error (Upsert)
+
+  - id: event-mG3kR7bZ
+    type: event
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: terminal-rL7pV3gE
+    spec:
+      direction: emit
+      event_name: ContentUpdated
+      payload:
+        content_id: "$.params.id"
+        updated_fields: "$.updated_fields"
+        version_number: "$.content.versions.length + 1"
+      async: true
+      description: Notify downstream that content has been updated
+    label: Emit ContentUpdated
+
+  - id: terminal-rL7pV3gE
+    type: terminal
+    position: { x: 400, y: 830 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Content updated"
+        content_id: "$.params.id"
+        version_number: "$.content.versions.length + 1"
+      description: Content updated and version snapshot created
+    label: Success 200
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

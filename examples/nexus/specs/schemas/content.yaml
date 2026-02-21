@@ -1,0 +1,134 @@
+name: Content
+description: Core content model representing articles, posts, and other content items in the pipeline
+inherits: _base
+fields:
+  - name: title
+    type: string
+    required: true
+    constraints:
+      max_length: 500
+  - name: body
+    type: text
+    required: true
+  - name: summary
+    type: text
+    required: false
+  - name: source_id
+    type: uuid
+    required: true
+  - name: author_id
+    type: uuid
+    required: false
+  - name: content_type
+    type: enum
+    values: [article, post, news, opinion, tutorial]
+    required: true
+  - name: status
+    type: enum
+    values: [draft, pending_review, approved, published, rejected, archived]
+    required: true
+    default: draft
+  - name: quality_score
+    type: decimal
+    required: false
+  - name: classification
+    type: json
+    required: false
+  - name: tags
+    type: json
+    required: false
+  - name: external_url
+    type: string
+    required: false
+    format: url
+    constraints:
+      max_length: 2000
+  - name: published_at
+    type: datetime
+    required: false
+  - name: metadata
+    type: json
+    required: false
+indexes:
+  - fields: [source_id]
+    unique: false
+    type: btree
+    description: Lookup content by source
+  - fields: [status, created_at]
+    unique: false
+    type: btree
+    description: Filter content by status sorted by creation date
+  - fields: [author_id]
+    unique: false
+    type: btree
+    description: Lookup content by author
+  - fields: [content_type, status]
+    unique: false
+    type: btree
+    description: Filter content by type and status combination
+  - fields: [tags]
+    unique: false
+    type: gin
+    description: Full JSON search on tags array
+  - fields: [classification]
+    unique: false
+    type: gin
+    description: Full JSON search on classification data
+  - fields: [external_url]
+    unique: false
+    type: hash
+    description: Fast equality lookup for external URLs
+  - fields: [title]
+    unique: false
+    type: btree
+    description: Sort and search by title
+relationships:
+  - name: source
+    type: belongs_to
+    target: ContentSource
+    foreign_key: source_id
+  - name: author
+    type: belongs_to
+    target: User
+    foreign_key: author_id
+  - name: versions
+    type: has_many
+    target: ContentVersion
+    foreign_key: content_id
+  - name: publish_records
+    type: has_many
+    target: PublishRecord
+    foreign_key: content_id
+  - name: analytics
+    type: has_one
+    target: AnalyticsEvent
+    foreign_key: content_id
+transitions:
+  field: status
+  states:
+    - from: draft
+      to: [pending_review]
+    - from: pending_review
+      to: [approved, rejected]
+    - from: approved
+      to: [published, archived]
+    - from: rejected
+      to: [draft, archived]
+    - from: published
+      to: [archived]
+    - from: archived
+      to: []
+  on_invalid: reject
+seed:
+  - name: sample-content
+    strategy: fixture
+    data:
+      - title: "Getting Started with AI"
+        body: "Introduction to AI concepts..."
+        content_type: article
+        status: draft
+        tags: ["ai", "intro"]
+      - title: "Breaking News Today"
+        body: "Latest developments..."
+        content_type: news
+        status: published

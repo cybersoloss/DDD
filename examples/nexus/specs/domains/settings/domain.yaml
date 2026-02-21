@@ -1,0 +1,45 @@
+name: Settings
+description: System configuration and preferences
+owns_schemas: ["Rule", "Channel"]
+stores:
+  - name: settings-store
+    shape:
+      globalSettings: "Record<string, unknown>"
+      rules: "Rule[]"
+    access_pattern: read_write
+flows:
+  - id: get-settings
+    name: Get Settings
+    description: Retrieve current system settings
+    type: traditional
+  - id: update-settings
+    name: Update Settings
+    description: Update system settings
+    type: traditional
+  - id: manage-rules
+    name: Manage Rules
+    description: Create, update, and delete rules
+    type: traditional
+  - id: reset-settings
+    name: Reset Settings
+    description: Reset settings to defaults
+    type: traditional
+    keyboard_shortcut: "Cmd+Shift+R"
+publishes_events:
+  - event: SettingsUpdated
+    from_flow: update-settings
+    description: System settings have been updated
+  - event: RulesUpdated
+    from_flow: manage-rules
+    description: Rules have been updated
+  - event: SettingsReset
+    from_flow: reset-settings
+    description: Settings have been reset to defaults
+consumes_events: []
+layout:
+  flows:
+    get-settings: { x: 100, y: 100 }
+    update-settings: { x: 100, y: 300 }
+    manage-rules: { x: 100, y: 500 }
+    reset-settings: { x: 100, y: 700 }
+  portals: {}

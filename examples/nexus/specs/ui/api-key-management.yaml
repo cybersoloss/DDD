@@ -1,0 +1,67 @@
+page: api-key-management
+route: /settings/api-keys
+layout: sidebar
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "API Keys"
+    actions:
+      - label: "Generate Key"
+        action: show-generate-form
+        variant: primary
+
+  - id: key-list
+    component: item-list
+    position: main
+    data_source: users/list-api-keys
+    item_template:
+      title: $.name
+      subtitle: "$.provider · $.key_prefix***"
+      badge: $.is_valid
+    item_actions:
+      - label: "Revoke"
+        flow: users/revoke-api-key
+        confirm: "Revoke this API key? This cannot be undone."
+        variant: destructive
+    empty_state:
+      message: "No API keys"
+      description: "Generate an API key to access the API programmatically"
+      icon: key
+
+forms:
+  - id: generate-key
+    label: "Generate API Key"
+    position: modal
+    fields:
+      - name: name
+        type: text
+        label: "Name"
+        required: true
+        placeholder: "My API Key"
+      - name: provider
+        type: select
+        label: "Provider"
+        options: [openai, anthropic, custom]
+        required: true
+      - name: expires_at
+        type: date
+        label: "Expires At"
+        allow_empty: true
+    submit:
+      flow: users/manage-api-keys
+      label: "Generate"
+      loading_label: "Generating..."
+      success:
+        message: "API key generated. Copy it now — it won't be shown again."
+      error:
+        message: "Failed to generate API key"
+        retry: true
+
+state:
+  store: api-keys-store
+  initial_fetch: [users/list-api-keys]
+loading: skeleton
+error: retry-banner
+refresh: manual

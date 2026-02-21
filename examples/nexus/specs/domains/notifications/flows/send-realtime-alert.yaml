@@ -1,0 +1,131 @@
+flow:
+  id: send-realtime-alert
+  name: Send Realtime Alert
+  type: traditional
+  domain: notifications
+  description: Send immediate real-time notification when editorial events occur
+
+trigger:
+  id: trigger-zA5xD2oN
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: transform-aB6yE3pQ
+  spec:
+    event: "event_group:editorial_alerts"
+    source: Message Bus
+    description: Triggered by any event in the editorial_alerts group (ContentApproved, ContentRejected, ReviewerAssigned, BulkOperationCompleted)
+  label: Editorial Alert Event
+
+nodes:
+  - id: transform-aB6yE3pQ
+    type: transform
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: service_call-bC7zF4qR
+        sourceHandle: success
+      - targetNodeId: terminal-eF1cI7tU
+        sourceHandle: error
+    spec:
+      input_schema: Event
+      output_schema: Notification
+      field_mappings:
+        - from: "$.event_name"
+          to: "$.title"
+          transform: "map({ ContentApproved: 'Content Approved', ContentRejected: 'Content Rejected', ReviewerAssigned: 'Reviewer Assigned', BulkOperationCompleted: 'Bulk Operation Completed' })"
+        - from: "$.payload"
+          to: "$.body"
+          transform: "json_stringify"
+        - from: "$.event_name"
+          to: "$.type"
+          transform: "constant('email')"
+      description: Transform the incoming event into a notification format
+    label: Transform to Notification
+
+  - id: terminal-eF1cI7tU
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to transform event into notification format
+    label: Transform Error
+
+  - id: service_call-bC7zF4qR
+    type: service_call
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-cD8aG5rS
+        sourceHandle: success
+      - targetNodeId: terminal-fG2dJ8uV
+        sourceHandle: error
+    spec:
+      method: POST
+      url: "https://api.sendgrid.com/v3/mail/send"
+      integration: sendgrid_api
+      headers:
+        Authorization: "Bearer $.env.SENDGRID_API_KEY"
+        Content-Type: "application/json"
+      body:
+        to: "$.recipient_email"
+        subject: "$.notification.title"
+        content: "$.notification.body"
+      timeout_ms: 10000
+      retry:
+        max_attempts: 3
+        backoff_ms: 1000
+        strategy: exponential
+      description: Send email notification via SendGrid API
+    label: Send via SendGrid
+
+  - id: terminal-fG2dJ8uV
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to send email via SendGrid
+    label: SendGrid Error
+
+  - id: data_store-cD8aG5rS
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-dE9bH6sT
+        sourceHandle: success
+      - targetNodeId: terminal-gH3eK9vW
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Notification
+      data:
+        user_id: "$.recipient_user_id"
+        type: email
+        title: "$.notification.title"
+        body: "$.notification.body"
+        status: sent
+        sent_at: "$.now"
+      description: Create notification record with sent status
+    label: Create Notification Record
+
+  - id: terminal-gH3eK9vW
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to create notification record in database
+    label: DB Error (Record)
+
+  - id: terminal-dE9bH6sT
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      description: Real-time alert sent and recorded successfully
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

@@ -1,0 +1,85 @@
+flow:
+  id: general-scorer
+  name: General Scorer
+  type: traditional
+  domain: processing
+  description: General-purpose quality scorer for content that doesn't match a specialist category
+  template: true
+  parameters:
+    content_id:
+      type: uuid
+    content_body:
+      type: string
+  contract:
+    inputs:
+      - name: content_id
+        type: uuid
+        required: true
+      - name: content_body
+        type: string
+        required: true
+    outputs:
+      - name: score
+        type: number
+      - name: reasoning
+        type: string
+
+trigger:
+  id: trigger-g3nscr1
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: llm_call-g3nscr2
+  spec:
+    event: "HTTP POST /api/v1/internal/score-quality"
+    description: Internal endpoint for general quality scoring
+  label: Score Quality Request
+
+nodes:
+  - id: llm_call-g3nscr2
+    type: llm_call
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-g3nscr3
+        sourceHandle: success
+      - targetNodeId: terminal-g3nscr4
+        sourceHandle: error
+    spec:
+      model: "claude-haiku-4-5-20251001"
+      system_prompt: "You are a content quality evaluator. Score content on overall quality (0-100) considering clarity, depth, originality, and engagement. Return JSON with score and reasoning."
+      prompt: "Evaluate this content for quality:\n\n{content_body}"
+      temperature: 0.3
+      structured_output:
+        score: number
+        reasoning: string
+      context_sources:
+        - source: "$.content_body"
+          transform: "truncate(3000)"
+    label: LLM Quality Score
+
+  - id: terminal-g3nscr3
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        score: "$.score"
+        reasoning: "$.reasoning"
+    label: Score Complete
+
+  - id: terminal-g3nscr4
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "General scoring failed"
+    label: Score Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

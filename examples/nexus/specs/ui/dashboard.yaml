@@ -1,0 +1,109 @@
+page: dashboard
+route: /
+
+sections:
+  - id: content-stats
+    component: stat-card
+    position: top-left
+    label: "Total Content"
+    data_source: analytics/query-analytics
+    fields:
+      value: "$.total_content"
+      subtitle: "items ingested"
+      trend: "$.weekly_change"
+
+  - id: pending-reviews
+    component: stat-card
+    position: top-center
+    label: "Pending Reviews"
+    data_source: editorial/get-review-stats
+    fields:
+      value: "$.pending_count"
+      subtitle: "awaiting review"
+      urgency:
+        field: "$.pending_count"
+        rules:
+          - { threshold: 20, level: critical, color: red }
+          - { threshold: 10, level: warning, color: amber }
+          - { threshold: 0, level: normal, color: green }
+    actions:
+      click: { navigate: /editorial }
+
+  - id: published-today
+    component: stat-card
+    position: top-right
+    label: "Published Today"
+    data_source: analytics/query-analytics
+    fields:
+      value: "$.published_today"
+      subtitle: "articles published"
+
+  - id: recent-content
+    component: item-list
+    position: main
+    label: "Recent Content"
+    data_source: content/get-content
+    query:
+      sort: created_at
+      order: desc
+      limit: 10
+    item_template:
+      title: "$.title"
+      subtitle: "$.source_type · $.created_at"
+      badge: "$.status"
+    item_actions:
+      - label: Review
+        icon: eye
+        navigate: "/content/$.id"
+      - label: Approve
+        icon: check
+        flow: editorial/bulk-approve
+        confirm: true
+        confirm_message: "Approve this content item?"
+    empty_state:
+      message: "No content yet"
+      icon: inbox
+      action:
+        label: "Add Source"
+        navigate: /sources
+
+  - id: quick-actions
+    component: button-group
+    position: main
+    label: "Quick Actions"
+    buttons:
+      - label: "New Source"
+        icon: plus
+        variant: primary
+        navigate: /sources
+      - label: "Manual Entry"
+        icon: edit
+        variant: secondary
+        flow: ingestion/manual-content-entry
+      - label: "Import CSV"
+        icon: upload
+        variant: secondary
+        flow: ingestion/import-csv-content
+
+  - id: system-health
+    component: status-bar
+    position: footer
+    label: "System Health"
+    data_source: analytics/stream-live-metrics
+    fields:
+      items: "$.service_statuses"
+    item_template:
+      label: "$.service_name"
+      status: "$.status"
+      last_sync: "$.last_check_at"
+
+forms: []
+
+state:
+  store: dashboard-store
+  initial_fetch: [analytics/query-analytics, editorial/get-review-stats]
+  realtime: analytics/stream-live-metrics
+
+loading: skeleton
+error: retry-banner
+refresh: auto-30s

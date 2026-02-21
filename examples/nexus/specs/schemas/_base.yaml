@@ -1,0 +1,19 @@
+name: Base
+description: Common fields for all models
+fields:
+  - name: id
+    type: uuid
+    required: true
+    description: Primary key (auto-generated)
+  - name: created_at
+    type: datetime
+    required: true
+    description: Creation timestamp (auto-set)
+  - name: updated_at
+    type: datetime
+    required: true
+    description: Last update timestamp (auto-set)
+  - name: deleted_at
+    type: datetime
+    required: false
+    description: Soft delete timestamp (null = active)

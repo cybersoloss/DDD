@@ -1,0 +1,183 @@
+flow:
+  id: register-user
+  name: Register User
+  type: traditional
+  domain: users
+  description: Register a new user account with email, password, and name
+
+trigger:
+  id: trigger-Vm3kRx8P
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-Bn7wTs4L
+  spec:
+    event: "HTTP POST /api/v1/auth/register"
+    source: API Gateway
+    description: User registration endpoint
+  label: POST Register
+
+nodes:
+  - id: input-Bn7wTs4L
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: decision-Hf5cNm2Q
+        sourceHandle: valid
+      - targetNodeId: terminal-Yk9pDr6J
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: email
+          type: string
+          required: true
+          format: email
+        - name: password
+          type: string
+          required: true
+        - name: name
+          type: string
+          required: true
+      validation: "Email format valid, password min 8 chars"
+      description: Validate registration input fields
+    label: Validate Input
+
+  - id: decision-Hf5cNm2Q
+    type: decision
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: crypto-Jw8bKv3S
+        sourceHandle: "true"
+      - targetNodeId: terminal-Xr4gLn7F
+        sourceHandle: "false"
+    spec:
+      condition: "email.is_available?"
+      trueLabel: "Available"
+      falseLabel: "Already taken"
+      description: Check if the email address is already registered in the database
+    label: Email Available?
+
+  - id: terminal-Xr4gLn7F
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Email already registered
+      status: 409
+      body:
+        error: "DUPLICATE_ENTRY"
+        message: "Email already registered"
+    label: Duplicate Email
+
+  - id: crypto-Jw8bKv3S
+    type: crypto
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: data_store-Qp6dFx9M
+        sourceHandle: success
+      - targetNodeId: terminal-Sw2nHt5C
+        sourceHandle: error
+    spec:
+      operation: hash
+      algorithm: bcrypt
+      key_source: { env: "BCRYPT_ROUNDS" }
+      input_fields: ["$.password"]
+      output_field: "hashed_password"
+      description: Hash the user password with bcrypt
+    label: Hash Password
+
+  - id: data_store-Qp6dFx9M
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: event-Dn3rWk7G
+        sourceHandle: success
+      - targetNodeId: terminal-Lv8fAm4B
+        sourceHandle: error
+    spec:
+      operation: create
+      model: User
+      data:
+        email: "$.email"
+        password_hash: "$.hashed_password"
+        name: "$.name"
+        role: "user"
+        is_verified: false
+      description: Create new user record in the database
+    label: Create User
+
+  - id: event-Dn3rWk7G
+    type: event
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: terminal-Gt5jPx2N
+    spec:
+      direction: emit
+      event_name: UserRegistered
+      payload:
+        user_id: "$.user.id"
+        email: "$.user.email"
+        name: "$.user.name"
+      async: true
+      description: Emit UserRegistered event for downstream consumers
+    label: Emit UserRegistered
+
+  - id: terminal-Gt5jPx2N
+    type: terminal
+    position: { x: 400, y: 830 }
+    connections: []
+    spec:
+      outcome: success
+      description: User registered successfully
+      status: 201
+      body:
+        message: "User registered successfully"
+        user:
+          id: "$.user.id"
+          email: "$.user.email"
+          name: "$.user.name"
+    label: Success
+
+  - id: terminal-Yk9pDr6J
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Invalid registration input
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+    label: Invalid Input
+
+  - id: terminal-Sw2nHt5C
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Password hashing failed
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "An unexpected error occurred"
+    label: Crypto Error
+
+  - id: terminal-Lv8fAm4B
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to create user in database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "An unexpected error occurred"
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

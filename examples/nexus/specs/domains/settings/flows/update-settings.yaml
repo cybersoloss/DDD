@@ -1,0 +1,150 @@
+flow:
+  id: update-settings
+  name: Update Settings
+  type: traditional
+  domain: settings
+  description: Update system settings with cache invalidation and memory store reset
+
+trigger:
+  id: trigger-fG1dJ6uX
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-gH2eK7vY
+  spec:
+    event: "HTTP PUT /api/v1/settings"
+    source: API Gateway
+    description: Update system settings endpoint
+  label: Update Settings Request
+
+nodes:
+  - id: input-gH2eK7vY
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-hI3fL8wZ
+        sourceHandle: valid
+      - targetNodeId: terminal-mN8kQ3bE
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: settings
+          type: object
+          required: true
+      validation: "settings must be a non-empty object with valid configuration keys"
+      description: Validate settings update payload
+    label: Validate Input
+
+  - id: terminal-mN8kQ3bE
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+      description: Invalid settings data
+    label: Invalid Input
+
+  - id: data_store-hI3fL8wZ
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: process-iJ4gM9xA
+        sourceHandle: success
+      - targetNodeId: terminal-nO9lR4cF
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Setting
+      query: {}
+      data: "$.settings"
+      description: Update settings in database
+    label: Update Settings in DB
+
+  - id: terminal-nO9lR4cF
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to update settings in database"
+      description: Database error updating settings
+    label: DB Error (Update)
+
+  - id: process-iJ4gM9xA
+    type: process
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: data_store-jK5hN1yB
+    spec:
+      action: Invalidate settings cache
+      service: CacheService.delete
+      inputs: ["settings:global"]
+      description: Delete cached settings key to force fresh read on next request
+    label: Invalidate Cache
+
+  - id: data_store-jK5hN1yB
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: event-kL6iO2zC
+        sourceHandle: success
+      - targetNodeId: terminal-oP1mS5dG
+        sourceHandle: error
+    spec:
+      store_type: memory
+      operation: reset
+      store: settings-store
+      description: Reset in-memory settings store to force reload from database
+    label: Reset Memory Store
+
+  - id: terminal-oP1mS5dG
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to reset memory store"
+      description: Error resetting in-memory settings store
+    label: Memory Reset Error
+
+  - id: event-kL6iO2zC
+    type: event
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: terminal-lM7jP3aD
+    spec:
+      direction: emit
+      event_name: SettingsUpdated
+      payload:
+        updated_keys: "$.updated_keys"
+        updated_by: "$.auth.user_id"
+      async: true
+      description: Notify downstream that system settings have been updated
+    label: Emit SettingsUpdated
+
+  - id: terminal-lM7jP3aD
+    type: terminal
+    position: { x: 400, y: 830 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Settings updated"
+        updated_keys: "$.updated_keys"
+      description: Settings updated, cache invalidated, and memory store reset
+    label: Success 200
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"
