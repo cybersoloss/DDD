@@ -1,0 +1,409 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCHEMA TEMPLATE v1.0
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Defines the data pillar — models, fields, relationships, state machines,
+# indexes, and seed data. Each schema file represents one database table/model.
+#
+# USAGE:
+#   1. Copy specs/schemas/_base.yaml section to your project first
+#   2. Create one specs/schemas/{model}.yaml per data model using the model section
+#   3. Replace all {placeholders} with your values
+#   4. Remove or comment out sections that don't apply
+#
+# FILES:
+#   specs/schemas/_base.yaml      — Base fields inherited by all models
+#   specs/schemas/{model}.yaml    — One per data model
+#   specs/shared/types.yaml       — Shared enums referenced by schemas (see errors-template)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _BASE.YAML — Base Model Fields
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this section to: specs/schemas/_base.yaml
+# These fields are inherited by all models that set inherits: _base
+
+# name: Base
+# description: Common fields for all models
+# fields:
+#   - name: id
+#     type: uuid
+#     required: true
+#     description: Primary key (auto-generated)
+#   - name: created_at
+#     type: datetime
+#     required: true
+#     description: Creation timestamp (auto-set)
+#   - name: updated_at
+#     type: datetime
+#     required: true
+#     description: Last update timestamp (auto-set)
+#   - name: deleted_at
+#     type: datetime
+#     required: false
+#     description: Soft delete timestamp (null = active)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODEL SCHEMA — {model}.yaml
+# ═══════════════════════════════════════════════════════════════════════════════
+# Copy this section to: specs/schemas/{model}.yaml for each data model.
+# Below is a complete example with all available features.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Order
+description: Customer order with items, payment tracking, and fulfillment lifecycle
+inherits: _base                        # Inherit base fields (id, created_at, updated_at, deleted_at)
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ FIELDS                                                                     │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Each field becomes a column in the database table.
+#
+# Supported types:
+#   string    — Text (VARCHAR). Use constraints.max_length for limit
+#   number    — Integer (INT/BIGINT)
+#   decimal   — Decimal number (DECIMAL/NUMERIC). Use for money, measurements
+#   boolean   — True/false (BOOLEAN)
+#   uuid      — UUID v4 (UUID). Use for foreign keys and IDs
+#   datetime  — Timestamp with timezone (TIMESTAMPTZ)
+#   enum      — Enumerated type. Define values inline or reference shared/types.yaml
+#   json      — JSON blob (JSONB). Use for unstructured/dynamic data
+#   text      — Long text (TEXT). Use for descriptions, content, notes
+
+fields:
+  # ── Simple fields ──
+  - name: order_number
+    type: string
+    required: true
+    description: Human-readable order reference (e.g., ORD-20250001)
+    constraints:
+      unique: true
+      max_length: 20
+
+  - name: user_id
+    type: uuid
+    required: true
+    description: Customer who placed the order
+
+  # ── Enum with inline values ──
+  - name: status
+    type: enum
+    required: true
+    values: [pending, confirmed, processing, shipped, delivered, cancelled, refunded]
+    default: pending
+    description: Order lifecycle state
+
+  # ── Enum referencing shared/types.yaml ──
+  - name: currency
+    type: enum
+    required: true
+    ref: currency                      # References enums.currency in shared/types.yaml
+    default: usd
+
+  # ── Numeric fields ──
+  - name: subtotal
+    type: decimal
+    required: true
+    description: Sum of item prices before tax and shipping
+
+  - name: tax_amount
+    type: decimal
+    required: true
+    default: 0
+
+  - name: shipping_cost
+    type: decimal
+    required: true
+    default: 0
+
+  - name: total
+    type: decimal
+    required: true
+    description: Final amount charged (subtotal + tax + shipping - discount)
+
+  - name: item_count
+    type: number
+    required: true
+    description: Number of line items
+
+  # ── Boolean fields ──
+  - name: is_gift
+    type: boolean
+    required: true
+    default: false
+
+  # ── Optional fields ──
+  - name: notes
+    type: text
+    required: false
+    description: Customer notes or special instructions
+
+  - name: cancelled_at
+    type: datetime
+    required: false
+    description: When the order was cancelled (null if not cancelled)
+
+  - name: shipped_at
+    type: datetime
+    required: false
+
+  - name: delivered_at
+    type: datetime
+    required: false
+
+  # ── JSON field ──
+  - name: shipping_address
+    type: json
+    required: true
+    description: "Structured address: { street, city, state, zip, country }"
+
+  - name: metadata
+    type: json
+    required: false
+    description: Arbitrary key-value metadata (coupon codes, UTM params, etc.)
+
+  # ── Encrypted field ──
+  - name: payment_token
+    type: string
+    required: false
+    encrypted: true                    # Encrypted at rest — /ddd-implement generates encryption logic
+    description: Payment gateway token (encrypted)
+    constraints:
+      max_length: 255
+
+  # ── Format hint ──
+  - name: contact_email
+    type: string
+    required: true
+    format: email                      # Format hint for validation
+    constraints:
+      max_length: 255
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ RELATIONSHIPS                                                              │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Defines how this model relates to other models.
+# Types: has_many, has_one, belongs_to, many_to_many
+
+relationships:
+  - name: user
+    type: belongs_to
+    target: User
+    foreign_key: user_id               # Column on this table
+
+  - name: items
+    type: has_many
+    target: OrderItem
+    foreign_key: order_id              # Column on the target table
+
+  - name: payment
+    type: has_one
+    target: Payment
+    foreign_key: order_id
+
+  # - name: tags
+  #   type: many_to_many
+  #   target: Tag
+  #   join_table: order_tags            # Intermediate join table
+  #   foreign_key: order_id
+  #   target_key: tag_id
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ INDEXES                                                                    │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Database indexes for query performance. These are design decisions —
+# "this data is always queried by X" — not implementation details.
+#
+# Index types:
+#   btree  — Default. Best for equality, range, and sort queries
+#   hash   — Equality-only lookups (rarely used, btree is usually better)
+#   gin    — Generalized Inverted Index. Use for JSONB, arrays, full-text search
+#   gist   — Generalized Search Tree. Use for geometric, range, and proximity queries
+
+indexes:
+  # ── Unique constraint ──
+  - fields: [order_number]
+    unique: true
+    description: "Order numbers must be globally unique"
+
+  # ── Foreign key lookup ──
+  - fields: [user_id]
+    description: "Find all orders for a user"
+
+  # ── Composite index (for filtered + sorted queries) ──
+  - fields: [user_id, status]
+    description: "User's orders filtered by status"
+
+  - fields: [status, created_at]
+    description: "Admin dashboard: orders by status sorted by date"
+
+  # ── JSONB index ──
+  - fields: [shipping_address]
+    type: gin
+    description: "Search within shipping address JSON fields"
+
+  # ── Partial/conditional index (expressed via description) ──
+  - fields: [shipped_at]
+    description: "Track shipment dates — only indexed for non-null values"
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ TRANSITIONS (State Machine)                                                │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Valid state transitions for lifecycle fields. /ddd-implement generates
+# validation logic that enforces these transitions.
+#
+# on_invalid options:
+#   reject — Throw an error (for strict lifecycle enforcement)
+#   warn   — Allow but log a warning (for soft transitions)
+#   log    — Allow silently, just log (for monitoring)
+
+transitions:
+  field: status
+  states:
+    - from: pending
+      to: [confirmed, cancelled]
+    - from: confirmed
+      to: [processing, cancelled]
+    - from: processing
+      to: [shipped, cancelled]
+    - from: shipped
+      to: [delivered]
+    - from: delivered
+      to: [refunded]
+    - from: cancelled
+      to: []                           # Terminal state — no further transitions
+    - from: refunded
+      to: []                           # Terminal state
+  on_invalid: reject
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ SEED DATA                                                                  │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Initial data that must exist for the system to function. Enums with fixed
+# values, default records, reference data.
+#
+# Strategies:
+#   migration — Runs once as part of DB setup. For immutable reference data
+#               (categories, roles, default config). /ddd-scaffold generates
+#               seed migration files.
+#   fixture   — Re-runnable test/dev data. /ddd-scaffold generates test
+#               fixture/factory files.
+#   script    — Custom import logic. /ddd-scaffold generates a documented
+#               placeholder script with the source reference.
+
+seed:
+  # ── Migration seed: immutable reference data ──
+  - name: order-statuses
+    description: "Order status reference records for status_id lookups"
+    strategy: migration
+    data:
+      - { id: pending, label: Pending, sort_order: 1, color: "#f59e0b" }
+      - { id: confirmed, label: Confirmed, sort_order: 2, color: "#3b82f6" }
+      - { id: processing, label: Processing, sort_order: 3, color: "#8b5cf6" }
+      - { id: shipped, label: Shipped, sort_order: 4, color: "#06b6d4" }
+      - { id: delivered, label: Delivered, sort_order: 5, color: "#22c55e" }
+      - { id: cancelled, label: Cancelled, sort_order: 6, color: "#ef4444" }
+      - { id: refunded, label: Refunded, sort_order: 7, color: "#6b7280" }
+
+  # ── Fixture seed: test/dev data ──
+  - name: sample-orders
+    description: "Sample orders for development and testing"
+    strategy: fixture
+    data:
+      - order_number: "ORD-20250001"
+        user_id: "{{test_user_id}}"
+        status: delivered
+        subtotal: 99.99
+        tax_amount: 8.00
+        shipping_cost: 5.99
+        total: 113.98
+        item_count: 2
+        contact_email: "test@example.com"
+        shipping_address: { street: "123 Main St", city: "Springfield", state: "IL", zip: "62704", country: "US" }
+      - order_number: "ORD-20250002"
+        user_id: "{{test_user_id}}"
+        status: pending
+        subtotal: 49.99
+        tax_amount: 4.00
+        shipping_cost: 0
+        total: 53.99
+        item_count: 1
+        contact_email: "test@example.com"
+        shipping_address: { street: "456 Oak Ave", city: "Portland", state: "OR", zip: "97201", country: "US" }
+
+  # ── Script seed: external data import ──
+  # - name: historical-orders
+  #   description: "Import historical orders from legacy system CSV export"
+  #   strategy: script
+  #   source: "legacy-system-export.csv"
+  #   count_estimate: 15000
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FIELD REFERENCE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Schema Top-Level:
+#   name              Model name (PascalCase)
+#   description       What this model represents
+#   inherits          Base schema to inherit fields from (usually "_base")
+#   fields            Field[] — column definitions
+#   relationships     Relationship[] — model associations
+#   indexes           Index[] — database indexes
+#   transitions       TransitionConfig? — state machine rules
+#   seed              Seed[] — initial/reference data
+#
+# Field:
+#   name              Column name (snake_case)
+#   type              string | number | decimal | boolean | uuid | datetime |
+#                     enum | json | text
+#   required          Whether the field is required (default: false)
+#   description       What this field stores
+#   default           Default value
+#   format            Format hint (e.g., "email", "url", "phone")
+#   values            Allowed values (for enum type, inline definition)
+#   ref               Reference to shared/types.yaml enum (alternative to values)
+#   encrypted         Encrypted at rest (default: false)
+#   constraints       { unique?, max_length?, min?, max? }
+#
+# Relationship:
+#   name              Association name (used in code)
+#   type              has_many | has_one | belongs_to | many_to_many
+#   target            Target model name (PascalCase)
+#   foreign_key       Foreign key column name
+#   join_table        Join table name (for many_to_many)
+#   target_key        Target key in join table (for many_to_many)
+#
+# Index:
+#   fields            Column names (composite if multiple)
+#   unique            Unique constraint (default: false)
+#   type              btree | hash | gin | gist (default: btree)
+#   description       Why this index exists
+#
+# Transition:
+#   field             The enum field this state machine applies to
+#   states            Array of { from: string, to: string[] }
+#   on_invalid        reject | warn | log
+#
+# Seed:
+#   name              Seed set name
+#   description       What this data is and why it's needed
+#   strategy          migration | fixture | script
+#   data              Inline seed records (for small, fixed datasets)
+#   source            External data source reference (for imports)
+#   count_estimate    Approximate record count (for imports)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# END OF TEMPLATE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# NEXT STEPS:
+#   1. Create specs/schemas/_base.yaml with your base fields
+#   2. Create one specs/schemas/{model}.yaml per data model
+#   3. Reference models in flow specs via data_store nodes
+#   4. Run /ddd-scaffold to generate ORM schema, indexes, and seed files
+#
+# ═══════════════════════════════════════════════════════════════════════════════
