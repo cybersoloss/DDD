@@ -1,6 +1,6 @@
 name: Settings
 description: System configuration and preferences
-owns_schemas: ["Rule", "Channel"]
+owns_schemas: ["Rule", "Channel", "Setting"]
 stores:
   - name: settings-store
     shape:

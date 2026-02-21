@@ -1,0 +1,48 @@
+inherits: _base
+description: Weekly analytics digest report
+fields:
+  - name: week_start
+    type: date
+    required: true
+    description: Monday of the week this digest covers
+  - name: week_end
+    type: date
+    required: true
+    description: Sunday of the week this digest covers
+  - name: total_ingested
+    type: integer
+    required: true
+    default: 0
+    description: Total content items ingested this week
+  - name: total_published
+    type: integer
+    required: true
+    default: 0
+    description: Total content items published this week
+  - name: total_rejected
+    type: integer
+    required: true
+    default: 0
+    description: Total content items rejected this week
+  - name: avg_quality_score
+    type: number
+    description: Average quality score across published content
+  - name: top_sources
+    type: jsonb
+    description: "Array of {source_id, count} for top content sources"
+  - name: channel_breakdown
+    type: jsonb
+    description: "Record<channel, count> of publications per channel"
+  - name: generated_at
+    type: timestamp
+    required: true
+    description: When this digest was generated
+indexes:
+  - fields: [week_start]
+    unique: true
+    type: btree
+    description: One digest per week, fast lookup by week
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

@@ -1,5 +1,6 @@
 name: Publishing
 description: Multi-channel content distribution
+owns_schemas: ["PublishRecord"]
 stores:
   - name: content-store
     shape:

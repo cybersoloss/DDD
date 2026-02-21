@@ -1,5 +1,6 @@
 name: Editorial
 description: Human review and approval workflows
+owns_schemas: ["ContentRejection"]
 flows:
   - id: review-content
     name: Review Content

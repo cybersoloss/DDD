@@ -47,6 +47,14 @@ consumes_events:
     from_flow: analytics/generate-daily-report
     handled_by_flow: send-batch-digest
     description: Report generation included in batch digest
+  - event: ReviewerAssigned
+    from_flow: editorial/assign-reviewer
+    handled_by_flow: send-realtime-alert
+    description: Reviewer assignment triggers alert to the assigned reviewer
+  - event: BulkOperationCompleted
+    from_flow: editorial/bulk-approve
+    handled_by_flow: send-batch-digest
+    description: Bulk operation completion included in batch digest
 layout:
   flows:
     send-realtime-alert: { x: 100, y: 100 }
