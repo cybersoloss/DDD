@@ -109,6 +109,19 @@ cd examples/todo-app
 /ddd-test --all
 ```
 
+## Four Pillars
+
+Every DDD project generates specs across all four foundational pillars of software:
+
+| Pillar | Spec Files | What it covers |
+|--------|-----------|---------------|
+| **Logic** | `domains/*/flows/*.yaml` | Backend flows — API endpoints, cron jobs, event handlers, agent pipelines |
+| **Data** | `schemas/*.yaml`, `shared/types.yaml` | Models, fields, indexes, relationships, transitions, seed data |
+| **Interface** | `ui/pages.yaml`, `ui/*.yaml` | Pages, navigation, components, forms, data bindings, visual states |
+| **Infrastructure** | `infrastructure.yaml` | Services, ports, startup order, deployment strategy |
+
+`/ddd-create` generates all four. `/ddd-implement` builds from all four. No pillar gets silently skipped.
+
 ## Repository Structure
 
 ```
@@ -116,10 +129,18 @@ DDD/
 ├── DDD-USAGE-GUIDE.md              # How to write DDD specs (fetched by commands at runtime)
 ├── examples/
 │   └── todo-app/                   # Complete example project (try it in 5 minutes)
-└── templates/
-    ├── architecture-template.yaml   # Reusable: project structure & conventions
-    ├── config-template.yaml         # Reusable: environment variables schema
-    └── errors-template.yaml         # Reusable: standardized error codes
+├── templates/
+│   ├── architecture-template.yaml   # Project structure & conventions
+│   ├── config-template.yaml         # Environment variables schema
+│   ├── errors-template.yaml         # Standardized error codes
+│   ├── schema-template.yaml         # Data models: fields, indexes, transitions, seed
+│   ├── ui-page-template.yaml        # UI pages: sections, forms, data bindings
+│   └── infrastructure-template.yaml # Services, ports, deployment
+└── tests/
+    └── e2e/                         # End-to-end test infrastructure
+        ├── generate-tests.md        # Generator prompt (regenerates test artifacts)
+        ├── product-features.md      # Generated: product exercising every DDD feature
+        └── ddd-tool-auto-test-prompt.md  # Generated: auto-test runner for ddd-tool
 ```
 
 > **Commands** live in the [claude-commands](https://github.com/cybersoloss/claude-commands) repo.
@@ -133,7 +154,10 @@ The definitive reference for writing Design Driven Development specs. Covers all
 Complete spec sets you can open in the DDD Tool or feed to `/ddd-implement`.
 
 ### [Templates](templates/)
-Reusable YAML templates for `architecture.yaml`, `config.yaml`, and `errors.yaml`. These are included automatically when you run `/ddd-create` — the templates are here for reference.
+Reusable YAML templates for all spec types — architecture, config, errors, schemas, UI pages, and infrastructure. These are included automatically when you run `/ddd-create` — the templates are here for reference.
+
+### [End-to-End Tests](tests/e2e/)
+A self-regenerating test infrastructure that verifies the DDD ecosystem (guide + commands + tool) works together. A [generator prompt](tests/e2e/generate-tests.md) reads the current state of all three repos and produces a product description exercising every DDD feature, plus an auto-test runner prompt for the ddd-tool. Regenerate monthly or after any framework change — the tests evolve with DDD.
 
 ## Related Repos
 
