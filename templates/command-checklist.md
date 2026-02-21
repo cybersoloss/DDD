@@ -53,7 +53,7 @@ Use this checklist when creating new DDD commands or auditing existing ones. Eve
 
 - [ ] **Required** — Scope arguments use the same syntax as peer commands (see Table 2 below)
 - [ ] **Required** — File paths match the canonical project structure: `specs/domains/*/flows/*.yaml`, `specs/ui/{page-id}.yaml`, `specs/schemas/{model}.yaml`, `specs/infrastructure.yaml`, `.ddd/mapping.yaml`, `.ddd/annotations/`
-- [ ] **Required** — mapping.yaml field names are consistent: `specHash`, `syncState`, `annotationCount`, `implementedAt`, `files`, `mode`
+- [ ] **Required** — mapping.yaml field names are consistent: `specHash`, `syncState`, `annotationCount`, `implementedAt`, `files`, `fileHashes`, `mode`
 - [ ] **Required** — Pillar names are consistent: Logic, Data, Interface, Infrastructure (never "Frontend", "Backend", "Database")
 
 ## 8. Pillar Starvation Prevention
