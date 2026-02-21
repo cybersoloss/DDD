@@ -1,0 +1,627 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# UI PAGE TEMPLATE v1.0
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Defines the interface pillar — pages, navigation, components, forms, and
+# visual states. UI specs are declarative (component trees with data bindings),
+# not flow-based. Each page references backend flows via data_source fields.
+#
+# USAGE:
+#   1. Copy specs/ui/pages.yaml section to your project as specs/ui/pages.yaml
+#   2. Create one specs/ui/{page-id}.yaml per page using the per-page section
+#   3. Replace all {placeholders} with your values
+#   4. Remove or comment out sections that don't apply
+#
+# FILES:
+#   specs/ui/pages.yaml         — Page registry, navigation, theme, shared components
+#   specs/ui/{page-id}.yaml     — Per-page spec (sections, forms, data bindings, state)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGES.YAML — Page Registry
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this section to: specs/ui/pages.yaml
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ APPLICATION CONFIG                                                         │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+app_type: web                          # web | mobile | desktop | cli
+framework: "Next.js 14"               # Next.js 14 | React 18 | React Native | Vue 3 | Svelte | etc.
+router: app                            # app (Next.js app router) | pages (Next.js pages) | hash | native
+state_management: zustand              # zustand | redux | context | jotai | none
+component_library: shadcn/ui           # shadcn/ui | mui | chakra | ant | radix | custom | none
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ THEME                                                                      │
+# └─────────────────────────────────────────────────────────────────────────────┘
+
+theme:
+  color_scheme: light                  # light | dark | system
+  primary_color: "#2563eb"             # Brand primary color
+  font_family: "Inter"                 # System font or Google Fonts name
+  border_radius: 8                     # Default border radius in px
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PAGES                                                                      │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Each entry creates a route and a page spec file.
+# Layout types: sidebar | full | centered | split | stacked
+
+pages:
+  - id: dashboard
+    route: /
+    name: Dashboard
+    description: "Main overview — key metrics, recent activity, quick actions"
+    layout: sidebar
+
+  - id: items
+    route: /items
+    name: Items
+    description: "Browse, search, and manage all items"
+    layout: sidebar
+
+  - id: item-detail
+    route: /items/:id
+    name: Item Detail
+    description: "View and edit a single item"
+    layout: sidebar
+
+  - id: settings
+    route: /settings
+    name: Settings
+    description: "Application preferences, integrations, account settings"
+    layout: sidebar
+
+  # Add more pages as needed:
+  # - id: {page-id}
+  #   route: /{path}
+  #   name: {Display Name}
+  #   description: "{What this page shows and does}"
+  #   layout: sidebar | full | centered | split | stacked
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ NAVIGATION                                                                 │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Type: sidebar | topbar | tabs | drawer | none
+# Badge: dynamic value shown on nav item (e.g., unread count)
+
+navigation:
+  type: sidebar                        # sidebar | topbar | tabs | drawer | none
+  items:
+    - { page: dashboard, icon: home, label: Dashboard }
+    - { page: items, icon: list, label: Items, badge: item_count }
+    - { page: settings, icon: settings, label: Settings }
+
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ SHARED COMPONENTS                                                          │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Reusable components used across multiple pages.
+# /ddd-scaffold creates placeholder files; /ddd-implement fills them in.
+
+shared_components:
+  - id: item-card
+    description: "Displays an item with title, status badge, date, and quick actions"
+    used_by: [dashboard, items]
+
+  - id: status-badge
+    description: "Colored badge showing item status (active, archived, pending)"
+    used_by: [dashboard, items, item-detail]
+
+  # - id: {component-id}
+  #   description: "{What this component renders}"
+  #   used_by: [{page-id}, {page-id}]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PER-PAGE SPEC — {page-id}.yaml
+# ═══════════════════════════════════════════════════════════════════════════════
+# Copy sections below into specs/ui/{page-id}.yaml for each page.
+# Below is a complete example for a dashboard page.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXAMPLE: specs/ui/dashboard.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+# page: dashboard
+# route: /
+#
+# # ┌─────────────────────────────────────────────────────────────────────────┐
+# # │ SECTIONS                                                               │
+# # └─────────────────────────────────────────────────────────────────────────┘
+# # Each section is a component on the page with data bindings.
+# # Component types: stat-card, item-list, card-grid, detail-card,
+# #                  button-group, page-header, status-bar, chart,
+# #                  or any shared component ID.
+# # Data bindings use $.field syntax to reference API response fields.
+#
+# sections:
+#   # ── Stat Cards ──
+#   - id: total-items
+#     component: stat-card
+#     position: top-left
+#     label: "Total Items"
+#     data_source: items/get-stats            # domain/flow-id → backend API
+#     fields:
+#       value: "$.total_count"
+#       subtitle: "items tracked"
+#       trend: "$.weekly_change"
+#
+#   - id: active-items
+#     component: stat-card
+#     position: top-center
+#     label: "Active"
+#     data_source: items/get-stats
+#     fields:
+#       value: "$.active_count"
+#       subtitle: "in progress"
+#       urgency:
+#         field: "$.active_count"
+#         rules:
+#           - { threshold: 50, level: critical, color: red }
+#           - { threshold: 20, level: warning, color: amber }
+#           - { threshold: 0, level: normal, color: green }
+#     actions:
+#       click: { navigate: /items?status=active }
+#
+#   # ── Main Content ──
+#   - id: recent-items
+#     component: item-list
+#     position: main
+#     label: "Recent Items"
+#     data_source: items/list-items
+#     query:
+#       sort: created_at
+#       order: desc
+#       limit: 10
+#     item_template:
+#       title: "$.title"
+#       subtitle: "$.category · $.created_at"
+#       badge: "$.status"
+#       avatar: "$.icon"
+#     item_actions:
+#       - label: View
+#         icon: eye
+#         navigate: "/items/$.id"
+#       - label: Archive
+#         icon: archive
+#         flow: items/archive-item
+#         args: { id: "$.id" }
+#         confirm: true
+#         confirm_message: "Archive this item?"
+#     empty_state:
+#       message: "No items yet"
+#       description: "Create your first item to get started"
+#       icon: inbox
+#       action:
+#         label: "Create Item"
+#         navigate: /items/new
+#
+#   # ── Sidebar Widget ──
+#   - id: quick-actions
+#     component: button-group
+#     position: sidebar
+#     label: "Quick Actions"
+#     buttons:
+#       - label: "New Item"
+#         icon: plus
+#         navigate: /items/new
+#         variant: primary
+#       - label: "Import"
+#         icon: upload
+#         flow: items/import-items
+#         variant: secondary
+#
+#   # ── Conditional Section ──
+#   - id: warnings
+#     component: status-bar
+#     position: top
+#     label: "Warnings"
+#     data_source: items/get-stats
+#     fields:
+#       message: "$.warning_message"
+#       level: "$.warning_level"
+#     visible_when: "$.has_warnings == true"
+#
+# # ┌─────────────────────────────────────────────────────────────────────────┐
+# # │ FORMS                                                                  │
+# # └─────────────────────────────────────────────────────────────────────────┘
+# # Forms for creating/editing data. Each form submits to a backend flow.
+# #
+# # Field types:
+# #   text          — Single-line text input
+# #   number        — Numeric input with optional min/max
+# #   select        — Single-choice dropdown
+# #   multi-select  — Multi-choice dropdown
+# #   search-select — Dropdown with search/autocomplete from API
+# #   date          — Date picker
+# #   datetime      — Date + time picker
+# #   textarea      — Multi-line text input
+# #   toggle        — Boolean switch
+# #   tag-input     — Freeform tags with optional autocomplete
+# #   file          — File upload
+# #   color         — Color picker
+# #   slider        — Range slider with min/max/step
+#
+# forms: []
+#   # - id: quick-create
+#   #   label: "Quick Create"
+#   #   description: "Create a new item from the dashboard"
+#   #   position: modal                        # modal | sidebar | inline | drawer
+#   #   fields:
+#   #     - name: title
+#   #       type: text
+#   #       label: "Title"
+#   #       placeholder: "Enter item title..."
+#   #       required: true
+#   #       validation: "min:3, max:200"
+#   #
+#   #     - name: category
+#   #       type: select
+#   #       label: "Category"
+#   #       options: [task, note, reference, project]
+#   #       required: true
+#   #       default: task
+#   #
+#   #     - name: priority
+#   #       type: select
+#   #       label: "Priority"
+#   #       options: [low, medium, high, urgent]
+#   #       default: medium
+#   #
+#   #     - name: description
+#   #       type: textarea
+#   #       label: "Description"
+#   #       placeholder: "Optional details..."
+#   #       required: false
+#   #
+#   #     - name: due_date
+#   #       type: date
+#   #       label: "Due Date"
+#   #       allow_empty: true
+#   #
+#   #     - name: tags
+#   #       type: tag-input
+#   #       label: "Tags"
+#   #       autocomplete_source: items/list-tags
+#   #       autocomplete_field: name
+#   #
+#   #     - name: assignee_id
+#   #       type: search-select
+#   #       label: "Assignee"
+#   #       search_source: users/search-users
+#   #       display_field: name
+#   #       value_field: id
+#   #       allow_empty: true
+#   #
+#   #     - name: is_urgent
+#   #       type: toggle
+#   #       label: "Mark as urgent"
+#   #       default: false
+#   #
+#   #     - name: effort
+#   #       type: slider
+#   #       label: "Effort Estimate"
+#   #       min: 1
+#   #       max: 10
+#   #       step: 1
+#   #       default: 3
+#   #
+#   #     - name: color
+#   #       type: color
+#   #       label: "Label Color"
+#   #       default: "#2563eb"
+#   #
+#   #     - name: attachment
+#   #       type: file
+#   #       label: "Attachment"
+#   #       accept: ".pdf,.png,.jpg,.doc,.docx"
+#   #       max_size_mb: 10
+#   #
+#   #     # Conditional field — only visible when category is "project"
+#   #     - name: project_deadline
+#   #       type: date
+#   #       label: "Project Deadline"
+#   #       visible_when: "category == 'project'"
+#   #       required: true                     # required only when visible
+#   #
+#   #   submit:
+#   #     flow: items/create-item              # backend flow to call
+#   #     label: "Create Item"
+#   #     loading_label: "Creating..."
+#   #     success:
+#   #       message: "Item created"
+#   #       redirect: "/items/$.id"            # redirect using response data
+#   #     error:
+#   #       message: "Failed to create item"
+#   #       retry: true
+#
+# # ┌─────────────────────────────────────────────────────────────────────────┐
+# # │ STATE MANAGEMENT                                                       │
+# # └─────────────────────────────────────────────────────────────────────────┘
+#
+# state:
+#   store: dashboard-store                    # references zustand/redux store
+#   initial_fetch:                            # API calls on page load
+#     - items/get-stats
+#     - items/list-items
+#   # realtime: items/realtime-updates       # WebSocket subscription (optional)
+#   # polling_interval: 30                   # Auto-refresh every N seconds (optional)
+#
+# # ┌─────────────────────────────────────────────────────────────────────────┐
+# # │ VISUAL STATES                                                          │
+# # └─────────────────────────────────────────────────────────────────────────┘
+#
+# loading: skeleton                           # skeleton | spinner | blur
+# error: retry-banner                         # retry-banner | error-page | toast
+# refresh: auto-30s                           # pull-to-refresh | auto-{N}s | manual | none
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXAMPLE: specs/ui/items.yaml (List page with filters and forms)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# page: items
+# route: /items
+#
+# sections:
+#   - id: header
+#     component: page-header
+#     position: top
+#     label: "Items"
+#     buttons:
+#       - label: "New Item"
+#         icon: plus
+#         navigate: /items/new
+#         variant: primary
+#       - label: "Export"
+#         icon: download
+#         flow: items/export-items
+#         variant: ghost
+#
+#   - id: filters
+#     component: filter-bar
+#     position: top
+#     fields:
+#       - name: search
+#         type: text
+#         placeholder: "Search items..."
+#       - name: status
+#         type: select
+#         options: [all, active, archived, pending]
+#         default: all
+#       - name: category
+#         type: multi-select
+#         options_source: shared/types.yaml#category
+#       - name: date_range
+#         type: date-range
+#
+#   - id: item-list
+#     component: card-grid
+#     position: main
+#     label: "All Items"
+#     data_source: items/list-items
+#     query:
+#       sort: "$.filters.sort"
+#       status: "$.filters.status"
+#       search: "$.filters.search"
+#     item_template:
+#       title: "$.title"
+#       subtitle: "$.category"
+#       badge: "$.status"
+#       footer: "Created $.created_at"
+#     item_actions:
+#       - label: Edit
+#         icon: edit
+#         navigate: "/items/$.id"
+#       - label: Archive
+#         icon: archive
+#         flow: items/archive-item
+#         args: { id: "$.id" }
+#         confirm: true
+#       - label: Delete
+#         icon: trash
+#         flow: items/delete-item
+#         args: { id: "$.id" }
+#         confirm: true
+#         confirm_message: "Permanently delete this item?"
+#         variant: destructive
+#     pagination:
+#       type: cursor                          # cursor | offset | load-more
+#       page_size: 20
+#     empty_state:
+#       message: "No items found"
+#       description: "Try adjusting your filters or create a new item"
+#       icon: search
+#
+# state:
+#   store: items-store
+#   initial_fetch: [items/list-items]
+#
+# loading: skeleton
+# error: retry-banner
+# refresh: manual
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXAMPLE: specs/ui/item-detail.yaml (Detail page with edit form)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# page: item-detail
+# route: /items/:id
+#
+# sections:
+#   - id: header
+#     component: page-header
+#     position: top
+#     data_source: items/get-item
+#     query: { id: "$.route.id" }
+#     fields:
+#       title: "$.title"
+#       subtitle: "$.category · Created $.created_at"
+#     buttons:
+#       - label: "Edit"
+#         icon: edit
+#         action: toggle-edit-mode
+#       - label: "Delete"
+#         icon: trash
+#         flow: items/delete-item
+#         args: { id: "$.route.id" }
+#         confirm: true
+#         variant: destructive
+#
+#   - id: detail-view
+#     component: detail-card
+#     position: main
+#     data_source: items/get-item
+#     query: { id: "$.route.id" }
+#     fields:
+#       - { label: "Status", value: "$.status", type: badge }
+#       - { label: "Priority", value: "$.priority", type: badge }
+#       - { label: "Category", value: "$.category" }
+#       - { label: "Description", value: "$.description", type: markdown }
+#       - { label: "Due Date", value: "$.due_date", type: date }
+#       - { label: "Tags", value: "$.tags", type: tag-list }
+#       - { label: "Created", value: "$.created_at", type: relative-time }
+#       - { label: "Updated", value: "$.updated_at", type: relative-time }
+#     visible_when: "$.edit_mode == false"
+#
+# forms:
+#   - id: edit-item
+#     label: "Edit Item"
+#     position: main
+#     visible_when: "$.edit_mode == true"
+#     prefill_source: items/get-item
+#     prefill_args: { id: "$.route.id" }
+#     fields:
+#       - name: title
+#         type: text
+#         label: "Title"
+#         required: true
+#       - name: description
+#         type: textarea
+#         label: "Description"
+#       - name: status
+#         type: select
+#         label: "Status"
+#         options_source: shared/types.yaml#item_status
+#       - name: priority
+#         type: select
+#         label: "Priority"
+#         options: [low, medium, high, urgent]
+#       - name: due_date
+#         type: date
+#         label: "Due Date"
+#         allow_empty: true
+#       - name: tags
+#         type: tag-input
+#         label: "Tags"
+#         autocomplete_source: items/list-tags
+#         autocomplete_field: name
+#     submit:
+#       flow: items/update-item
+#       args: { id: "$.route.id" }
+#       label: "Save Changes"
+#       loading_label: "Saving..."
+#       success:
+#         message: "Item updated"
+#         action: exit-edit-mode
+#       error:
+#         message: "Failed to update item"
+#         retry: true
+#
+# state:
+#   store: item-detail-store
+#   initial_fetch: [items/get-item]
+#   local:
+#     edit_mode: false
+#
+# loading: skeleton
+# error: error-page
+# refresh: none
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FIELD REFERENCE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# PagesConfig (pages.yaml):
+#   app_type           web | mobile | desktop | cli
+#   framework          Frontend framework name and version
+#   router             app | pages | hash | native
+#   state_management   zustand | redux | context | jotai | none
+#   component_library  shadcn/ui | mui | chakra | ant | radix | custom | none
+#   theme              { color_scheme, primary_color, font_family, border_radius }
+#   pages              PageEntry[]
+#   navigation         { type, items[] }
+#   shared_components  { id, description, used_by[] }[]
+#
+# PageEntry:
+#   id                 Unique page identifier (used as filename)
+#   route              URL path (supports :param for dynamic segments)
+#   name               Display name
+#   description        What this page shows and does
+#   layout             sidebar | full | centered | split | stacked
+#
+# PageSection:
+#   id                 Section ID (unique within page)
+#   component          Component type or shared component ID
+#   position           Layout position (top, main, sidebar, footer, top-left, etc.)
+#   label              Section heading
+#   data_source        Backend flow reference: domain/flow-id
+#   query              Query parameters for data source
+#   fields             Data field mappings using $.field syntax
+#   item_template      Template for list/grid items
+#   item_actions       Per-item action buttons
+#   buttons            Button group entries
+#   empty_state        { message, description?, icon?, action? }
+#   visible_when       Conditional visibility expression
+#   pagination         { type: cursor|offset|load-more, page_size }
+#
+# FormField:
+#   name               Field name sent to backend
+#   type               text | number | select | multi-select | search-select |
+#                      date | datetime | textarea | toggle | tag-input |
+#                      file | color | slider
+#   label              Display label
+#   placeholder        Placeholder text
+#   required           Whether field is required (default: false)
+#   default            Default value
+#   options            Static options for select/multi-select
+#   options_source     Dynamic options from spec reference
+#   search_source      Backend flow for search-select autocomplete
+#   search_args        Arguments for search source
+#   display_field      Field to display in dropdowns
+#   value_field        Field to use as value in dropdowns
+#   autocomplete_source  Backend flow for tag autocomplete
+#   autocomplete_field   Field to extract from autocomplete results
+#   allow_empty        Whether empty/null is valid
+#   validation         Validation rule description
+#   visible_when       Conditional visibility expression
+#   accept             Allowed file types (for file type)
+#   max_size_mb        Max file size in MB (for file type)
+#   min/max/step       Range constraints (for number, slider types)
+#
+# FormSubmit:
+#   flow               Backend flow to call on submit
+#   args               Additional arguments merged with form data
+#   label              Submit button text
+#   loading_label      Text shown during submission
+#   success            { message, redirect?, action? }
+#   error              { message, retry? }
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# END OF TEMPLATE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# NEXT STEPS:
+#   1. Copy the pages.yaml section to specs/ui/pages.yaml
+#   2. Create one specs/ui/{page-id}.yaml per page
+#   3. Reference backend flows in data_source fields (domain/flow-id)
+#   4. Run /ddd-scaffold to generate page skeletons
+#   5. Run /ddd-implement --ui to generate full page components
+#
+# ═══════════════════════════════════════════════════════════════════════════════

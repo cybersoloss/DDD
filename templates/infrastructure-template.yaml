@@ -1,0 +1,196 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# INFRASTRUCTURE TEMPLATE v1.0
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Defines the infrastructure pillar — services needed to run the project,
+# how they connect, and how to start them. Kept slim and focused on what's
+# needed to run and connect services, not a full DevOps specification.
+#
+# USAGE:
+#   1. Copy this file to specs/infrastructure.yaml in your project
+#   2. Replace all {placeholders} with your values
+#   3. Remove services that don't apply
+#   4. Adjust ports, commands, and deployment strategy
+#
+# /ddd-scaffold reads this to generate:
+#   - package.json dev/setup scripts
+#   - docker-compose.yaml (if production strategy is docker-compose)
+#   - Startup documentation
+#
+# /ddd-implement reads this to configure:
+#   - API client base URLs in frontend code
+#   - WebSocket endpoints
+#   - Service connection strings
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SERVICES
+# ─────────────────────────────────────────────────────────────────────────────
+# Each service is something that runs as part of the project.
+#
+# Service types:
+#   server    — Application server (API, frontend, worker with HTTP)
+#   datastore — Database, cache, search engine
+#   worker    — Background job processor (no HTTP)
+#   proxy     — Reverse proxy, load balancer, API gateway
+
+services:
+  # ┌─────────────────────────────────────────────────────────────────────────┐
+  # │ APPLICATION SERVERS                                                    │
+  # └─────────────────────────────────────────────────────────────────────────┘
+
+  - id: backend
+    type: server
+    runtime: "Node.js 20"
+    framework: "Express 4"
+    entry: src/server/index.ts
+    port: 3001
+    health: /api/v1/health
+    depends_on: [database, cache]
+    dev_command: "npx tsx watch src/server/index.ts"
+    # env_file: .env                       # Optional: env file to load
+
+  - id: frontend
+    type: server
+    runtime: "Next.js 14"
+    entry: src/app/
+    port: 3000
+    depends_on: [backend]
+    dev_command: "npx next dev"
+
+  # ┌─────────────────────────────────────────────────────────────────────────┐
+  # │ DATASTORES                                                             │
+  # └─────────────────────────────────────────────────────────────────────────┘
+
+  - id: database
+    type: datastore
+    engine: "PostgreSQL 16"
+    port: 5432
+    setup: "npx prisma db push"
+    # volumes:                              # Docker volumes (optional)
+    #   - ./data/postgres:/var/lib/postgresql/data
+    # environment:                          # Docker environment vars (optional)
+    #   POSTGRES_USER: app
+    #   POSTGRES_PASSWORD: password
+    #   POSTGRES_DB: myapp
+
+  - id: cache
+    type: datastore
+    engine: "Redis 7"
+    port: 6379
+    # volumes:
+    #   - ./data/redis:/data
+
+  # ┌─────────────────────────────────────────────────────────────────────────┐
+  # │ WORKERS (uncomment if needed)                                          │
+  # └─────────────────────────────────────────────────────────────────────────┘
+
+  # - id: worker
+  #   type: worker
+  #   runtime: "Node.js 20"
+  #   entry: src/worker/index.ts
+  #   depends_on: [database, cache, queue]
+  #   dev_command: "npx tsx watch src/worker/index.ts"
+
+  # - id: queue
+  #   type: datastore
+  #   engine: "RabbitMQ 3"
+  #   port: 5672
+  #   management_port: 15672              # Management UI port
+  #   setup: "rabbitmqctl await_startup"
+
+  # ┌─────────────────────────────────────────────────────────────────────────┐
+  # │ PROXY (uncomment if needed)                                            │
+  # └─────────────────────────────────────────────────────────────────────────┘
+
+  # - id: proxy
+  #   type: proxy
+  #   engine: "nginx"
+  #   port: 80
+  #   depends_on: [backend, frontend]
+  #   config: nginx.conf
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STARTUP ORDER
+# ─────────────────────────────────────────────────────────────────────────────
+# Order in which services should start. Datastores first, then servers.
+# /ddd-scaffold uses this to generate dev:all script with concurrently.
+
+startup_order: [database, cache, backend, frontend]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPLOYMENT
+# ─────────────────────────────────────────────────────────────────────────────
+# How the project is deployed in each environment.
+#
+# Local strategies:
+#   process-manager  — Run services directly (npm scripts + concurrently)
+#   docker-compose   — Run everything in Docker containers
+#
+# Production strategies:
+#   docker-compose   — Single-server deployment with Docker Compose
+#   kubernetes       — Orchestrated container deployment
+#   serverless       — Functions-as-a-service (Vercel, AWS Lambda)
+#   platform         — Managed platform (Railway, Render, Fly.io)
+
+deployment:
+  local:
+    strategy: process-manager              # process-manager | docker-compose
+
+  # staging:                               # Optional staging config
+  #   strategy: docker-compose
+  #   reverse_proxy: nginx
+  #   ssl: letsencrypt
+
+  production:
+    strategy: docker-compose               # docker-compose | kubernetes | serverless | platform
+    # reverse_proxy: nginx                 # Optional reverse proxy
+    # ssl: letsencrypt                     # Optional SSL provider
+    # registry: ghcr.io/{org}              # Container registry (for k8s/docker)
+    # replicas:                            # Per-service replica counts
+    #   backend: 2
+    #   worker: 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FIELD REFERENCE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# ServiceConfig:
+#   id              Service identifier (used in depends_on, scripts)
+#   type            server | datastore | worker | proxy
+#   runtime         Runtime or engine name + version (e.g., "Node.js 20")
+#   framework       Framework name + version (e.g., "Express 4")
+#   engine          Engine name for datastores (e.g., "PostgreSQL 16")
+#   entry           Entry point file or directory
+#   port            Port number
+#   health          Health check endpoint path (for servers)
+#   depends_on      Service IDs this service requires to be running
+#   dev_command     Command to start in development mode
+#   setup           One-time setup command (e.g., DB migration)
+#   env_file        Environment file to load
+#   volumes         Docker volume mounts (list of "host:container" strings)
+#   environment     Docker environment variables (key-value map)
+#   config          Config file path (for proxy type)
+#   management_port Secondary port (e.g., RabbitMQ management UI)
+#
+# DeploymentConfig:
+#   local           { strategy: 'process-manager' | 'docker-compose' }
+#   staging         { strategy, reverse_proxy?, ssl? }
+#   production      { strategy, reverse_proxy?, ssl?, registry?, replicas? }
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# END OF TEMPLATE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# NEXT STEPS:
+#   1. Copy this file to specs/infrastructure.yaml in your project
+#   2. Adjust services to match your tech stack
+#   3. Run /ddd-scaffold to generate startup scripts and Docker config
+#   4. Run the dev command to start all services
+#
+# ═══════════════════════════════════════════════════════════════════════════════
