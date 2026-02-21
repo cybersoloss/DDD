@@ -1,0 +1,603 @@
+report: tool-compatibility-report
+generated_at: 2026-02-21T13:32:14.351Z
+project: /Users/mhcandan/dev/DDD/examples/nexus
+summary:
+  total_files: 99
+  files_by_category:
+    config: 2
+    domain: 9
+    flow: 53
+    infrastructure: 1
+    schema: 17
+    shared: 2
+    other: 1
+    system: 1
+    ui: 13
+  parse:
+    success: 99
+    failed: 0
+    success_rate_pct: 100
+  normalize:
+    total_flows: 53
+    success: 53
+    failed: 0
+    success_rate_pct: 100
+parse_failures: []
+normalize_failures: []
+normalize_details:
+  - file: specs/domains/analytics/flows/generate-daily-report.yaml
+    domain: analytics
+    flow: generate-daily-report
+    nodes: 9
+    connections: 10
+    node_types:
+      - trigger
+      - data_store
+      - collection
+      - event
+      - terminal
+  - file: specs/domains/analytics/flows/generate-weekly-digest.yaml
+    domain: analytics
+    flow: generate-weekly-digest
+    nodes: 8
+    connections: 8
+    node_types:
+      - trigger
+      - data_store
+      - collection
+      - transform
+      - terminal
+  - file: specs/domains/analytics/flows/query-analytics.yaml
+    domain: analytics
+    flow: query-analytics
+    nodes: 9
+    connections: 8
+    node_types:
+      - trigger
+      - input
+      - cache
+      - terminal
+      - data_store
+      - process
+  - file: specs/domains/analytics/flows/record-event.yaml
+    domain: analytics
+    flow: record-event
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+  - file: specs/domains/analytics/flows/stream-live-metrics.yaml
+    domain: analytics
+    flow: stream-live-metrics
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - collection
+      - terminal
+  - file: specs/domains/content/flows/create-content.yaml
+    domain: content
+    flow: create-content
+    nodes: 9
+    connections: 8
+    node_types:
+      - trigger
+      - input
+      - terminal
+      - data_store
+      - event
+  - file: specs/domains/content/flows/delete-content.yaml
+    domain: content
+    flow: delete-content
+    nodes: 7
+    connections: 6
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+      - event
+  - file: specs/domains/content/flows/get-content.yaml
+    domain: content
+    flow: get-content
+    nodes: 6
+    connections: 5
+    node_types:
+      - trigger
+      - data_store
+      - decision
+      - terminal
+  - file: specs/domains/content/flows/update-content.yaml
+    domain: content
+    flow: update-content
+    nodes: 11
+    connections: 10
+    node_types:
+      - trigger
+      - input
+      - terminal
+      - data_store
+      - event
+  - file: specs/domains/editorial/flows/assign-reviewer.yaml
+    domain: editorial
+    flow: assign-reviewer
+    nodes: 13
+    connections: 13
+    node_types:
+      - trigger
+      - input
+      - decision
+      - data_store
+      - collection
+      - process
+      - event
+      - terminal
+  - file: specs/domains/editorial/flows/bulk-approve.yaml
+    domain: editorial
+    flow: bulk-approve
+    nodes: 7
+    connections: 6
+    node_types:
+      - trigger
+      - input
+      - transaction
+      - event
+      - terminal
+  - file: specs/domains/editorial/flows/get-review-stats.yaml
+    domain: editorial
+    flow: get-review-stats
+    nodes: 8
+    connections: 8
+    node_types:
+      - trigger
+      - cache
+      - terminal
+      - data_store
+      - process
+  - file: specs/domains/editorial/flows/list-editorial-queue.yaml
+    domain: editorial
+    flow: list-editorial-queue
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+  - file: specs/domains/editorial/flows/reject-content.yaml
+    domain: editorial
+    flow: reject-content
+    nodes: 11
+    connections: 10
+    node_types:
+      - trigger
+      - input
+      - data_store
+      - event
+      - terminal
+  - file: specs/domains/editorial/flows/review-content.yaml
+    domain: editorial
+    flow: review-content
+    nodes: 15
+    connections: 14
+    node_types:
+      - trigger
+      - data_store
+      - human_gate
+      - event
+      - terminal
+      - process
+  - file: specs/domains/ingestion/flows/fetch-rss-feeds.yaml
+    domain: ingestion
+    flow: fetch-rss-feeds
+    nodes: 14
+    connections: 16
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+      - loop
+      - service_call
+      - parse
+      - collection
+      - event
+  - file: specs/domains/ingestion/flows/import-csv-content.yaml
+    domain: ingestion
+    flow: import-csv-content
+    nodes: 10
+    connections: 9
+    node_types:
+      - trigger
+      - input
+      - terminal
+      - parse
+      - collection
+      - data_store
+  - file: specs/domains/ingestion/flows/manual-content-entry.yaml
+    domain: ingestion
+    flow: manual-content-entry
+    nodes: 7
+    connections: 6
+    node_types:
+      - trigger
+      - input
+      - terminal
+      - data_store
+      - event
+  - file: specs/domains/ingestion/flows/monitor-social-feeds.yaml
+    domain: ingestion
+    flow: monitor-social-feeds
+    nodes: 10
+    connections: 11
+    node_types:
+      - trigger
+      - service_call
+      - terminal
+      - parse
+      - collection
+      - batch
+  - file: specs/domains/ingestion/flows/process-webhook.yaml
+    domain: ingestion
+    flow: process-webhook
+    nodes: 9
+    connections: 8
+    node_types:
+      - trigger
+      - input
+      - terminal
+      - crypto
+      - data_store
+      - event
+  - file: specs/domains/ingestion/flows/process-xml-feed.yaml
+    domain: ingestion
+    flow: process-xml-feed
+    nodes: 7
+    connections: 6
+    node_types:
+      - trigger
+      - parse
+      - terminal
+      - transform
+      - data_store
+  - file: specs/domains/ingestion/flows/scrape-web-content.yaml
+    domain: ingestion
+    flow: scrape-web-content
+    nodes: 14
+    connections: 14
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+      - loop
+      - service_call
+      - parse
+      - delay
+      - transform
+      - event
+  - file: specs/domains/ingestion/flows/watch-filesystem.yaml
+    domain: ingestion
+    flow: watch-filesystem
+    nodes: 9
+    connections: 8
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+      - parse
+      - event
+  - file: specs/domains/notifications/flows/get-notification-preferences.yaml
+    domain: notifications
+    flow: get-notification-preferences
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+  - file: specs/domains/notifications/flows/send-batch-digest.yaml
+    domain: notifications
+    flow: send-batch-digest
+    nodes: 6
+    connections: 5
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+      - batch
+  - file: specs/domains/notifications/flows/send-pattern-alert.yaml
+    domain: notifications
+    flow: send-pattern-alert
+    nodes: 6
+    connections: 5
+    node_types:
+      - trigger
+      - ipc_call
+      - terminal
+      - data_store
+  - file: specs/domains/notifications/flows/send-realtime-alert.yaml
+    domain: notifications
+    flow: send-realtime-alert
+    nodes: 8
+    connections: 7
+    node_types:
+      - trigger
+      - transform
+      - terminal
+      - service_call
+      - data_store
+  - file: specs/domains/processing/flows/analyze-with-agents.yaml
+    domain: processing
+    flow: analyze-with-agents
+    nodes: 8
+    connections: 8
+    node_types:
+      - trigger
+      - guardrail
+      - agent_loop
+      - event
+      - terminal
+  - file: specs/domains/processing/flows/bias-check-agent.yaml
+    domain: processing
+    flow: bias-check-agent
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - agent_loop
+      - terminal
+  - file: specs/domains/processing/flows/classify-content.yaml
+    domain: processing
+    flow: classify-content
+    nodes: 9
+    connections: 8
+    node_types:
+      - trigger
+      - data_store
+      - llm_call
+      - event
+      - terminal
+  - file: specs/domains/processing/flows/collaborative-review.yaml
+    domain: processing
+    flow: collaborative-review
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - agent_group
+      - terminal
+  - file: specs/domains/processing/flows/fact-check-agent.yaml
+    domain: processing
+    flow: fact-check-agent
+    nodes: 5
+    connections: 5
+    node_types:
+      - trigger
+      - guardrail
+      - agent_loop
+      - terminal
+  - file: specs/domains/processing/flows/general-scorer.yaml
+    domain: processing
+    flow: general-scorer
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - llm_call
+      - terminal
+  - file: specs/domains/processing/flows/orchestrate-analysis.yaml
+    domain: processing
+    flow: orchestrate-analysis
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - orchestrator
+      - terminal
+  - file: specs/domains/processing/flows/route-to-specialist.yaml
+    domain: processing
+    flow: route-to-specialist
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - handoff
+      - terminal
+  - file: specs/domains/processing/flows/score-quality.yaml
+    domain: processing
+    flow: score-quality
+    nodes: 11
+    connections: 12
+    node_types:
+      - trigger
+      - smart_router
+      - sub_flow
+      - data_store
+      - terminal
+  - file: specs/domains/processing/flows/summarize-batch.yaml
+    domain: processing
+    flow: summarize-batch
+    nodes: 9
+    connections: 9
+    node_types:
+      - trigger
+      - data_store
+      - loop
+      - llm_call
+      - terminal
+  - file: specs/domains/publishing/flows/publish-content.yaml
+    domain: publishing
+    flow: publish-content
+    nodes: 11
+    connections: 13
+    node_types:
+      - trigger
+      - data_store
+      - parallel
+      - sub_flow
+      - event
+      - terminal
+  - file: specs/domains/publishing/flows/publish-sse-updates.yaml
+    domain: publishing
+    flow: publish-sse-updates
+    nodes: 5
+    connections: 4
+    node_types:
+      - trigger
+      - data_store
+      - transform
+      - terminal
+  - file: specs/domains/publishing/flows/publish-to-newsletter.yaml
+    domain: publishing
+    flow: publish-to-newsletter
+    nodes: 5
+    connections: 5
+    node_types:
+      - trigger
+      - data_store
+      - service_call
+      - terminal
+  - file: specs/domains/publishing/flows/publish-to-social.yaml
+    domain: publishing
+    flow: publish-to-social
+    nodes: 7
+    connections: 6
+    node_types:
+      - trigger
+      - crypto
+      - service_call
+      - delay
+      - terminal
+  - file: specs/domains/publishing/flows/publish-to-website.yaml
+    domain: publishing
+    flow: publish-to-website
+    nodes: 5
+    connections: 5
+    node_types:
+      - trigger
+      - data_store
+      - service_call
+      - terminal
+  - file: specs/domains/publishing/flows/retry-failed-publish.yaml
+    domain: publishing
+    flow: retry-failed-publish
+    nodes: 8
+    connections: 8
+    node_types:
+      - trigger
+      - data_store
+      - decision
+      - event
+      - terminal
+      - ipc_call
+  - file: specs/domains/publishing/flows/schedule-publication.yaml
+    domain: publishing
+    flow: schedule-publication
+    nodes: 7
+    connections: 6
+    node_types:
+      - trigger
+      - input
+      - data_store
+      - event
+      - terminal
+  - file: specs/domains/settings/flows/get-settings.yaml
+    domain: settings
+    flow: get-settings
+    nodes: 7
+    connections: 6
+    node_types:
+      - trigger
+      - cache
+      - terminal
+      - data_store
+      - process
+  - file: specs/domains/settings/flows/manage-rules.yaml
+    domain: settings
+    flow: manage-rules
+    nodes: 7
+    connections: 6
+    node_types:
+      - trigger
+      - input
+      - terminal
+      - data_store
+      - event
+  - file: specs/domains/settings/flows/reset-settings.yaml
+    domain: settings
+    flow: reset-settings
+    nodes: 9
+    connections: 8
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+      - event
+  - file: specs/domains/settings/flows/update-settings.yaml
+    domain: settings
+    flow: update-settings
+    nodes: 10
+    connections: 9
+    node_types:
+      - trigger
+      - input
+      - terminal
+      - data_store
+      - process
+      - event
+  - file: specs/domains/users/flows/list-users.yaml
+    domain: users
+    flow: list-users
+    nodes: 4
+    connections: 3
+    node_types:
+      - trigger
+      - data_store
+      - terminal
+  - file: specs/domains/users/flows/login-user.yaml
+    domain: users
+    flow: login-user
+    nodes: 12
+    connections: 12
+    node_types:
+      - trigger
+      - input
+      - data_store
+      - crypto
+      - decision
+      - process
+      - terminal
+  - file: specs/domains/users/flows/manage-api-keys.yaml
+    domain: users
+    flow: manage-api-keys
+    nodes: 8
+    connections: 7
+    node_types:
+      - trigger
+      - crypto
+      - data_store
+      - terminal
+  - file: specs/domains/users/flows/register-user.yaml
+    domain: users
+    flow: register-user
+    nodes: 11
+    connections: 10
+    node_types:
+      - trigger
+      - input
+      - decision
+      - terminal
+      - crypto
+      - data_store
+      - event
+  - file: specs/domains/users/flows/update-user-role.yaml
+    domain: users
+    flow: update-user-role
+    nodes: 9
+    connections: 8
+    node_types:
+      - trigger
+      - input
+      - data_store
+      - event
+      - terminal
+compatibility_verdict: FULLY_COMPATIBLE

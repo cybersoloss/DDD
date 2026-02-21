@@ -26,7 +26,23 @@
       "Bash(git rebase:*)",
       "Bash(git fetch:*)",
       "Bash(xargs:*)",
-      "Bash(bash push-public.sh)"
+      "Bash(bash push-public.sh)",
+      "Bash(patterns, UI spec format, infrastructure spec format, and conventions\":*)",
+      "Bash(gh api:*)",
+      "Bash(for f in ddd-*.md)",
+      "Bash(do echo -n \"$f origin:\")",
+      "Bash(shasum:*)",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(git tag:*)",
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(pip3 install:*)",
+      "Bash(find:*)",
+      "Bash(npm run test:specs:*)",
+      "Bash(grep:*)",
+      "Bash(test:*)",
+      "Bash(/Users/mhcandan/dev/DDD/ddd-evolution-plan-gtdos.yaml:*)"
     ]
   }
 }

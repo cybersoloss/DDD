@@ -1,0 +1,548 @@
+report: spec-quality-report
+generated_at: 2026-02-21T13:32:14.352Z
+project: /Users/mhcandan/dev/DDD/examples/nexus
+summary:
+  quality_score: 98
+  total_issues: 22
+  errors: 0
+  warnings: 10
+  info: 12
+  issues_by_category:
+    event_wiring:
+      errors: 0
+      warnings: 10
+      info: 0
+    reference_integrity:
+      errors: 0
+      warnings: 0
+      info: 12
+coverage:
+  node_types:
+    total_defined: 28
+    total_used: 28
+    coverage_pct: 100
+    coverage_note: 28/28 catalog node types used across 53 flows
+    used:
+      - agent_group
+      - agent_loop
+      - batch
+      - cache
+      - collection
+      - crypto
+      - data_store
+      - decision
+      - delay
+      - event
+      - guardrail
+      - handoff
+      - human_gate
+      - input
+      - ipc_call
+      - llm_call
+      - loop
+      - orchestrator
+      - parallel
+      - parse
+      - process
+      - service_call
+      - smart_router
+      - sub_flow
+      - terminal
+      - transaction
+      - transform
+      - trigger
+    unused: []
+    usage_counts:
+      trigger: 53
+      data_store: 64
+      collection: 10
+      event: 24
+      terminal: 179
+      transform: 5
+      input: 15
+      cache: 4
+      process: 7
+      decision: 5
+      transaction: 1
+      human_gate: 1
+      loop: 3
+      service_call: 7
+      parse: 6
+      batch: 2
+      crypto: 6
+      delay: 2
+      ipc_call: 2
+      guardrail: 3
+      agent_loop: 3
+      llm_call: 3
+      agent_group: 1
+      orchestrator: 1
+      handoff: 1
+      smart_router: 1
+      sub_flow: 6
+      parallel: 1
+  spec_fields:
+    total_nodes: 416
+    nodes_with_description: 361
+    description_pct: 87
+    triggers_with_event: 53
+    triggers_total: 53
+    decisions_with_condition: 5
+    decisions_total: 5
+  connections:
+    total_connections: 386
+    total_nodes: 416
+    avg_connections_per_node: 0.93
+    dead_end_nodes: 0
+    orphaned_nodes: 0
+  flows:
+    total: 53
+    traditional: 48
+    agent: 5
+    with_errors: 0
+    with_warnings: 0
+    clean: 53
+flow_validation:
+  - flow: analytics/generate-daily-report
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: analytics/generate-weekly-digest
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: analytics/query-analytics
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: analytics/record-event
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: analytics/stream-live-metrics
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: content/create-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: content/delete-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: content/get-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: content/update-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: editorial/assign-reviewer
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: editorial/bulk-approve
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: editorial/get-review-stats
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: editorial/list-editorial-queue
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: editorial/reject-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: editorial/review-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: ingestion/fetch-rss-feeds
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: ingestion/import-csv-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: ingestion/manual-content-entry
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: ingestion/monitor-social-feeds
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: ingestion/process-webhook
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: ingestion/process-xml-feed
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: ingestion/scrape-web-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: ingestion/watch-filesystem
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: notifications/get-notification-preferences
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: notifications/send-batch-digest
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: notifications/send-pattern-alert
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: notifications/send-realtime-alert
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/analyze-with-agents
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/bias-check-agent
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/classify-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/collaborative-review
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/fact-check-agent
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/general-scorer
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/orchestrate-analysis
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/route-to-specialist
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/score-quality
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: processing/summarize-batch
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: publishing/publish-content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: publishing/publish-sse-updates
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: publishing/publish-to-newsletter
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: publishing/publish-to-social
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: publishing/publish-to-website
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: publishing/retry-failed-publish
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: publishing/schedule-publication
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: settings/get-settings
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: settings/manage-rules
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: settings/reset-settings
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: settings/update-settings
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: users/list-users
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: users/login-user
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: users/manage-api-keys
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: users/register-user
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - flow: users/update-user-role
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+domain_validation:
+  - domain: analytics
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - domain: content
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - domain: editorial
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - domain: ingestion
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - domain: notifications
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - domain: processing
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - domain: publishing
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - domain: settings
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+  - domain: users
+    valid: true
+    errors: 0
+    warnings: 0
+    issues: []
+system_validation:
+  valid: true
+  errors: 0
+  warnings: 10
+  issues:
+    - severity: warning
+      category: event_wiring
+      message: Event "ContentCreated" is published by content but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "ContentUpdated" is published by content but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "ContentDeleted" is published by content but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "ContentSourceAdded" is published by ingestion but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "NotificationSent" is published by notifications but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "ContentSummarized" is published by processing but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "SettingsUpdated" is published by settings but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "RulesUpdated" is published by settings but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "SettingsReset" is published by settings but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: warning
+      category: event_wiring
+      message: Event "UserRoleChanged" is published by users but no domain consumes it
+      suggestion: This event may be unused — consider adding a consumer or removing it
+    - severity: info
+      category: reference_integrity
+      message: Data store "Read Events" references model "AnalyticsEvent" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-Ks8mPw2J
+      flow_id: generate-daily-report
+      domain_id: analytics
+    - severity: info
+      category: reference_integrity
+      message: Data store "Store Digest" references model "WeeklyDigest" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-Mn8fGx1P
+      flow_id: generate-weekly-digest
+      domain_id: analytics
+    - severity: info
+      category: reference_integrity
+      message: Data store "Read Events" references model "AnalyticsEvent" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-Fw8kTp1H
+      flow_id: query-analytics
+      domain_id: analytics
+    - severity: info
+      category: reference_integrity
+      message: Data store "Store Event" references model "AnalyticsEvent" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-Hm2wCp4X
+      flow_id: record-event
+      domain_id: analytics
+    - severity: info
+      category: reference_integrity
+      message: Data store "Create Initial Version" references model "ContentVersion" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-vP4tZ8kG
+      flow_id: create-content
+      domain_id: content
+    - severity: info
+      category: reference_integrity
+      message: Data store "Create Version Snapshot" references model "ContentVersion" but no schema file exists in
+        specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-kE1iP5zX
+      flow_id: update-content
+      domain_id: content
+    - severity: info
+      category: reference_integrity
+      message: Data store "Create Rejection Record" references model "ContentRejection" but no schema file exists in
+        specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-cr34trjc
+      flow_id: reject-content
+      domain_id: editorial
+    - severity: info
+      category: reference_integrity
+      message: Data store "Read Active RSS Sources" references model "ContentSource" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-bT7nQ3xL
+      flow_id: fetch-rss-feeds
+      domain_id: ingestion
+    - severity: info
+      category: reference_integrity
+      message: Data store "Read Scraping Targets" references model "ContentSource" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-qL4nZ6wR
+      flow_id: scrape-web-content
+      domain_id: ingestion
+    - severity: info
+      category: reference_integrity
+      message: Data store "Create Publish Record" references model "PublishRecord" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-cr34trec
+      flow_id: publish-content
+      domain_id: publishing
+    - severity: info
+      category: reference_integrity
+      message: Data store "Load Failure Details" references model "PublishRecord" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-r3adf41l
+      flow_id: retry-failed-publish
+      domain_id: publishing
+    - severity: info
+      category: reference_integrity
+      message: Data store "Store API Key" references model "ApiKey" but no schema file exists in specs/schemas/
+      suggestion: Create a schema file or check the model name
+      node_id: data_store-Bn8fRx5G
+      flow_id: manage-api-keys
+      domain_id: users
+quality_verdict: EXCELLENT
