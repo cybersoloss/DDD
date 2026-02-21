@@ -7,8 +7,9 @@
 meta:
   projects_analyzed: 1
   total_shortfalls_reviewed: 28
-  status: reviewed
+  status: applied
   reviewed_at: "2026-02-21T14:30:00Z"
+  applied_at: "2026-02-21T14:45:00Z"
   verdicts:
     REAL_GAP: 9
     ENHANCEMENT: 4
