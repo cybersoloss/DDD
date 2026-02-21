@@ -876,8 +876,8 @@ The central registry of all pages, their routes, and navigation structure:
 app_type: web                        # web | mobile | desktop | cli
 framework: Next.js 14
 router: app                          # app (Next.js app router) | pages | hash | native
-state_management: zustand             # zustand | redux | context | none
-component_library: shadcn/ui          # shadcn/ui | mui | chakra | ant | custom | none
+state_management: zustand             # zustand | redux | context | jotai | none
+component_library: shadcn/ui          # shadcn/ui | mui | chakra | ant | radix | custom | none
 
 theme:
   color_scheme: light                 # light | dark | system
@@ -1234,6 +1234,8 @@ Different component types use different subsets of PageSection fields. Here's wh
 | `button-group` | `buttons` (ButtonSpec[]) with `label`, `flow`, `args`, `variant`, `icon`, `visible_when`, `confirm` | Action buttons |
 | `page-header` | `fields` (title, subtitle), `breadcrumbs`, `actions` (button-group for page-level actions) | Page title area |
 | `status-bar` | `fields.items` array with `label`, `value` ($.field), `color_when` conditions | Status indicators |
+| `chart` | `data_source`, `fields` (series, labels, values), `chart_type` (line/bar/pie/area/donut) | Data visualization |
+| `filter-bar` | `fields` (FormField[] for filter inputs), binds to sibling section's `query` | Inline filters for lists/grids |
 
 > To use a shared component, set `component` to the shared component's ID from `pages.yaml` → `shared_components`.
 
@@ -1253,7 +1255,7 @@ Different component types use different subsets of PageSection fields. Here's wh
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Field name (sent to backend) |
-| `type` | string | Input type: `'text' \| 'number' \| 'select' \| 'multi-select' \| 'search-select' \| 'date' \| 'datetime' \| 'textarea' \| 'toggle' \| 'tag-input' \| 'file' \| 'color' \| 'slider'` |
+| `type` | string | Input type: `'text' \| 'number' \| 'select' \| 'multi-select' \| 'search-select' \| 'date' \| 'datetime' \| 'date-range' \| 'textarea' \| 'toggle' \| 'tag-input' \| 'file' \| 'color' \| 'slider'` |
 | `label` | string | Display label |
 | `placeholder` | string? | Placeholder text |
 | `required` | boolean? | Whether field is required (default: false) |
@@ -1275,10 +1277,12 @@ Different component types use different subsets of PageSection fields. Here's wh
 | Field | Type | Description |
 |-------|------|-------------|
 | `flow` | string | Backend flow to call on submit (`domain/flow-id`) |
+| `args` | `Record<string, unknown>`? | Additional arguments merged with form data |
 | `label` | string | Submit button label |
+| `loading_label` | string? | Text shown on button during submission |
 | `variant` | string? | Button variant (e.g., "primary", "secondary") |
-| `success_message` | string? | Toast/notification on success |
-| `redirect` | string? | Page to navigate to on success |
+| `success` | `{ message: string, redirect?: string, action?: string }`? | Success behavior — message to show, page to redirect to, and/or UI action to trigger |
+| `error` | `{ message: string, retry?: boolean }`? | Error behavior — message to show and whether to offer retry |
 
 #### ItemAction
 

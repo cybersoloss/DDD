@@ -552,8 +552,8 @@ shared_components:
 #   app_type           web | mobile | desktop | cli
 #   framework          Frontend framework name and version
 #   router             app | pages | hash | native
-#   state_management   zustand | redux | context | jotai | none
-#   component_library  shadcn/ui | mui | chakra | ant | radix | custom | none
+#   state_management   zustand | redux | context | jotai | none  (matches Usage Guide)
+#   component_library  shadcn/ui | mui | chakra | ant | radix | custom | none  (matches Usage Guide)
 #   theme              { color_scheme, primary_color, font_family, border_radius }
 #   pages              PageEntry[]
 #   navigation         { type, items[] }
@@ -605,11 +605,12 @@ shared_components:
 #   max_size_mb        Max file size in MB (for file type)
 #   min/max/step       Range constraints (for number, slider types)
 #
-# FormSubmit:
+# FormSubmit (matches Usage Guide):
 #   flow               Backend flow to call on submit
 #   args               Additional arguments merged with form data
 #   label              Submit button text
-#   loading_label      Text shown during submission
+#   loading_label      Text shown on button during submission
+#   variant            Button variant (e.g., "primary", "secondary")
 #   success            { message, redirect?, action? }
 #   error              { message, retry? }
 #
