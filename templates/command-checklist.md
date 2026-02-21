@@ -40,6 +40,7 @@ Use this checklist when creating new DDD commands or auditing existing ones. Eve
 - [ ] **Required** — Report covers all four pillars the command touches (not just Logic)
 - [ ] **Conditional** (command writes implementation) — Updates `.ddd/mapping.yaml` with `specHash`, `implementedAt`, `files`, `syncState`
 - [ ] **Conditional** (command creates annotations) — Writes to `.ddd/annotations/` with correct paths: `{domain}/{flow}.yaml`, `ui/{page-id}.yaml`, `schemas/{model}.yaml`, `infrastructure.yaml`
+- [ ] **Conditional** (command generates across multiple pillars) — Report/summary includes per-pillar quantitative counts (e.g., "Logic: 37 flows, Interface: 5 pages, Data: 12 schemas, Infrastructure: 3 specs") so imbalances are visually obvious
 
 ## 6. Guidance
 
@@ -54,6 +55,17 @@ Use this checklist when creating new DDD commands or auditing existing ones. Eve
 - [ ] **Required** — File paths match the canonical project structure: `specs/domains/*/flows/*.yaml`, `specs/ui/{page-id}.yaml`, `specs/schemas/{model}.yaml`, `specs/infrastructure.yaml`, `.ddd/mapping.yaml`, `.ddd/annotations/`
 - [ ] **Required** — mapping.yaml field names are consistent: `specHash`, `syncState`, `annotationCount`, `implementedAt`, `files`, `mode`
 - [ ] **Required** — Pillar names are consistent: Logic, Data, Interface, Infrastructure (never "Frontend", "Backend", "Database")
+
+## 8. Pillar Starvation Prevention
+
+These items apply to commands that generate or process across multiple pillars — primarily `ddd-create`, `ddd-implement`, `ddd-scaffold`, `ddd-reverse`, and `ddd-sync`. They prevent the LLM from "forgetting" a pillar mid-execution.
+
+- [ ] **Conditional** (multi-pillar generation) — **Enumerate-before-generate**: the command lists all items it will produce per pillar (extraction table) before generating any output, creating a countable commitment that can be verified later
+- [ ] **Conditional** (multi-pillar generation) — **Generation ordering**: detail-heavy pillars (typically Logic/flows) are generated last so lighter pillars (Interface, Data, Infrastructure) are not starved by context exhaustion
+- [ ] **Conditional** (multi-pillar generation) — **Per-pillar checkpoints**: the command outputs a progress line after completing each pillar (e.g., "Interface complete: 5/5 pages generated") so gaps are visible mid-execution
+- [ ] **Conditional** (multi-pillar generation) — **Hard gates between pillars**: after generating a pillar, the command compares actual count to the planned count and stops with an error if there is a mismatch — does not defer validation to the end-of-command quality check
+- [ ] **Conditional** (multi-pillar generation) — **Concept disambiguation**: when a concept has dual-pillar representation (e.g., "Dashboard" as both a backend domain and a frontend page), the command includes an explicit warning that both representations must exist
+- [ ] **Conditional** (multi-pillar generation) — **Skip-prone pillar enforcement**: the command identifies which pillar is most likely to be omitted (typically Interface for backend-heavy projects) and adds extra gates or enforcement specifically for it
 
 ---
 
