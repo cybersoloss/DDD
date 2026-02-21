@@ -1,0 +1,21 @@
+enums:
+  publish_channel:
+    values: [twitter, linkedin, newsletter, website]
+    description: Supported publishing channels
+
+  content_status:
+    values: [draft, pending_review, approved, published, rejected, archived]
+    description: Content processing lifecycle
+
+  source_type:
+    values: [rss, api, scraper, webhook, manual, filesystem]
+    description: Content source types
+
+value_objects:
+  date_range:
+    fields:
+      - name: start
+        type: datetime
+      - name: end
+        type: datetime
+    description: Date range with start and end

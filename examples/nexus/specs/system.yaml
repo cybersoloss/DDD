@@ -1,0 +1,176 @@
+name: nexus
+version: "1.0.0"
+description: Content intelligence platform — ingest, classify, review, and publish content across channels
+
+tech_stack:
+  language: TypeScript
+  runtime: Node.js 20
+  framework: Express 4
+  frontend: Next.js 14
+  database: PostgreSQL 16
+  orm: Prisma
+  cache: Redis 7
+  queue: BullMQ
+  auth: JWT + bcrypt
+  ui_library: shadcn/ui
+  state_management: Zustand
+
+environments:
+  - name: development
+    url: http://localhost:3001
+  - name: staging
+    url: https://staging.nexus.example.com
+  - name: production
+    url: https://api.nexus.example.com
+
+zones:
+  - id: ingestion-zone
+    name: Ingestion Zone
+    domains: [ingestion]
+  - id: ai-zone
+    name: AI Zone
+    domains: [processing]
+  - id: editorial-zone
+    name: Editorial Zone
+    domains: [editorial, content]
+  - id: distribution-zone
+    name: Distribution Zone
+    domains: [publishing, notifications]
+  - id: platform-zone
+    name: Platform Zone
+    domains: [users, analytics, settings]
+
+data_flows:
+  - from: ingestion-zone
+    to: ai-zone
+    label: "Raw content for processing"
+    volume: high
+  - from: ai-zone
+    to: editorial-zone
+    label: "Classified content for review"
+    volume: medium
+  - from: editorial-zone
+    to: distribution-zone
+    label: "Approved content for publishing"
+    volume: medium
+  - from: distribution-zone
+    to: platform-zone
+    label: "Publishing metrics and events"
+    volume: low
+    style: dashed
+  - from: platform-zone
+    to: ingestion-zone
+    label: "Source configuration updates"
+    volume: low
+    style: dashed
+
+characteristics:
+  - "Event-driven architecture"
+  - "Multi-agent AI pipeline"
+  - "6 cron schedules"
+  - "6 external integrations"
+  - "Real-time WebSocket analytics"
+
+schedules:
+  - frequency: "*/15 * * * *"
+    label: "Every 15 minutes"
+    flows: [ingestion/fetch-rss-feeds]
+  - frequency: "*/30 * * * *"
+    label: "Every 30 minutes"
+    flows: [ingestion/monitor-social-feeds]
+  - frequency: "0 * * * *"
+    label: "Every hour"
+    flows: [processing/summarize-batch]
+  - frequency: "0 */4 * * *"
+    label: "Every 4 hours"
+    flows: [ingestion/scrape-web-content]
+  - frequency: "0 2 * * *"
+    label: "Daily at 2am"
+    flows: [analytics/generate-daily-report]
+  - frequency: "0 6 * * 1"
+    label: "Weekly on Monday 6am"
+    flows: [analytics/generate-weekly-digest]
+
+pipelines:
+  - id: content-pipeline
+    name: Content Processing Pipeline
+    description: "End-to-end from ingestion to publication"
+    steps:
+      - { domain: ingestion, flow: fetch-rss-feeds, event_out: ContentIngested }
+      - { domain: processing, flow: classify-content, event_out: ContentClassified }
+      - { domain: editorial, flow: review-content, event_out: ContentApproved }
+      - { domain: publishing, flow: publish-content, event_out: ContentPublished }
+    spans_domains: [ingestion, processing, editorial, publishing]
+
+integrations:
+  openai_api:
+    base_url: "https://api.openai.com/v1"
+    auth:
+      method: bearer
+      credentials_env: OPENAI_API_KEY
+    rate_limits:
+      requests_per_window: 60
+      window_seconds: 60
+    retry:
+      max_attempts: 3
+      strategy: exponential
+    timeout_ms: 30000
+    used_by_domains: [processing]
+
+  twitter_api:
+    base_url: "https://api.twitter.com/2"
+    auth:
+      method: oauth2
+      credentials_env: TWITTER_BEARER_TOKEN
+    rate_limits:
+      requests_per_window: 300
+      window_seconds: 900
+    retry:
+      max_attempts: 3
+      backoff_ms: 1000
+    used_by_domains: [ingestion, publishing]
+
+  anthropic_api:
+    base_url: "https://api.anthropic.com/v1"
+    auth:
+      method: api_key
+      credentials_env: ANTHROPIC_API_KEY
+    rate_limits:
+      requests_per_window: 60
+      window_seconds: 60
+    retry:
+      max_attempts: 3
+      strategy: exponential
+    timeout_ms: 60000
+    used_by_domains: [processing]
+
+  sendgrid_api:
+    base_url: "https://api.sendgrid.com/v3"
+    auth:
+      method: api_key
+      credentials_env: SENDGRID_API_KEY
+    rate_limits:
+      requests_per_second: 100
+    retry:
+      max_attempts: 2
+    used_by_domains: [notifications]
+
+  google_cse_api:
+    base_url: "https://www.googleapis.com/customsearch/v1"
+    auth:
+      method: api_key
+      credentials_env: GOOGLE_CSE_KEY
+    rate_limits:
+      requests_per_window: 100
+      window_seconds: 86400
+    used_by_domains: [ingestion]
+
+  stripe_api:
+    base_url: "https://api.stripe.com/v1"
+    auth:
+      method: api_key
+      credentials_env: STRIPE_SECRET_KEY
+    rate_limits:
+      requests_per_second: 25
+    timeout_ms: 30000
+    used_by_domains: [users]

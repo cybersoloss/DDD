@@ -1,0 +1,215 @@
+flow:
+  id: fetch-rss-feeds
+  name: Fetch RSS Feeds
+  type: traditional
+  domain: ingestion
+  description: Periodically fetch RSS feeds from active content sources, parse entries, deduplicate, and persist new content
+
+trigger:
+  id: trigger-aR4kW9mN
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-bT7nQ3xL
+  spec:
+    event: "cron */15 * * * *"
+    source: Scheduler
+    description: Runs every 15 minutes to check RSS feeds for new content
+  label: Cron Every 15min
+
+nodes:
+  - id: data_store-bT7nQ3xL
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: loop-cV2pM8jR
+        sourceHandle: success
+      - targetNodeId: terminal-dW5sN1kF
+        sourceHandle: error
+    spec:
+      operation: read
+      model: ContentSource
+      query:
+        source_type: rss
+        is_active: true
+      description: Read all active RSS content sources from the database
+    label: Read Active RSS Sources
+
+  - id: terminal-dW5sN1kF
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to read content sources from database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to load RSS sources"
+    label: DB Read Error
+
+  - id: loop-cV2pM8jR
+    type: loop
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: service_call-eX6tP4lG
+        sourceHandle: body
+      - targetNodeId: terminal-mF3aH7rY
+        sourceHandle: done
+    spec:
+      collection: "$.sources"
+      iterator: source
+      on_error: continue
+      description: Iterate through each active RSS source
+    label: Loop Through Sources
+
+  - id: service_call-eX6tP4lG
+    type: service_call
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: parse-fY9uQ5mH
+        sourceHandle: success
+      - targetNodeId: terminal-gZ1vR6nJ
+        sourceHandle: error
+        behavior: continue
+    spec:
+      method: GET
+      url: "$.source.url"
+      timeout_ms: 15000
+      retry:
+        max_attempts: 2
+        backoff_ms: 2000
+        strategy: exponential
+      description: Fetch the raw RSS feed XML from the source URL
+    label: Fetch RSS Feed
+
+  - id: terminal-gZ1vR6nJ
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to fetch RSS feed, continue to next source
+      status: 502
+      body:
+        error: "SERVICE_UNAVAILABLE"
+        message: "Failed to fetch RSS feed from $.source.url"
+    label: Fetch Error
+
+  - id: parse-fY9uQ5mH
+    type: parse
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: collection-hA2wS7oK
+        sourceHandle: success
+      - targetNodeId: terminal-iB4xT8pL
+        sourceHandle: error
+    spec:
+      format: rss
+      input: "$.raw_feed"
+      strategy: lenient
+      output: "feed_entries"
+      description: Parse the raw RSS XML into structured feed entries
+    label: Parse RSS Feed
+
+  - id: terminal-iB4xT8pL
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Malformed RSS feed, skip this source
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "Failed to parse RSS feed from $.source.url"
+    label: Parse Error
+
+  - id: collection-hA2wS7oK
+    type: collection
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: collection-jC5yU9qM
+        sourceHandle: result
+      - targetNodeId: terminal-mF3aH7rY
+        sourceHandle: empty
+    spec:
+      operation: filter
+      input: "$.feed_entries"
+      predicate: "item.published_at > $.source.last_fetched_at"
+      output: "new_entries"
+      description: Filter to only entries newer than the last fetch timestamp
+    label: Filter New Entries
+
+  - id: collection-jC5yU9qM
+    type: collection
+    position: { x: 400, y: 830 }
+    connections:
+      - targetNodeId: data_store-kD6zV1rN
+        sourceHandle: result
+      - targetNodeId: terminal-mF3aH7rY
+        sourceHandle: empty
+    spec:
+      operation: deduplicate
+      input: "$.new_entries"
+      key: "item.url"
+      output: "unique_entries"
+      description: Deduplicate entries by URL to prevent duplicate content
+    label: Deduplicate by URL
+
+  - id: data_store-kD6zV1rN
+    type: data_store
+    position: { x: 400, y: 960 }
+    connections:
+      - targetNodeId: event-lE7aW2sP
+        sourceHandle: success
+      - targetNodeId: terminal-nG4bI8sZ
+        sourceHandle: error
+    spec:
+      operation: create_many
+      model: Content
+      data: "$.unique_entries"
+      description: Bulk insert new content entries into the database
+    label: Save New Content
+
+  - id: terminal-nG4bI8sZ
+    type: terminal
+    position: { x: 650, y: 960 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to save content to database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to persist new content entries"
+    label: Save Error
+
+  - id: event-lE7aW2sP
+    type: event
+    position: { x: 400, y: 1090 }
+    connections:
+      - targetNodeId: terminal-mF3aH7rY
+    spec:
+      direction: emit
+      event_name: ContentIngested
+      payload:
+        source_id: "$.source.id"
+        count: "$.unique_entries.length"
+        source_type: rss
+      async: true
+      description: Emit event to notify downstream services of new content
+    label: Emit ContentIngested
+
+  - id: terminal-mF3aH7rY
+    type: terminal
+    position: { x: 400, y: 1220 }
+    connections: []
+    spec:
+      outcome: success
+      description: RSS feed fetch cycle completed successfully
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

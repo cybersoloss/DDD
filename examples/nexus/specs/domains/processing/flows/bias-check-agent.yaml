@@ -1,0 +1,85 @@
+flow:
+  id: bias-check-agent
+  name: Bias Check Agent
+  type: agent
+  domain: processing
+  description: Agent that analyzes content for bias, loaded language, and one-sided framing
+  template: true
+  parameters:
+    content_id:
+      type: uuid
+    content_body:
+      type: string
+  contract:
+    inputs:
+      - name: content_id
+        type: uuid
+        required: true
+      - name: content_body
+        type: string
+        required: true
+    outputs:
+      - name: score
+        type: number
+      - name: reasoning
+        type: string
+
+trigger:
+  id: trigger-b14sch1
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: agent_loop-b14sch2
+  spec:
+    event: "HTTP POST /api/v1/internal/bias-check"
+    description: Internal endpoint for bias analysis of a content item
+  label: Bias Check Request
+
+nodes:
+  - id: agent_loop-b14sch2
+    type: agent_loop
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-b14sch3
+        sourceHandle: done
+      - targetNodeId: terminal-b14sch4
+        sourceHandle: error
+    spec:
+      model: "claude-sonnet-4-6"
+      system_prompt: "You are a media bias analysis agent. Analyze the provided content for bias indicators including loaded language, one-sided sourcing, and framing. Return a neutrality score (0-100, higher = more neutral) and reasoning."
+      max_iterations: 6
+      temperature: 0.2
+      on_max_iterations: respond
+      tools:
+        - id: analyze
+          name: analyze_bias
+          description: "Analyze text for bias indicators"
+          is_terminal: true
+    label: Bias Analysis Agent Loop
+
+  - id: terminal-b14sch3
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        score: "$.score"
+        reasoning: "$.reasoning"
+    label: Bias Check Complete
+
+  - id: terminal-b14sch4
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "Bias check failed"
+    label: Bias Check Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

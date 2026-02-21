@@ -1,0 +1,152 @@
+flow:
+  id: process-webhook
+  name: Process Webhook
+  type: traditional
+  domain: ingestion
+  description: Receive and validate incoming webhook payloads, verify HMAC signature, and persist content
+
+trigger:
+  id: trigger-cY7zL9iD
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-dZ8aM1jE
+  spec:
+    event: "webhook /webhooks/content"
+    source: External Service
+    description: Incoming webhook callback for content delivery
+  label: Webhook Received
+
+nodes:
+  - id: input-dZ8aM1jE
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: crypto-eA9bN2kF
+        sourceHandle: valid
+      - targetNodeId: terminal-fB1cP3lG
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: source
+          type: string
+          required: true
+        - name: type
+          type: string
+          required: true
+        - name: payload
+          type: object
+          required: true
+      validation: "source must be non-empty string, type must be non-empty string, payload must be present"
+      description: Validate the incoming webhook payload structure
+    label: Validate Payload
+
+  - id: terminal-fB1cP3lG
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Invalid webhook payload
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "Invalid webhook payload: source, type, and payload are required"
+    label: Invalid Payload
+
+  - id: crypto-eA9bN2kF
+    type: crypto
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-gC2dQ4mH
+        sourceHandle: success
+      - targetNodeId: terminal-hD3eR5nJ
+        sourceHandle: error
+    spec:
+      operation: verify
+      algorithm: hmac-sha256
+      key_source: { env: "WEBHOOK_SECRET" }
+      input_fields: ["$.raw_body"]
+      output_field: "signature_valid"
+      description: Verify the HMAC-SHA256 signature of the webhook payload
+    label: Verify HMAC Signature
+
+  - id: terminal-hD3eR5nJ
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Invalid webhook signature, reject the request
+      status: 401
+      body:
+        error: "UNAUTHORIZED"
+        message: "Invalid webhook signature"
+    label: Invalid Signature
+
+  - id: data_store-gC2dQ4mH
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: event-iE4fS6oK
+        sourceHandle: success
+      - targetNodeId: terminal-jF5gT7pL
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Content
+      data:
+        title: "$.payload.title"
+        body: "$.payload.body"
+        url: "$.payload.url"
+        source_type: "$.type"
+        source_id: "$.source"
+        raw_payload: "$.payload"
+      description: Create a new content entry from the webhook payload
+    label: Create Content
+
+  - id: terminal-jF5gT7pL
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to save webhook content
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to persist webhook content"
+    label: Save Error
+
+  - id: event-iE4fS6oK
+    type: event
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-kG6hU8qM
+    spec:
+      direction: emit
+      event_name: ContentIngested
+      payload:
+        content_id: "$.content.id"
+        source_type: "$.type"
+        source: "$.source"
+      async: true
+      description: Emit event to notify downstream services of new webhook content
+    label: Emit ContentIngested
+
+  - id: terminal-kG6hU8qM
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      description: Webhook processed and content created successfully
+      status: 201
+      body:
+        message: "Webhook processed successfully"
+        content_id: "$.content.id"
+    label: Success 201
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

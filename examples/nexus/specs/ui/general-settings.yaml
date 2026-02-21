@@ -1,0 +1,71 @@
+page: general-settings
+route: /settings
+layout: sidebar
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "Settings"
+    actions:
+      - label: "Reset All"
+        flow: settings/reset-settings
+        variant: destructive
+        confirm: "Reset all settings to defaults?"
+
+forms:
+  - id: general-settings
+    label: "General Settings"
+    position: main
+    fields:
+      - name: site_name
+        type: text
+        label: "Site Name"
+        required: true
+      - name: site_description
+        type: textarea
+        label: "Site Description"
+      - name: default_language
+        type: select
+        label: "Default Language"
+        options: [en, es, fr, de, ja]
+        default: en
+      - name: timezone
+        type: select
+        label: "Timezone"
+        options: [UTC, "America/New_York", "Europe/London", "Asia/Tokyo"]
+      - name: items_per_page
+        type: number
+        label: "Items Per Page"
+        min: 10
+        max: 100
+        default: 20
+      - name: theme_color
+        type: color
+        label: "Theme Color"
+        default: "#2563eb"
+      - name: enable_ai
+        type: toggle
+        label: "Enable AI"
+        default: true
+      - name: logo
+        type: file
+        label: "Logo"
+        accept: ".png,.jpg,.svg"
+        max_size_mb: 5
+    submit:
+      flow: settings/update-settings
+      label: "Save Settings"
+      loading_label: "Saving..."
+      success:
+        message: "Settings saved"
+      error:
+        message: "Failed to save settings"
+        retry: true
+
+state:
+  store: settings-store
+  initial_fetch: [settings/get-settings]
+loading: skeleton
+error: retry-banner
+refresh: none

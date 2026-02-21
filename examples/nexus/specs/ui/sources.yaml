@@ -1,0 +1,87 @@
+page: sources
+route: /sources
+layout: sidebar
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "Content Sources"
+    actions:
+      - label: "Add Source"
+        action: show-add-form
+        variant: primary
+
+  - id: source-list
+    component: card-grid
+    position: main
+    data_source: ingestion/list-sources
+    item_template:
+      title: $.name
+      subtitle: "$.source_type · Last fetched $.last_fetched_at"
+      badge: $.is_active
+      footer: "$.error_count errors"
+    item_actions:
+      - label: "Edit"
+        action: navigate
+        target: /sources/$.id
+      - label: "Toggle"
+        flow: ingestion/toggle-source
+      - label: "Delete"
+        confirm: true
+        variant: destructive
+    empty_state:
+      message: "No sources configured"
+      description: "Add a content source to start ingesting"
+
+forms:
+  - id: add-source
+    label: "Add Source"
+    position: modal
+    fields:
+      - name: name
+        type: text
+        label: "Name"
+        required: true
+        placeholder: "Source name..."
+      - name: source_type
+        type: select
+        label: "Source Type"
+        options: [rss, api, scraper, webhook, manual, filesystem]
+        required: true
+      - name: url
+        type: text
+        label: "URL"
+        placeholder: "https://..."
+        visible_when: "source_type != 'manual' && source_type != 'filesystem'"
+      - name: schedule_interval
+        type: number
+        label: "Check Interval (minutes)"
+        min: 5
+        max: 1440
+        default: 60
+        visible_when: "source_type == 'rss' || source_type == 'scraper'"
+      - name: config
+        type: textarea
+        label: "Configuration (JSON)"
+        placeholder: '{"selectors": {...}}'
+      - name: is_active
+        type: toggle
+        label: "Active"
+        default: true
+    submit:
+      flow: ingestion/add-source
+      label: "Add Source"
+      loading_label: "Adding..."
+      success:
+        message: "Source added successfully"
+      error:
+        message: "Failed to add source"
+        retry: true
+
+state:
+  store: sources-store
+  initial_fetch: [ingestion/list-sources]
+loading: skeleton
+error: retry-banner
+refresh: manual

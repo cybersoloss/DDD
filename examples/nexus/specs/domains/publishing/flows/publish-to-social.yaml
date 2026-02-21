@@ -1,0 +1,120 @@
+flow:
+  id: publish-to-social
+  name: Publish to Social Media
+  type: traditional
+  domain: publishing
+  description: Post content to social media with HMAC signing, retry logic, and rate limiting
+  contract:
+    inputs:
+      - name: content_id
+        type: uuid
+        required: true
+    outputs:
+      - name: post_id
+        type: string
+
+trigger:
+  id: trigger-p4bsc14l
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: crypto-s1gnhm4c
+  spec:
+    event: "event:PublishToSocial"
+    source: Message Bus
+    description: Internal event to publish content to social media
+  label: Publish to Social
+
+nodes:
+  - id: crypto-s1gnhm4c
+    type: crypto
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: service_call-tw1tt3r
+        sourceHandle: success
+      - targetNodeId: terminal-cr4pt0er
+        sourceHandle: error
+    spec:
+      operation: sign
+      algorithm: hmac-sha256
+      key_source: { env: "TWITTER_SECRET" }
+      input_fields: ["$.request_payload"]
+      output_field: "signature"
+      encoding: base64
+      description: Sign request payload with HMAC-SHA256 for Twitter API
+    label: Sign Request
+
+  - id: service_call-tw1tt3r
+    type: service_call
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: delay-r4t3l1mt
+        sourceHandle: success
+      - targetNodeId: terminal-4p13rr0r
+        sourceHandle: error
+        behavior: retry
+    spec:
+      method: POST
+      url: "https://api.twitter.com/2/tweets"
+      integration: twitter_api
+      headers:
+        Authorization: "Bearer $.access_token"
+        X-Signature: "$.signature"
+      body:
+        text: "$.content.formatted_text"
+      retry:
+        max_attempts: 3
+        backoff_ms: 2000
+        strategy: exponential
+        jitter: true
+      error_mapping:
+        "401": "UNAUTHORIZED"
+        "403": "FORBIDDEN"
+        "429": "RATE_LIMITED"
+      description: Post content to Twitter API
+    label: Post to Twitter
+
+  - id: delay-r4t3l1mt
+    type: delay
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-s4cc3ss
+    spec:
+      min_ms: 1000
+      max_ms: 3000
+      strategy: random
+      description: Rate limiting delay between social media posts
+    label: Rate Limit Delay
+
+  - id: terminal-s4cc3ss
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      body:
+        post_id: "$.twitter_response.data.id"
+      description: Social media post created successfully
+    label: Posted
+
+  - id: terminal-cr4pt0er
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: HMAC signing failed
+    label: Signing Error
+
+  - id: terminal-4p13rr0r
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Twitter API call failed after retries
+    label: API Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

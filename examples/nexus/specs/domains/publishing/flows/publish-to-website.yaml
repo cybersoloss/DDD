@@ -1,0 +1,92 @@
+flow:
+  id: publish-to-website
+  name: Publish to Website
+  type: traditional
+  domain: publishing
+  description: Publish content to the website CMS via the content API
+  template: true
+  parameters:
+    content_id:
+      type: uuid
+  contract:
+    inputs:
+      - name: content_id
+        type: uuid
+        required: true
+    outputs:
+      - name: url
+        type: string
+
+trigger:
+  id: trigger-w3bs1t1
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-w3bs1t2
+  spec:
+    event: "HTTP POST /api/v1/internal/website/publish"
+    description: Internal endpoint to publish content to the website
+  label: Publish to Website Request
+
+nodes:
+  - id: data_store-w3bs1t2
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: service_call-w3bs1t3
+        sourceHandle: success
+      - targetNodeId: terminal-w3bs1t5
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query: { id: "$.content_id" }
+      description: Load content for website publication
+    label: Load Content
+
+  - id: service_call-w3bs1t3
+    type: service_call
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: terminal-w3bs1t4
+        sourceHandle: success
+      - targetNodeId: terminal-w3bs1t5
+        sourceHandle: error
+    spec:
+      method: POST
+      url: "$.integrations.cms.base_url + /articles"
+      body:
+        title: "$.content.title"
+        body: "$.content.body"
+        category: "$.content.category"
+        author: "$.content.author"
+        tags: "$.content.tags"
+        published: true
+      description: Create article in CMS
+    label: Create CMS Article
+
+  - id: terminal-w3bs1t4
+    type: terminal
+    position: { x: 400, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        url: "$.response.article_url"
+    label: Published to Website
+
+  - id: terminal-w3bs1t5
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "Website publication failed"
+    label: Website Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

@@ -1,0 +1,104 @@
+flow:
+  id: get-settings
+  name: Get Settings
+  type: traditional
+  domain: settings
+  description: Retrieve current system settings with Redis cache layer
+
+trigger:
+  id: trigger-yZ3wC8nQ
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: cache-zA4xD9oR
+  spec:
+    event: "HTTP GET /api/v1/settings"
+    source: API Gateway
+    description: Get system settings endpoint
+  label: Get Settings Request
+
+nodes:
+  - id: cache-zA4xD9oR
+    type: cache
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-aB5yE1pS
+        sourceHandle: hit
+      - targetNodeId: data_store-bC6zF2qT
+        sourceHandle: miss
+    spec:
+      key: "settings:global"
+      ttl: 3600000
+      store: redis
+      description: Check Redis cache for global settings (1 hour TTL)
+    label: Cache Lookup
+
+  - id: terminal-aB5yE1pS
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        settings: "$.cached_settings"
+        source: "cache"
+      description: Settings returned from cache
+    label: Cache Hit 200
+
+  - id: data_store-bC6zF2qT
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: process-cD7aG3rU
+        sourceHandle: success
+      - targetNodeId: terminal-eF9cI5tW
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Setting
+      query: {}
+      description: Read all settings from database on cache miss
+    label: Read Settings from DB
+
+  - id: terminal-eF9cI5tW
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to read settings from database"
+      description: Database error reading settings
+    label: DB Error
+
+  - id: process-cD7aG3rU
+    type: process
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-dE8bH4sV
+    spec:
+      action: Store settings in cache
+      service: CacheService.set
+      inputs: ["settings:global", "$.settings", 3600000]
+      description: Store fetched settings in Redis cache for future requests
+    label: Store in Cache
+
+  - id: terminal-dE8bH4sV
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        settings: "$.settings"
+        source: "database"
+      description: Settings returned from database after cache miss
+    label: Success 200
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

@@ -1,0 +1,113 @@
+page: content-detail
+route: /content/:id
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "Content Detail"
+    data_source: content/get-content
+    query:
+      id: "$.route.id"
+    fields:
+      title: "$.title"
+      subtitle: "$.source_type · $.created_at"
+    actions:
+      - label: Edit
+        icon: edit
+        flow: toggle-edit-mode
+        variant: secondary
+      - label: Delete
+        icon: trash
+        flow: content/delete-content
+        args: { id: "$.route.id" }
+        variant: destructive
+        confirm: true
+        confirm_message: "Permanently delete this content?"
+
+  - id: detail-view
+    component: detail-card
+    position: main
+    label: "Content"
+    data_source: content/get-content
+    query:
+      id: "$.route.id"
+    visible_when: "$.edit_mode == false"
+    fields:
+      status:
+        value: "$.status"
+        display: badge
+      quality_score:
+        value: "$.quality_score"
+        display: badge
+      summary:
+        value: "$.summary"
+        display: markdown
+      body:
+        value: "$.body"
+        display: markdown
+      tags:
+        value: "$.tags"
+        display: tag-list
+      source:
+        value: "$.source.name"
+        display: text
+      published_at:
+        value: "$.published_at"
+        display: relative-time
+
+  - id: version-history
+    component: item-list
+    position: sidebar
+    label: "Version History"
+    data_source: content/get-content
+    query:
+      id: "$.route.id"
+    fields:
+      items: "$.versions"
+    item_template:
+      title: "$.version_label"
+      subtitle: "$.updated_at · $.updated_by"
+      badge: "$.change_type"
+
+forms:
+  - id: edit-content
+    label: "Edit Content"
+    position: main
+    visible_when: "$.edit_mode == true"
+    prefill_source: content/get-content
+    fields:
+      - name: title
+        type: text
+        label: "Title"
+        required: true
+        validation: "min:3, max:500"
+      - name: body
+        type: textarea
+        label: "Body"
+        required: true
+      - name: content_type
+        type: select
+        label: "Content Type"
+        options: [article, blog, news, social, press-release]
+      - name: tags
+        type: tag-input
+        label: "Tags"
+    submit:
+      flow: content/update-content
+      args: { id: "$.route.id" }
+      label: "Save Changes"
+      loading_label: "Saving..."
+      variant: primary
+      success:
+        message: "Content updated successfully"
+
+state:
+  store: content-detail-store
+  initial_fetch: [content/get-content]
+  local:
+    edit_mode: false
+
+loading: skeleton
+error: error-page
+refresh: none

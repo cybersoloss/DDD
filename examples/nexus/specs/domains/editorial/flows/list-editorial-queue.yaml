@@ -1,0 +1,77 @@
+flow:
+  id: list-editorial-queue
+  name: List Editorial Queue
+  type: traditional
+  domain: editorial
+  description: Retrieve paginated list of content pending editorial review
+
+trigger:
+  id: trigger-l1stqu3u
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-r3adqu3u
+  spec:
+    event: "HTTP GET /api/v1/editorial/queue"
+    source: API Gateway
+    description: List editorial queue endpoint
+  label: List Queue Request
+
+nodes:
+  - id: data_store-r3adqu3u
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-s4cc3ss
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query:
+        status: pending_review
+      pagination:
+        style: cursor
+        default_limit: 20
+        max_limit: 100
+      sort:
+        default: "created_at:desc"
+        allowed: ["created_at", "priority", "category"]
+      include:
+        - model: ContentSource
+          via: source_id
+          as: source
+      description: Read content items pending review with pagination
+    label: Read Queue
+
+  - id: terminal-s4cc3ss
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        data: "$.content_list"
+        cursor: "$.next_cursor"
+        has_more: "$.has_more"
+      description: Return paginated editorial queue
+    label: Success
+
+  - id: terminal-db3rr0r
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to load editorial queue"
+      description: Database error reading queue
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

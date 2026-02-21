@@ -1,0 +1,129 @@
+flow:
+  id: manage-api-keys
+  name: Manage API Keys
+  type: traditional
+  domain: users
+  description: Generate, encrypt, and store a new API key for a user
+
+trigger:
+  id: trigger-Nk5rBx8V
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: crypto-Hd3mFw7L
+  spec:
+    event: "HTTP POST /api/v1/users/:id/api-keys"
+    source: API Gateway
+    description: Create a new API key for the specified user
+  label: POST API Key
+
+nodes:
+  - id: crypto-Hd3mFw7L
+    type: crypto
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: crypto-Qv6tJk2P
+        sourceHandle: success
+      - targetNodeId: terminal-Yr9cNw4S
+        sourceHandle: error
+    spec:
+      operation: generate_key
+      algorithm: aes-256-gcm
+      output_field: "plain_api_key"
+      description: Generate a cryptographically secure API key
+    label: Generate Key
+
+  - id: crypto-Qv6tJk2P
+    type: crypto
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-Bn8fRx5G
+        sourceHandle: success
+      - targetNodeId: terminal-Lw3dKm7H
+        sourceHandle: error
+    spec:
+      operation: encrypt
+      algorithm: aes-256-gcm
+      key_source: { env: "ENCRYPTION_KEY" }
+      input_fields: ["$.plain_api_key"]
+      output_field: "encrypted_key"
+      encoding: base64
+      description: Encrypt the API key for secure storage
+    label: Encrypt Key
+
+  - id: data_store-Bn8fRx5G
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-Dt4jPx9C
+        sourceHandle: success
+      - targetNodeId: terminal-Gv2wTn6F
+        sourceHandle: error
+    spec:
+      operation: create
+      model: ApiKey
+      data:
+        user_id: "$.params.id"
+        key_hash: "$.encrypted_key"
+        key_prefix: "$.key_prefix"
+        name: "$.body.name"
+        last_used_at: null
+      description: Store the encrypted API key with its prefix for identification
+    label: Store API Key
+
+  - id: terminal-Dt4jPx9C
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      description: Return the plain API key (shown only once, never retrievable again)
+      status: 201
+      body:
+        api_key: "$.plain_api_key"
+        key_prefix: "$.key_prefix"
+        message: "Store this key securely. It will not be shown again."
+    label: Key Created
+
+  - id: terminal-Yr9cNw4S
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to generate cryptographic key
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to generate API key"
+    label: Generate Error
+
+  - id: terminal-Lw3dKm7H
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to encrypt the API key
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to encrypt API key"
+    label: Encrypt Error
+
+  - id: terminal-Gv2wTn6F
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to store the API key in database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to store API key"
+    label: Store Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

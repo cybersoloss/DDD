@@ -1,0 +1,253 @@
+flow:
+  id: review-content
+  name: Review Content
+  type: traditional
+  domain: editorial
+  description: Submit content for editorial review with human approval gate
+
+trigger:
+  id: trigger-r3v1ewcn
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-f3tch1tm
+  spec:
+    event: "ui:ReviewSubmitted"
+    debounce_ms: 300
+    description: Editor submits content for review
+  label: Review Submitted
+
+nodes:
+  - id: data_store-f3tch1tm
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: human_gate-rv1wgate
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r1
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query: { id: "$.content_id" }
+      include:
+        - model: ContentSource
+          via: source_id
+          as: source
+        - model: User
+          via: assigned_to
+          as: reviewer
+      description: Load content with source and assigned reviewer
+    label: Fetch Content
+
+  - id: human_gate-rv1wgate
+    type: human_gate
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-aprv1upd
+        sourceHandle: approve
+      - targetNodeId: data_store-rjct1upd
+        sourceHandle: reject
+      - targetNodeId: process-3sc4l8te
+        sourceHandle: escalate
+      - targetNodeId: terminal-d3f3rr3d
+        sourceHandle: defer
+    spec:
+      notification_channels: ["email", "slack"]
+      approval_options:
+        - id: approve
+          label: "Approve for Publishing"
+          description: "Content meets quality standards"
+        - id: reject
+          label: "Reject"
+          description: "Content needs revision"
+          requires_input: true
+        - id: escalate
+          label: "Escalate to Senior Editor"
+          description: "Needs senior review"
+        - id: defer
+          label: "Defer to Later"
+      timeout:
+        duration: 86400000
+        action: escalate
+      context_for_human: ["content.title", "content.summary", "quality_score", "classification"]
+      description: Human reviewer decides on content quality
+    label: Editorial Review Gate
+
+  - id: data_store-aprv1upd
+    type: data_store
+    position: { x: 150, y: 440 }
+    connections:
+      - targetNodeId: event-aprv1evt
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r2
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Content
+      query: { id: "$.content_id" }
+      data:
+        status: approved
+        reviewed_at: "$.now"
+        reviewed_by: "$.reviewer_id"
+      description: Mark content as approved
+    label: Update Status Approved
+
+  - id: event-aprv1evt
+    type: event
+    position: { x: 150, y: 570 }
+    connections:
+      - targetNodeId: terminal-aprv1suc
+    spec:
+      direction: emit
+      event_name: ContentApproved
+      payload:
+        content_id: "$.content_id"
+        approved_by: "$.reviewer_id"
+      async: true
+      description: Notify downstream that content is approved
+    label: Emit ContentApproved
+
+  - id: terminal-aprv1suc
+    type: terminal
+    position: { x: 150, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Content approved"
+        content_id: "$.content_id"
+      description: Content approved successfully
+    label: Approved
+
+  - id: data_store-rjct1upd
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: event-rjct1evt
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r3
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Content
+      query: { id: "$.content_id" }
+      data:
+        status: rejected
+        rejection_reason: "$.rejection_reason"
+        reviewed_at: "$.now"
+        reviewed_by: "$.reviewer_id"
+      description: Mark content as rejected with reason
+    label: Update Status Rejected
+
+  - id: event-rjct1evt
+    type: event
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-rjct1suc
+    spec:
+      direction: emit
+      event_name: ContentRejected
+      payload:
+        content_id: "$.content_id"
+        reason: "$.rejection_reason"
+        rejected_by: "$.reviewer_id"
+      async: true
+      description: Notify downstream that content is rejected
+    label: Emit ContentRejected
+
+  - id: terminal-rjct1suc
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Content rejected"
+        content_id: "$.content_id"
+        reason: "$.rejection_reason"
+      description: Content rejected successfully
+    label: Rejected
+
+  - id: process-3sc4l8te
+    type: process
+    position: { x: 650, y: 440 }
+    connections:
+      - targetNodeId: terminal-3sc4l8td
+    spec:
+      action: Escalate review to senior editor
+      service: EditorialService.escalateToSenior
+      inputs: ["$.content_id", "$.reviewer_id"]
+      description: Reassign content to a senior editor for review
+    label: Escalate to Senior
+
+  - id: terminal-3sc4l8td
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Escalated to senior editor"
+        content_id: "$.content_id"
+      description: Content escalated for senior review
+    label: Escalated
+
+  - id: terminal-d3f3rr3d
+    type: terminal
+    position: { x: 900, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Review deferred"
+        content_id: "$.content_id"
+      description: Review deferred to a later time
+    label: Deferred
+
+  - id: terminal-db3rr0r1
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to load content"
+      description: Database error loading content
+    label: DB Error (Fetch)
+
+  - id: terminal-db3rr0r2
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to update content status"
+      description: Database error updating approved status
+    label: DB Error (Approve)
+
+  - id: terminal-db3rr0r3
+    type: terminal
+    position: { x: 650, y: 700 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to update content status"
+      description: Database error updating rejected status
+    label: DB Error (Reject)
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

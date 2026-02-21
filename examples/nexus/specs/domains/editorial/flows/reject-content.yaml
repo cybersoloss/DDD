@@ -1,0 +1,175 @@
+flow:
+  id: reject-content
+  name: Reject Content
+  type: traditional
+  domain: editorial
+  description: Reject content with a required reason and enforce status transition
+
+trigger:
+  id: trigger-rjctc0nt
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-v4l1drjc
+  spec:
+    event: "HTTP POST /api/v1/editorial/:id/reject"
+    source: API Gateway
+    description: Reject content endpoint
+  label: Reject Content Request
+
+nodes:
+  - id: input-v4l1drjc
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-r3adcntm
+        sourceHandle: valid
+      - targetNodeId: terminal-1nv4l1d
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: reason
+          type: string
+          required: true
+      validation: "reason must be non-empty string"
+      description: Validate rejection reason
+    label: Validate Input
+
+  - id: data_store-r3adcntm
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-upd4trjc
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r1
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query: { id: "$.id" }
+      description: Load content to verify current status
+    label: Read Content
+
+  - id: data_store-upd4trjc
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: data_store-cr34trjc
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r2
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Content
+      query:
+        id: "$.id"
+        status: pending_review
+      data:
+        status: rejected
+        reviewed_at: "$.now"
+        reviewed_by: "$.user_id"
+      description: Transition content status from pending_review to rejected
+    label: Update Status
+
+  - id: data_store-cr34trjc
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: event-rjct3d
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r3
+        sourceHandle: error
+    spec:
+      operation: create
+      model: ContentRejection
+      data:
+        content_id: "$.id"
+        reason: "$.reason"
+        rejected_by: "$.user_id"
+      description: Create rejection record for audit trail
+    label: Create Rejection Record
+
+  - id: event-rjct3d
+    type: event
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: terminal-s4cc3ss
+    spec:
+      direction: emit
+      event_name: ContentRejected
+      payload:
+        content_id: "$.id"
+        reason: "$.reason"
+        rejected_by: "$.user_id"
+      async: true
+      description: Notify downstream that content was rejected
+    label: Emit ContentRejected
+
+  - id: terminal-s4cc3ss
+    type: terminal
+    position: { x: 400, y: 830 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Content rejected"
+        content_id: "$.id"
+      description: Content rejected successfully
+    label: Success
+
+  - id: terminal-1nv4l1d
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+      description: Invalid rejection reason
+    label: Invalid Input
+
+  - id: terminal-db3rr0r1
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to load content"
+      description: Database error reading content
+    label: DB Error (Read)
+
+  - id: terminal-db3rr0r2
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to update content status"
+      description: Database error updating status (may be invalid transition)
+    label: DB Error (Update)
+
+  - id: terminal-db3rr0r3
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to create rejection record"
+      description: Database error creating rejection record
+    label: DB Error (Rejection)
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

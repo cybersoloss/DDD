@@ -1,0 +1,67 @@
+flow:
+  id: stream-live-metrics
+  name: Stream Live Metrics
+  type: traditional
+  domain: analytics
+  description: Stream aggregated live metrics to connected clients via WebSocket
+
+trigger:
+  id: trigger-Wk3mPx9L
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: collection-Tn8vQe2R
+  spec:
+    event: "ws /api/v1/analytics/live"
+    source: API Gateway
+    description: WebSocket connection for live analytics streaming
+  label: WebSocket Connect
+
+nodes:
+  - id: collection-Tn8vQe2R
+    type: collection
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-Jd4fAm7B
+        sourceHandle: result
+      - targetNodeId: terminal-Yx6kNw1H
+        sourceHandle: empty
+    spec:
+      operation: aggregate
+      input: "$.incoming_events"
+      accumulator:
+        init: { views: 0, engagements: 0 }
+        expression: "{views: acc.views + item.views, engagements: acc.engagements + item.engagements}"
+      output: "live_metrics"
+      description: Aggregate incoming events into cumulative view and engagement counts
+    label: Aggregate Metrics
+
+  - id: terminal-Jd4fAm7B
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      description: Stream aggregated live metrics to the WebSocket client
+      response_type: stream
+      status: 200
+      body: "$.live_metrics"
+    label: Stream Metrics
+
+  - id: terminal-Yx6kNw1H
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: success
+      description: Return empty metrics when no events have been received
+      response_type: stream
+      status: 200
+      body:
+        views: 0
+        engagements: 0
+    label: Empty Metrics
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

@@ -1,0 +1,76 @@
+name: Processing
+description: AI-powered content analysis pipeline
+flows:
+  - id: classify-content
+    name: Classify Content
+    description: Classify ingested content by category and type
+    type: traditional
+    tags: [event-driven]
+  - id: summarize-batch
+    name: Summarize Batch
+    description: Generate summaries for batches of content
+    type: traditional
+    tags: [cron]
+  - id: score-quality
+    name: Score Quality
+    description: Score content quality using heuristics
+    type: traditional
+  - id: analyze-with-agents
+    name: Analyze With Agents
+    description: Deep content analysis using AI agents
+    type: agent
+    tags: [public-api]
+    criticality: critical
+  - id: orchestrate-analysis
+    name: Orchestrate Analysis
+    description: Coordinate multi-step analysis pipelines
+    type: traditional
+  - id: route-to-specialist
+    name: Route to Specialist
+    description: Route content to specialized analysis flows
+    type: traditional
+  - id: collaborative-review
+    name: Collaborative Review
+    description: Multi-agent collaborative content review
+    type: agent
+    tags: [public-api]
+  - id: fact-check-agent
+    name: Fact Check Agent
+    description: Agent that verifies factual claims in content
+    type: agent
+    tags: [internal]
+  - id: bias-check-agent
+    name: Bias Check Agent
+    description: Agent that analyzes content for bias and loaded language
+    type: agent
+    tags: [internal]
+  - id: general-scorer
+    name: General Scorer
+    description: General-purpose LLM quality scorer for unspecialized content
+    type: traditional
+    tags: [internal]
+publishes_events:
+  - event: ContentClassified
+    from_flow: classify-content
+    description: Content has been classified by category
+  - event: ContentSummarized
+    from_flow: summarize-batch
+    description: Content batch has been summarized
+  - event: QualityScored
+    from_flow: analyze-with-agents
+    description: Content quality score has been assigned
+consumes_events:
+  - event: ContentIngested
+    from_flow: ingestion/fetch-rss-feeds
+    handled_by_flow: classify-content
+    description: New content triggers classification
+layout:
+  flows:
+    classify-content: { x: 100, y: 100 }
+    summarize-batch: { x: 100, y: 300 }
+    score-quality: { x: 100, y: 500 }
+    analyze-with-agents: { x: 100, y: 700 }
+    orchestrate-analysis: { x: 100, y: 900 }
+    route-to-specialist: { x: 100, y: 1100 }
+    collaborative-review: { x: 100, y: 1300 }
+  portals: {}

@@ -1,0 +1,128 @@
+flow:
+  id: summarize-batch
+  name: Summarize Batch
+  type: traditional
+  domain: processing
+  description: Periodically summarizes unsummarized content in batches using LLM
+
+trigger:
+  id: trigger-j3p6x9b2
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-k8q1y4c7
+  spec:
+    event: "cron 0 * * * *"
+    description: Runs every hour to process unsummarized content
+    job_config:
+      queue: "ai"
+      concurrency: 2
+      timeout: 300000
+      retry:
+        max_attempts: 3
+        strategy: exponential
+      dead_letter: true
+  label: Hourly Summarization Cron
+
+nodes:
+  - id: data_store-k8q1y4c7
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: loop-l5r2z7d0
+        sourceHandle: success
+      - targetNodeId: terminal-m0s8a3e6
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      where:
+        summary: null
+      pagination:
+        strategy: cursor
+        limit: 50
+    label: Read Unsummarized Content
+
+  - id: loop-l5r2z7d0
+    type: loop
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: llm_call-n4t9b1f3
+        sourceHandle: body
+      - targetNodeId: data_store-p7u5c8g2
+        sourceHandle: done
+    spec:
+      collection: "$.items"
+      iterator: item
+      accumulate:
+        strategy: append
+        output: all_summaries
+    label: Loop Through Content Items
+
+  - id: llm_call-n4t9b1f3
+    type: llm_call
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: loop-l5r2z7d0
+        sourceHandle: success
+      - targetNodeId: terminal-q2v6d0h5
+        sourceHandle: error
+    spec:
+      model: "claude-haiku-4-5-20251001"
+      prompt: "Summarize: {item.body}"
+      max_tokens: 200
+    label: Summarize Content Item
+
+  - id: data_store-p7u5c8g2
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-r9w3e7i8
+        sourceHandle: success
+      - targetNodeId: terminal-s1x0f4j6
+        sourceHandle: error
+    spec:
+      operation: update_many
+      model: Content
+      set:
+        summaries: "$.all_summaries"
+    label: Bulk Update Summaries
+
+  - id: terminal-r9w3e7i8
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      success: true
+    label: Batch Summarization Complete
+
+  - id: terminal-m0s8a3e6
+    type: terminal
+    position: { x: 650, y: 250 }
+    connections: []
+    spec:
+      success: false
+      error: "Failed to read unsummarized content"
+    label: Read Error
+
+  - id: terminal-q2v6d0h5
+    type: terminal
+    position: { x: 650, y: 510 }
+    connections: []
+    spec:
+      success: false
+      error: "LLM summarization failed"
+    label: LLM Error
+
+  - id: terminal-s1x0f4j6
+    type: terminal
+    position: { x: 650, y: 640 }
+    connections: []
+    spec:
+      success: false
+      error: "Failed to bulk update summaries"
+    label: Update Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

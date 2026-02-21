@@ -1,0 +1,120 @@
+flow:
+  id: bulk-approve
+  name: Bulk Approve Content
+  type: traditional
+  domain: editorial
+  description: Approve multiple content items in a single atomic transaction
+
+trigger:
+  id: trigger-b4lk8prv
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-v4l1d8te
+  spec:
+    event: "HTTP POST /api/v1/editorial/bulk-approve"
+    source: API Gateway
+    description: Bulk approve endpoint
+  label: Bulk Approve Request
+
+nodes:
+  - id: input-v4l1d8te
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: transaction-blk4prv
+        sourceHandle: valid
+      - targetNodeId: terminal-1nv4l1d
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: content_ids
+          type: array
+          required: true
+        - name: reviewer_notes
+          type: string
+          required: false
+      validation: "content_ids must be non-empty array of UUIDs"
+      description: Validate bulk approve payload
+    label: Validate Input
+
+  - id: transaction-blk4prv
+    type: transaction
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: event-blk4done
+        sourceHandle: committed
+      - targetNodeId: terminal-r0llb4ck
+        sourceHandle: rolled_back
+        behavior: stop
+    spec:
+      isolation: serializable
+      steps:
+        - action: "Update all content statuses to approved"
+          rollback: "Revert content statuses to pending"
+        - action: "Create audit log entries"
+          rollback: "Delete audit entries"
+        - action: "Emit approval events"
+      rollback_on_error: true
+      description: Atomically approve all content items with audit trail
+    label: Bulk Approve Transaction
+
+  - id: event-blk4done
+    type: event
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-s4cc3ss
+    spec:
+      direction: emit
+      event_name: BulkOperationCompleted
+      payload:
+        operation: "bulk-approve"
+        content_ids: "$.content_ids"
+        count: "$.content_ids.length"
+        approved_by: "$.user_id"
+      async: true
+      description: Notify that bulk approval completed
+    label: Emit BulkOperationCompleted
+
+  - id: terminal-s4cc3ss
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        message: "Bulk approval completed"
+        approved_count: "$.content_ids.length"
+      description: All content items approved successfully
+    label: Success
+
+  - id: terminal-1nv4l1d
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+      description: Invalid input data
+    label: Invalid Input
+
+  - id: terminal-r0llb4ck
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Bulk approve transaction failed, all changes rolled back"
+      description: Transaction rolled back due to error
+    label: Transaction Failed
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

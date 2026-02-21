@@ -1,0 +1,127 @@
+flow:
+  id: generate-weekly-digest
+  name: Generate Weekly Digest
+  type: traditional
+  domain: analytics
+  description: Generate a weekly analytics digest by merging the past 7 daily reports
+
+trigger:
+  id: trigger-Dp6nJx3Q
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-Kw9bRm4T
+  spec:
+    event: "cron 0 6 * * 1"
+    source: Scheduler
+    description: Runs every Monday at 6am to compile the weekly analytics digest
+  label: Weekly Monday 6am
+
+nodes:
+  - id: data_store-Kw9bRm4T
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: collection-Hv5tNp8L
+        sourceHandle: success
+      - targetNodeId: terminal-Yx7cFk2W
+        sourceHandle: error
+    spec:
+      store_type: filesystem
+      operation: read
+      path: "$.reports_dir/daily/"
+      description: Read daily report files from the past 7 days
+    label: Read Daily Reports
+
+  - id: collection-Hv5tNp8L
+    type: collection
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: transform-Qr3jBw6S
+        sourceHandle: result
+      - targetNodeId: terminal-Yx7cFk2W
+        sourceHandle: empty
+    spec:
+      operation: merge
+      input: "$.daily_reports"
+      output: "merged_reports"
+      description: Merge all daily reports into a single combined dataset
+    label: Merge Reports
+
+  - id: transform-Qr3jBw6S
+    type: transform
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: data_store-Mn8fGx1P
+    spec:
+      input_schema: DailyReports
+      output_schema: WeeklyDigest
+      field_mappings:
+        week_start: "$.week_start_date"
+        week_end: "$.week_end_date"
+        total_events: "sum($.merged_reports.*.total)"
+        events_by_type: "aggregate($.merged_reports.*.events_by_type)"
+        daily_breakdown: "$.merged_reports"
+        trend: "compare($.merged_reports[0], $.merged_reports[6])"
+      description: Transform merged daily data into weekly digest format with trends
+    label: Format Digest
+
+  - id: data_store-Mn8fGx1P
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-Bt4kVr9J
+        sourceHandle: success
+      - targetNodeId: terminal-Cw6dLn3H
+        sourceHandle: error
+    spec:
+      operation: create
+      model: WeeklyDigest
+      data:
+        week_start: "$.weekly_digest.week_start"
+        week_end: "$.weekly_digest.week_end"
+        total_events: "$.weekly_digest.total_events"
+        events_by_type: "$.weekly_digest.events_by_type"
+        daily_breakdown: "$.weekly_digest.daily_breakdown"
+        trend: "$.weekly_digest.trend"
+      description: Persist weekly digest record in the database
+    label: Store Digest
+
+  - id: terminal-Bt4kVr9J
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      description: Weekly digest generated and persisted successfully
+    label: Digest Complete
+
+  - id: terminal-Yx7cFk2W
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to read daily reports or no reports found
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to read daily reports for weekly digest"
+    label: Read/Merge Error
+
+  - id: terminal-Cw6dLn3H
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to store weekly digest in database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to persist weekly digest"
+    label: Store Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

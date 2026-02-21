@@ -1,0 +1,99 @@
+flow:
+  id: get-content
+  name: Get Content
+  type: traditional
+  domain: content
+  description: Retrieve a content entity by ID with source and version relations
+
+trigger:
+  id: trigger-bV1zF5qN
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-cW2aG6rP
+  spec:
+    event: "HTTP GET /api/v1/content/:id"
+    source: API Gateway
+    description: Get content by ID endpoint
+  label: Get Content Request
+
+nodes:
+  - id: data_store-cW2aG6rP
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: decision-dX3bH7sQ
+        sourceHandle: success
+      - targetNodeId: terminal-fZ5dJ9uS
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query: { id: "$.params.id" }
+      include:
+        - model: ContentSource
+          via: source_id
+          as: source
+        - model: ContentVersion
+          via: has_many
+          as: versions
+      safety: strict
+      description: Read content with source and version history, null-safe
+    label: Read Content
+
+  - id: decision-dX3bH7sQ
+    type: decision
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: terminal-eY4cI8tR
+        sourceHandle: "true"
+      - targetNodeId: terminal-gA6eK1vT
+        sourceHandle: "false"
+    spec:
+      condition: "$.content != null"
+      description: Check if content was found
+    label: Content Found?
+
+  - id: terminal-eY4cI8tR
+    type: terminal
+    position: { x: 400, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        content: "$.content"
+        source: "$.content.source"
+        versions: "$.content.versions"
+      description: Content retrieved with relations
+    label: Success 200
+
+  - id: terminal-gA6eK1vT
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 404
+      body:
+        error: "NOT_FOUND"
+        message: "Content not found"
+      description: Content with given ID does not exist
+    label: Not Found
+
+  - id: terminal-fZ5dJ9uS
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to read content"
+      description: Database error reading content
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

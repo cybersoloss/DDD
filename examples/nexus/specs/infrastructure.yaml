@@ -1,0 +1,52 @@
+services:
+  - id: backend
+    type: server
+    runtime: Node.js 20
+    framework: Express 4
+    entry: src/server/index.ts
+    port: 3001
+    health: /api/v1/health
+    depends_on: [database, cache, queue]
+    dev_command: "npx tsx watch src/server/index.ts"
+
+  - id: frontend
+    type: server
+    runtime: Next.js 14
+    entry: src/app/
+    port: 3000
+    depends_on: [backend]
+    dev_command: "npx next dev"
+
+  - id: database
+    type: datastore
+    engine: PostgreSQL 16
+    port: 5432
+    health: "pg_isready -U nexus"
+    setup: "npx prisma db push"
+
+  - id: cache
+    type: datastore
+    engine: Redis 7
+    port: 6379
+    health: "redis-cli ping"
+
+  - id: queue
+    type: worker
+    runtime: Node.js 20
+    engine: BullMQ
+    entry: src/worker/index.ts
+    depends_on: [database, cache]
+    dev_command: "npx tsx watch src/worker/index.ts"
+
+  - id: proxy
+    type: proxy
+    engine: nginx
+    port: 80
+    depends_on: [backend, frontend]
+    config: nginx.conf
+
+startup_order: [database, cache, queue, backend, frontend, proxy]
+
+deployment:
+  local: process-manager
+  production: docker-compose

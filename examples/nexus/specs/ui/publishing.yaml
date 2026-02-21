@@ -1,0 +1,91 @@
+page: publishing
+route: /publishing
+layout: sidebar
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "Publishing"
+    actions:
+      - label: "Schedule"
+        action: show-schedule-form
+        variant: primary
+
+  - id: scheduled-items
+    component: item-list
+    position: main
+    label: "Scheduled Publications"
+    data_source: publishing/list-scheduled
+    item_template:
+      title: $.content.title
+      subtitle: "$.channels · Scheduled $.publish_at"
+      badge: $.status
+    item_actions:
+      - label: "Publish Now"
+        flow: publishing/publish-content
+        confirm: true
+      - label: "Cancel"
+        flow: publishing/cancel-schedule
+        variant: destructive
+    empty_state:
+      message: "No scheduled publications"
+      description: "Schedule content to be published automatically"
+
+  - id: recent-published
+    component: item-list
+    position: sidebar
+    label: "Recently Published"
+    data_source: publishing/list-published
+    query:
+      limit: 5
+      sort: published_at desc
+    item_template:
+      title: $.content.title
+      subtitle: "$.channel · $.published_at"
+      badge: $.status
+
+forms:
+  - id: schedule-publish
+    label: "Schedule Publication"
+    position: modal
+    fields:
+      - name: content_id
+        type: search-select
+        label: "Content"
+        search_source: content/get-content
+        display_field: title
+        value_field: id
+        required: true
+      - name: publish_at
+        type: datetime
+        label: "Publish At"
+        required: true
+      - name: channels
+        type: multi-select
+        label: "Channels"
+        options: [twitter, linkedin, newsletter, website]
+        required: true
+      - name: priority
+        type: slider
+        label: "Priority"
+        min: 1
+        max: 10
+        step: 1
+        default: 5
+    submit:
+      flow: publishing/schedule-publication
+      label: "Schedule"
+      loading_label: "Scheduling..."
+      success:
+        message: "Publication scheduled"
+      error:
+        message: "Failed to schedule publication"
+        retry: true
+
+state:
+  store: publishing-store
+  initial_fetch: [publishing/list-scheduled]
+loading: skeleton
+error: retry-banner
+refresh: manual

@@ -1,0 +1,55 @@
+name: PublishRecord
+description: Record of content published to a specific distribution channel with status tracking
+inherits: _base
+fields:
+  - name: content_id
+    type: uuid
+    required: true
+  - name: channel
+    type: enum
+    values: [twitter, linkedin, newsletter, website]
+    required: true
+    ref: publish_channel
+  - name: platform_post_id
+    type: string
+    required: false
+    constraints:
+      max_length: 500
+  - name: status
+    type: enum
+    values: [pending, published, failed]
+    required: true
+    default: pending
+  - name: published_at
+    type: datetime
+    required: false
+  - name: error_message
+    type: text
+    required: false
+  - name: metrics
+    type: json
+    required: false
+indexes:
+  - fields: [content_id, channel]
+    unique: true
+    type: btree
+    description: One publish record per content per channel
+  - fields: [status]
+    unique: false
+    type: btree
+    description: Filter publish records by current status
+relationships:
+  - name: content
+    type: belongs_to
+    target: Content
+    foreign_key: content_id
+transitions:
+  field: status
+  states:
+    - from: pending
+      to: [published, failed]
+    - from: failed
+      to: [pending]
+    - from: published
+      to: []
+  on_invalid: warn

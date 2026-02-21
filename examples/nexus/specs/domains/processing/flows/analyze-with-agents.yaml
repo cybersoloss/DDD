@@ -1,0 +1,131 @@
+flow:
+  id: analyze-with-agents
+  name: Analyze with Agents
+  type: agent
+  domain: processing
+  description: Deep content analysis using an agent loop with input/output guardrails
+
+trigger:
+  id: trigger-e6j2r8v1
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: guardrail-f3k7s0w5
+  spec:
+    event: "HTTP POST /api/v1/content/:id/analyze"
+    description: API endpoint to trigger deep analysis of a specific content item
+  label: Analyze Content Request
+
+nodes:
+  - id: guardrail-f3k7s0w5
+    type: guardrail
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: agent_loop-g9l1t4x8
+        sourceHandle: pass
+      - targetNodeId: terminal-h2m6u7y3
+        sourceHandle: block
+    spec:
+      position: input
+      checks:
+        - id: content-length
+          rule: "content_length > 0"
+        - id: prohibited
+          rule: "no_prohibited_content"
+      on_block:
+        status: 422
+        message: "Content validation failed"
+    label: Input Guardrail
+
+  - id: agent_loop-g9l1t4x8
+    type: agent_loop
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: guardrail-i5n0v2z6
+        sourceHandle: done
+      - targetNodeId: terminal-j8o3w9a4
+        sourceHandle: error
+    spec:
+      model: "claude-sonnet-4-5-20241022"
+      system_prompt: "You are a deep content analyst. Analyze the provided content thoroughly, checking facts, analyzing sentiment, and searching for related context to provide comprehensive insights."
+      max_iterations: 10
+      temperature: 0.3
+      on_max_iterations: respond
+      tools:
+        - id: search
+          name: search_web
+          description: "Search for related content"
+        - id: analyze
+          name: analyze_sentiment
+          description: "Analyze content sentiment"
+          is_terminal: true
+        - id: facts
+          name: check_facts
+          description: "Verify factual claims"
+      memory:
+        type: conversation_history
+        strategy: sliding_window
+        max_tokens: 4000
+    label: Deep Analysis Agent Loop
+
+  - id: guardrail-i5n0v2z6
+    type: guardrail
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: event-k1p6x5b7
+        sourceHandle: pass
+      - targetNodeId: terminal-h2m6u7y3
+        sourceHandle: block
+    spec:
+      position: output
+      checks:
+        - id: hallucination
+          rule: "no_hallucinated_sources"
+          action: warn
+    label: Output Guardrail
+
+  - id: event-k1p6x5b7
+    type: event
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-l4q8y0c9
+    spec:
+      direction: emit
+      event_name: QualityScored
+      payload:
+        content_id: "$.content.id"
+        analysis: "$.agent_result"
+    label: Emit QualityScored
+
+  - id: terminal-l4q8y0c9
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      status: 200
+      success: true
+    label: Analysis Complete
+
+  - id: terminal-h2m6u7y3
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      status: 422
+      success: false
+      error: "Content validation failed"
+    label: Guardrail Block
+
+  - id: terminal-j8o3w9a4
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      status: 500
+      success: false
+      error: "Agent loop failed"
+    label: Agent Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

@@ -1,0 +1,59 @@
+name: Editorial
+description: Human review and approval workflows
+flows:
+  - id: review-content
+    name: Review Content
+    description: Human review and approval of content
+    type: traditional
+    criticality: high
+  - id: bulk-approve
+    name: Bulk Approve
+    description: Approve multiple content items at once
+    type: traditional
+  - id: assign-reviewer
+    name: Assign Reviewer
+    description: Assign a reviewer to content items
+    type: traditional
+  - id: list-editorial-queue
+    name: List Editorial Queue
+    description: List content items awaiting editorial review
+    type: traditional
+  - id: get-review-stats
+    name: Get Review Stats
+    description: Retrieve editorial review statistics
+    type: traditional
+  - id: reject-content
+    name: Reject Content
+    description: Reject content with feedback
+    type: traditional
+publishes_events:
+  - event: ContentApproved
+    from_flow: review-content
+    description: Content has been approved by a reviewer
+  - event: ContentRejected
+    from_flow: reject-content
+    description: Content has been rejected with feedback
+  - event: BulkOperationCompleted
+    from_flow: bulk-approve
+    description: Bulk approval operation has completed
+  - event: ReviewerAssigned
+    from_flow: assign-reviewer
+    description: A reviewer has been assigned to content
+consumes_events:
+  - event: ContentClassified
+    from_flow: processing/classify-content
+    handled_by_flow: review-content
+    description: Classified content enters editorial review
+  - event: QualityScored
+    from_flow: processing/analyze-with-agents
+    handled_by_flow: review-content
+    description: Quality-scored content enters editorial review
+layout:
+  flows:
+    review-content: { x: 100, y: 100 }
+    bulk-approve: { x: 100, y: 300 }
+    assign-reviewer: { x: 100, y: 500 }
+    list-editorial-queue: { x: 100, y: 700 }
+    get-review-stats: { x: 100, y: 900 }
+    reject-content: { x: 100, y: 1100 }
+  portals: {}

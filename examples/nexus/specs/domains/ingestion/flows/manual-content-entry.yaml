@@ -1,0 +1,127 @@
+flow:
+  id: manual-content-entry
+  name: Manual Content Entry
+  type: traditional
+  domain: ingestion
+  description: Allow users to manually create content entries through a form submission
+
+trigger:
+  id: trigger-vT8sF1bY
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-wU9tG2cZ
+  spec:
+    event: "manual"
+    source: Admin Dashboard
+    description: Triggered when a user manually submits a content entry
+  label: Manual Entry
+
+nodes:
+  - id: input-wU9tG2cZ
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-xV1uH3dA
+        sourceHandle: valid
+      - targetNodeId: terminal-yW2vI4eB
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: title
+          type: string
+          required: true
+        - name: url
+          type: string
+          required: false
+        - name: body
+          type: text
+          required: false
+        - name: source_type
+          type: string
+          required: true
+        - name: tags
+          type: string[]
+          required: false
+      validation: "title must be non-empty, source_type must be one of [rss, web, manual, api, social]"
+      description: Validate the manually entered content fields
+    label: Validate Content Fields
+
+  - id: terminal-yW2vI4eB
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Invalid content entry fields
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+    label: Invalid Input
+
+  - id: data_store-xV1uH3dA
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: event-zX3wJ5fC
+        sourceHandle: success
+      - targetNodeId: terminal-aY4xK6gD
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Content
+      data:
+        title: "$.title"
+        url: "$.url"
+        body: "$.body"
+        source_type: "$.source_type"
+        tags: "$.tags"
+      description: Create a new content record from the manual entry
+    label: Create Content
+
+  - id: terminal-aY4xK6gD
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to save manually entered content
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to persist content entry"
+    label: Save Error
+
+  - id: event-zX3wJ5fC
+    type: event
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-bZ5yL7hE
+    spec:
+      direction: emit
+      event_name: ContentIngested
+      payload:
+        content_id: "$.content.id"
+        source_type: "$.source_type"
+        source: manual
+      async: true
+      description: Emit event to notify downstream services of new manual content
+    label: Emit ContentIngested
+
+  - id: terminal-bZ5yL7hE
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      description: Manual content entry created successfully
+      status: 201
+      body:
+        message: "Content created successfully"
+        content_id: "$.content.id"
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

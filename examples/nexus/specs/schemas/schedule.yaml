@@ -1,0 +1,45 @@
+name: Schedule
+description: Scheduled content publishing with channel targeting
+inherits: _base
+fields:
+  - name: content_id
+    type: uuid
+    required: true
+  - name: publish_at
+    type: datetime
+    required: true
+  - name: channels
+    type: json
+    required: true
+  - name: status
+    type: enum
+    values: [scheduled, published, cancelled]
+    required: true
+    default: scheduled
+  - name: created_by
+    type: uuid
+    required: true
+indexes:
+  - fields: [publish_at, status]
+    type: btree
+  - fields: [content_id]
+    type: btree
+relationships:
+  - name: content
+    type: belongs_to
+    target: Content
+    foreign_key: content_id
+  - name: creator
+    type: belongs_to
+    target: User
+    foreign_key: created_by
+transitions:
+  field: status
+  states:
+    - from: scheduled
+      to: [published, cancelled]
+    - from: cancelled
+      to: [scheduled]
+    - from: published
+      to: []
+  on_invalid: reject

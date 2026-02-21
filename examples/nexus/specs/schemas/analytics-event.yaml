@@ -1,0 +1,46 @@
+name: AnalyticsEvent
+description: Tracks user and content interaction events for analytics and reporting
+inherits: _base
+fields:
+  - name: event_type
+    type: string
+    required: true
+    constraints:
+      max_length: 100
+  - name: content_id
+    type: uuid
+    required: false
+  - name: user_id
+    type: uuid
+    required: false
+  - name: event_data
+    type: json
+    required: true
+  - name: source
+    type: string
+    required: true
+    constraints:
+      max_length: 50
+  - name: session_id
+    type: string
+    required: false
+    constraints:
+      max_length: 100
+indexes:
+  - fields: [event_type, created_at]
+    type: btree
+  - fields: [content_id]
+    type: btree
+  - fields: [event_data]
+    type: gin
+  - fields: [session_id]
+    type: hash
+relationships:
+  - name: content
+    type: belongs_to
+    target: Content
+    foreign_key: content_id
+  - name: user
+    type: belongs_to
+    target: User
+    foreign_key: user_id

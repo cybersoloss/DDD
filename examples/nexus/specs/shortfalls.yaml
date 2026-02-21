@@ -1,0 +1,211 @@
+# DDD Shortfall Report
+# Generated during: /ddd-create nexus --shortfalls
+# Date: 2026-02-21T00:00:00Z
+# Purpose: Document DDD framework gaps encountered during spec design
+
+project: nexus
+generated: "2026-02-21T00:00:00Z"
+ddd_version: "1.0"
+
+# Severity: critical = blocked design intent, high = significant workaround needed,
+#           medium = minor workaround, low = cosmetic or nice-to-have
+
+inadequate_existing_nodes:
+  - node_type: "delay"
+    severity: medium
+    limitation: "Used as a rate limiter, but delay is a dumb wait — it cannot track
+                 request counts per window, enforce limits per client, or return
+                 429 status when quota exceeded"
+    suggestion: "Add a rate_limiter node type (or rate_limit field on trigger) with
+                 window_ms, max_requests, key_by (per-client/per-IP), and
+                 on_exceeded behavior (reject/queue/delay)"
+    flows_affected:
+      - "publishing/publish-to-social"
+      - "ingestion/scrape-web-content"
+
+  - node_type: "crypto"
+    severity: low
+    limitation: "No explicit decrypt operation — the framework defines encrypt but
+                 reading encrypted fields (like ApiKey.key_hash) relies on implicit
+                 application-level decryption, not a structured spec node"
+    suggestion: "Add decrypt as a first-class crypto operation for symmetry with encrypt"
+    flows_affected:
+      - "users/manage-api-keys"
+
+missing_spec_fields:
+  - location: "trigger"
+    target_type: "webhook"
+    field_name: "signature_validation"
+    severity: low
+    description: "Webhook triggers should optionally express HMAC signature validation
+                  inline — algorithm, key_source, header_name — without requiring a
+                  separate crypto verify node after the trigger"
+    workaround: "Used a crypto verify node as the first step after the webhook trigger,
+                 which works correctly but is more verbose than necessary"
+
+workarounds:
+  - flow: "users/login-user"
+    node_id: "process-Qd3nBx9F"
+    node_type_used: "process"
+    intended_operation: "Generate JWT token with user claims (id, email, role)"
+    why_no_fit: "No token/JWT node type exists. crypto node handles hash/sign/verify
+                 but JWT generation is a specific auth primitive (header + payload +
+                 signature) that doesn't map cleanly to generic crypto sign"
+    proposed_node_type: "Enhance crypto with a 'jwt_sign' operation, or accept that
+                         JWT generation is business logic best left as a process node"
+    severity: medium
+
+  - flow: "editorial/get-review-stats"
+    node_id: "process-f0rm4tst"
+    node_type_used: "process"
+    intended_operation: "Format raw database aggregates into client-friendly response shape"
+    why_no_fit: "transform node requires input_schema and output_schema with field_mappings,
+                 but this operation reshapes arbitrary aggregates into a stats object —
+                 it's closer to a 'reshape' than a schema-to-schema mapping"
+    proposed_node_type: "Could be a transform node if transform supported freeform
+                         field expressions, not just field-to-field mappings. Alternatively,
+                         accept this as legitimate business_logic process usage"
+    severity: medium
+
+  - flow: "editorial/assign-reviewer"
+    node_id: "process-t4k3frst"
+    node_type_used: "process"
+    intended_operation: "Select the first reviewer from a sorted list (take first element)"
+    why_no_fit: "collection node supports filter, sort, deduplicate, merge, group_by,
+                 aggregate, reduce, flatten — but not 'first' or 'take(n)'. The sorted
+                 list was produced by a collection sort node, then this process node
+                 extracts element [0]"
+    proposed_node_type: "Add 'first' or 'take' operation to collection node"
+    severity: medium
+
+  - flow: "editorial/review-content"
+    node_id: "process-3sc4l8te"
+    node_type_used: "process"
+    intended_operation: "Escalate review to senior editor (reassign content to a senior
+                         reviewer when the human_gate escalate option is chosen)"
+    why_no_fit: "This is a reassignment/routing operation that doesn't fit any structured
+                 node — it's not a data_store update (it involves finding a senior editor
+                 and reassigning), not a handoff (that's agent-to-agent), not a
+                 smart_router (routing already happened). It's genuine business logic"
+    proposed_node_type: "Legitimate business_logic — no change needed"
+    severity: medium
+
+  - flow: "settings/update-settings"
+    node_id: "process-iJ4gM9xA"
+    node_type_used: "process"
+    intended_operation: "Invalidate settings cache (delete a specific cache key)"
+    why_no_fit: "cache node supports get (hit/miss) pattern but has no 'invalidate'
+                 or 'delete' operation — it's read-through only. Invalidation after
+                 a write requires a process node calling CacheService.delete"
+    proposed_node_type: "Add 'invalidate' or 'delete' operation to cache node"
+    severity: medium
+
+  - flow: "settings/get-settings"
+    node_id: "process-cD7aG3rU"
+    node_type_used: "process"
+    intended_operation: "Store settings in cache after fetching from database (cache write-through)"
+    why_no_fit: "cache node is designed for read-through (check cache → miss → fetch →
+                 return), but explicit cache-write after a database read requires a
+                 process node. The cache node has no 'set' or 'write' operation"
+    proposed_node_type: "Add 'set' operation to cache node for explicit write-through patterns"
+    severity: medium
+
+  - flow: "analytics/query-analytics"
+    node_id: "process-Bv6jNr3S"
+    node_type_used: "process"
+    intended_operation: "Aggregate analytics results by requested granularity and metrics
+                         (time-bucket raw events into hourly/daily/weekly stats)"
+    why_no_fit: "collection aggregate node handles simple aggregations (count, sum, avg)
+                 but time-bucketed aggregation with configurable granularity is a more
+                 complex operation that doesn't map to the current aggregate spec"
+    proposed_node_type: "Enhance collection aggregate with time-bucket support
+                         (granularity, time_field), or accept this as business_logic"
+    severity: medium
+
+ui_shortfalls:
+  interaction_gaps:
+    - pattern: "drag-drop-reorder"
+      severity: medium
+      description: "Editorial queue needs drag-and-drop reordering of content priority.
+                    No spec field exists to express drag-drop as an interaction on
+                    item-list or card-grid components"
+      pages_affected:
+        - "editorial-queue"
+      suggestion: "Add an 'interactions' field to item-list/card-grid with supported
+                   patterns: reorder, drag-drop, inline-edit, bulk-select"
+
+    - pattern: "inline-edit"
+      severity: medium
+      description: "Content detail page and settings pages would benefit from inline
+                    field editing (click-to-edit a field without opening a separate form).
+                    No spec pattern exists for this"
+      pages_affected:
+        - "content-detail"
+        - "general-settings"
+      suggestion: "Add 'editable: true' flag on detail-card fields with an associated
+                   update flow reference"
+
+    - pattern: "realtime-collaborative-editing"
+      severity: low
+      description: "Collaborative review flow (processing/collaborative-review) involves
+                    multiple editors reviewing simultaneously, but the UI spec cannot
+                    express real-time cursor presence, live edits, or conflict resolution
+                    UI patterns"
+      pages_affected:
+        - "review-panel"
+      suggestion: "Add a 'collaboration' section to page specs with presence indicators,
+                   conflict resolution strategy, and live update bindings"
+
+pillar_balance:
+  logic_flows: 48
+  data_schemas: 13
+  ui_pages: 12
+  infrastructure_services: 6
+  product_described_pages:
+    - "dashboard: main landing page with stats and activity"
+    - "content-feed: browsable content list with filters"
+    - "content-detail: single content item view and edit"
+    - "sources: manage content sources (RSS, social, webhooks)"
+    - "editorial-queue: review queue for editors"
+    - "review-panel: detailed review interface"
+    - "publishing: publish queue and channel management"
+    - "analytics: charts and reports"
+    - "users-admin: user management"
+    - "general-settings: system settings"
+    - "notification-settings: notification preferences"
+    - "api-key-management: API key CRUD"
+  pages_without_specs: []
+  imbalance_warnings:
+    - severity: low
+      description: "48 backend flows and 12 UI pages — 4:1 ratio is acceptable because
+                    many flows are internal event handlers, cron jobs, and agent
+                    pipelines that have no direct UI surface"
+
+summary:
+  total_shortfalls: 14
+  by_severity:
+    critical: 0
+    high: 0
+    medium: 11
+    low: 3
+  feature_coverage:
+    node_types: 28/28
+    trigger_types: 16/16
+    collection_operations: 8/8
+    crypto_operations: 5/6
+    parse_formats: 6/7
+    data_store_types: 3/3
+    connection_behaviors: 4/4
+    ui_component_types: 9/9
+    form_field_types: 14/14
+    schema_index_types: 3/4
+    schema_seed_strategies: 3/3
+    schema_relationship_types: 3/4
+    infrastructure_service_types: 4/4
+    orchestrator_strategies: 2/4
+    handoff_modes: 1/3
+    unused_but_applicable: []
+  top_recommendation: "Extend the cache node with 'set' and 'invalidate' operations —
+                       the current read-through-only design forces process node
+                       workarounds for the most common cache patterns (write-through
+                       and explicit invalidation)"

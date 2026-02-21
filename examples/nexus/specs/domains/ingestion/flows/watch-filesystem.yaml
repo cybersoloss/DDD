@@ -1,0 +1,137 @@
+flow:
+  id: watch-filesystem
+  name: Watch Filesystem
+  type: traditional
+  domain: ingestion
+  description: React to filesystem changes detected by the native file watcher, read the changed file, parse its content, and persist as a content entry
+
+trigger:
+  id: trigger-cA6zM8iF
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-dB7aN9jG
+  spec:
+    event: "ipc:file-system-changed"
+    source: File Watcher
+    description: Triggered when the native file watcher detects a filesystem change
+  label: File System Changed
+
+nodes:
+  - id: data_store-dB7aN9jG
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: parse-eC8bP1kH
+        sourceHandle: success
+      - targetNodeId: terminal-fD9cQ2lJ
+        sourceHandle: error
+    spec:
+      store_type: filesystem
+      operation: read
+      path: "$.file_path"
+      description: Read the changed file from the filesystem
+    label: Read File
+
+  - id: terminal-fD9cQ2lJ
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to read file from filesystem
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to read file at $.file_path"
+    label: File Read Error
+
+  - id: parse-eC8bP1kH
+    type: parse
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-gE1dR3mK
+        sourceHandle: success
+      - targetNodeId: terminal-hF2eS4nL
+        sourceHandle: error
+    spec:
+      format: markdown
+      input: "$.raw_content"
+      strategy: lenient
+      output: "parsed_content"
+      description: Parse the markdown file content into structured data
+    label: Parse Markdown
+
+  - id: terminal-hF2eS4nL
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to parse file content
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "Failed to parse content from $.file_path"
+    label: Parse Error
+
+  - id: data_store-gE1dR3mK
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: event-iG3fT5oM
+        sourceHandle: success
+      - targetNodeId: terminal-jH4gU6pN
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Content
+      data:
+        title: "$.parsed_content.title"
+        body: "$.parsed_content.body"
+        source_type: filesystem
+        file_path: "$.file_path"
+      description: Create a new content record from the parsed file
+    label: Create Content
+
+  - id: terminal-jH4gU6pN
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to save file content to database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to persist file content"
+    label: Save Error
+
+  - id: event-iG3fT5oM
+    type: event
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-kJ5hV7qP
+    spec:
+      direction: emit
+      event_name: ContentIngested
+      payload:
+        content_id: "$.content.id"
+        source_type: filesystem
+        file_path: "$.file_path"
+      async: true
+      description: Emit event to notify downstream services of new filesystem content
+    label: Emit ContentIngested
+
+  - id: terminal-kJ5hV7qP
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      description: Filesystem content ingested successfully
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

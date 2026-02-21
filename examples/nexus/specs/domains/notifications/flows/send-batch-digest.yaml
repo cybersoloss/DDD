@@ -1,0 +1,119 @@
+flow:
+  id: send-batch-digest
+  name: Send Batch Digest
+  type: traditional
+  domain: notifications
+  description: Send batched notification digest across multiple delivery channels
+
+trigger:
+  id: trigger-nO1lR7cD
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-oP2mS8dE
+  spec:
+    event: "event:ReportGenerated"
+    source: Message Bus
+    description: Triggered when a report is generated, initiating batch digest delivery
+  label: Report Generated
+
+nodes:
+  - id: data_store-oP2mS8dE
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: batch-pQ3nT9eF
+        sourceHandle: success
+      - targetNodeId: terminal-sT6qW2hJ
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Notification
+      query:
+        status: pending
+      description: Read all pending notifications for batch delivery
+    label: Read Pending Notifications
+
+  - id: terminal-sT6qW2hJ
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to read pending notifications"
+      description: Database error reading pending notifications
+    label: DB Error (Read)
+
+  - id: batch-pQ3nT9eF
+    type: batch
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: terminal-qR4oU1fG
+        sourceHandle: done
+      - targetNodeId: terminal-tU7rX3iK
+        sourceHandle: error
+    spec:
+      input: "$.pending_notifications"
+      operation_template:
+        type: service_call
+        dispatch_field: "item.channel"
+      configs:
+        - match: "email"
+          method: POST
+          url: "https://api.sendgrid.com/v3/mail/send"
+          integration: sendgrid_api
+          body:
+            to: "$.item.recipient_email"
+            subject: "$.item.title"
+            content: "$.item.body"
+        - match: "push"
+          method: POST
+          url: "$.env.PUSH_WEBHOOK_URL"
+          body:
+            user_id: "$.item.user_id"
+            title: "$.item.title"
+            body: "$.item.body"
+        - match: "in_app"
+          type: data_store
+          operation: create
+          model: Notification
+          data:
+            user_id: "$.item.user_id"
+            type: in_app
+            title: "$.item.title"
+            body: "$.item.body"
+            status: sent
+            sent_at: "$.now"
+      concurrency: 5
+      on_error: continue
+      description: Dispatch each notification to its configured channel (email via SendGrid, push via webhook, in_app via database)
+    label: Batch Dispatch by Channel
+
+  - id: terminal-tU7rX3iK
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Batch digest delivery failed"
+      description: Batch processing encountered a fatal error
+    label: Batch Error
+
+  - id: terminal-qR4oU1fG
+    type: terminal
+    position: { x: 400, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      description: Batch digest delivered successfully across all channels
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

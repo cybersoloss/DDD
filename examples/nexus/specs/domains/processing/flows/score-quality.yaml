@@ -1,0 +1,184 @@
+flow:
+  id: score-quality
+  name: Score Quality
+  type: traditional
+  domain: processing
+  description: Routes classified content to specialized scoring agents based on category and updates quality score
+
+trigger:
+  id: trigger-t6y2g5k9
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: smart_router-u0z8h3l4
+  spec:
+    event: "event:ContentClassified"
+    description: Triggered when content has been classified with a category
+  label: Content Classified
+
+nodes:
+  - id: smart_router-u0z8h3l4
+    type: smart_router
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: sub_flow-v7a1i6m2
+        sourceHandle: fact-check
+      - targetNodeId: sub_flow-w3b5j9n8
+        sourceHandle: bias-check
+      - targetNodeId: sub_flow-x9c0k4o1
+        sourceHandle: general-scorer
+    spec:
+      rules:
+        - id: fact-check
+          condition: "$.category == 'news'"
+          route: fact-check-agent
+          priority: 1
+        - id: bias-check
+          condition: "$.category == 'opinion'"
+          route: bias-check-agent
+          priority: 2
+      llm_routing:
+        model: "claude-sonnet-4-5-20241022"
+        confidence_threshold: 0.8
+      fallback_chain:
+        - general-scorer
+    label: Route by Content Category
+
+  - id: sub_flow-v7a1i6m2
+    type: sub_flow
+    position: { x: 150, y: 310 }
+    connections:
+      - targetNodeId: data_store-y4d7l2p5
+        sourceHandle: success
+      - targetNodeId: terminal-z8e3m6q0
+        sourceHandle: error
+    spec:
+      flow_ref: processing/fact-check-agent
+      contract:
+        inputs:
+          - name: content_id
+            type: uuid
+            required: true
+          - name: content_body
+            type: string
+            required: true
+        outputs:
+          - name: score
+            type: number
+          - name: reasoning
+            type: string
+    label: Fact Check Agent
+
+  - id: sub_flow-w3b5j9n8
+    type: sub_flow
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-y4d7l2p5
+        sourceHandle: success
+      - targetNodeId: terminal-a2f8n1r6
+        sourceHandle: error
+    spec:
+      flow_ref: processing/bias-check-agent
+      contract:
+        inputs:
+          - name: content_id
+            type: uuid
+            required: true
+          - name: content_body
+            type: string
+            required: true
+        outputs:
+          - name: score
+            type: number
+          - name: reasoning
+            type: string
+    label: Bias Check Agent
+
+  - id: sub_flow-x9c0k4o1
+    type: sub_flow
+    position: { x: 650, y: 310 }
+    connections:
+      - targetNodeId: data_store-y4d7l2p5
+        sourceHandle: success
+      - targetNodeId: terminal-b5g9o4s3
+        sourceHandle: error
+    spec:
+      flow_ref: processing/general-scorer
+      contract:
+        inputs:
+          - name: content_id
+            type: uuid
+            required: true
+          - name: content_body
+            type: string
+            required: true
+        outputs:
+          - name: score
+            type: number
+          - name: reasoning
+            type: string
+    label: General Scorer
+
+  - id: data_store-y4d7l2p5
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-c7h0p8t6
+        sourceHandle: success
+      - targetNodeId: terminal-d1i4q5u9
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Content
+      set:
+        quality_score: "$.score"
+        score_reasoning: "$.reasoning"
+    label: Update Content Score
+
+  - id: terminal-c7h0p8t6
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      success: true
+    label: Scoring Complete
+
+  - id: terminal-z8e3m6q0
+    type: terminal
+    position: { x: 150, y: 440 }
+    connections: []
+    spec:
+      success: false
+      error: "Fact check agent failed"
+    label: Fact Check Error
+
+  - id: terminal-a2f8n1r6
+    type: terminal
+    position: { x: 400, y: 440 }
+    connections: []
+    spec:
+      success: false
+      error: "Bias check agent failed"
+    label: Bias Check Error
+
+  - id: terminal-b5g9o4s3
+    type: terminal
+    position: { x: 900, y: 440 }
+    connections: []
+    spec:
+      success: false
+      error: "General scorer failed"
+    label: General Scorer Error
+
+  - id: terminal-d1i4q5u9
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      success: false
+      error: "Failed to update content score"
+    label: Update Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

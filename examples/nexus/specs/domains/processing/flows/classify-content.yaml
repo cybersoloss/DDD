@@ -1,0 +1,123 @@
+flow:
+  id: classify-content
+  name: Classify Content
+  type: traditional
+  domain: processing
+  description: Classifies ingested content using LLM to determine category and confidence score
+
+trigger:
+  id: trigger-a3k9m2x7
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-b7n4p1w8
+  spec:
+    event: "event:ContentIngested"
+    description: Triggered when new content is ingested into the system
+  label: Content Ingested
+
+nodes:
+  - id: data_store-b7n4p1w8
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: llm_call-c2f8q5v3
+        sourceHandle: success
+      - targetNodeId: terminal-d9h3r6t1
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      include:
+        - ContentSource via content_source_id
+    label: Read Content with Source
+
+  - id: llm_call-c2f8q5v3
+    type: llm_call
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-e4j7s0u6
+        sourceHandle: success
+      - targetNodeId: terminal-f1k2t8w9
+        sourceHandle: error
+    spec:
+      model: "claude-sonnet-4-5-20241022"
+      system_prompt: "You are a content classifier"
+      prompt: "Classify this content: {content}"
+      temperature: 0.7
+      structured_output:
+        category: string
+        confidence: number
+      context_sources:
+        - source: "$.content.body"
+          transform: "truncate(4000)"
+    label: Classify Content via LLM
+
+  - id: data_store-e4j7s0u6
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: event-g6l9u3x2
+        sourceHandle: success
+      - targetNodeId: terminal-h0m5v7y4
+        sourceHandle: error
+    spec:
+      operation: update
+      model: Content
+      set:
+        category: "$.classification.category"
+        confidence: "$.classification.confidence"
+    label: Update Content Classification
+
+  - id: event-g6l9u3x2
+    type: event
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-i8n1w4z5
+    spec:
+      direction: emit
+      event_name: ContentClassified
+      payload:
+        content_id: "$.content.id"
+        category: "$.classification.category"
+        confidence: "$.classification.confidence"
+    label: Emit ContentClassified
+
+  - id: terminal-i8n1w4z5
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      success: true
+    label: Classification Complete
+
+  - id: terminal-d9h3r6t1
+    type: terminal
+    position: { x: 650, y: 250 }
+    connections: []
+    spec:
+      success: false
+      error: "Failed to read content"
+    label: Read Error
+
+  - id: terminal-f1k2t8w9
+    type: terminal
+    position: { x: 650, y: 380 }
+    connections: []
+    spec:
+      success: false
+      error: "LLM classification failed"
+    label: LLM Error
+
+  - id: terminal-h0m5v7y4
+    type: terminal
+    position: { x: 650, y: 510 }
+    connections: []
+    spec:
+      success: false
+      error: "Failed to update content classification"
+    label: Update Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

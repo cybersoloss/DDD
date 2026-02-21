@@ -1,0 +1,69 @@
+name: Ingestion
+description: Content acquisition from external sources
+owns_schemas: ["ContentSource", "Schedule"]
+on_error:
+  emit_event: IngestionFailed
+  description: "Emit error event for centralized error tracking"
+event_groups:
+  - name: ingestion_events
+    description: "All ingestion-related events"
+    events: [ContentIngested, ContentSourceAdded, ContentSourceRemoved, IngestionFailed]
+flows:
+  - id: fetch-rss-feeds
+    name: Fetch RSS Feeds
+    description: Fetch and parse RSS feeds from configured sources
+    type: traditional
+    tags: [cron]
+    throughput: "~500 items/day"
+  - id: scrape-web-content
+    name: Scrape Web Content
+    description: Scrape web pages for content extraction
+    type: traditional
+    tags: [cron]
+  - id: process-webhook
+    name: Process Webhook
+    description: Handle incoming webhook payloads
+    type: traditional
+    tags: [public-api]
+  - id: import-csv-content
+    name: Import CSV Content
+    description: Bulk import content from CSV files
+    type: traditional
+    tags: [public-api]
+  - id: manual-content-entry
+    name: Manual Content Entry
+    description: Manually create content from admin dashboard
+    type: traditional
+  - id: watch-filesystem
+    name: Watch Filesystem
+    description: Monitor filesystem for new content files
+    type: traditional
+  - id: monitor-social-feeds
+    name: Monitor Social Feeds
+    description: Poll social media for matching content
+    type: traditional
+    tags: [cron]
+  - id: process-xml-feed
+    name: Process XML Feed
+    description: Parse and store content from XML feeds
+    type: traditional
+publishes_events:
+  - event: ContentIngested
+    schema: Content
+    from_flow: fetch-rss-feeds
+    description: New content ingested from any source
+  - event: ContentSourceAdded
+    from_flow: manual-content-entry
+    description: New content source registered
+consumes_events: []
+layout:
+  flows:
+    fetch-rss-feeds: { x: 100, y: 100 }
+    scrape-web-content: { x: 100, y: 300 }
+    process-webhook: { x: 100, y: 500 }
+    import-csv-content: { x: 100, y: 700 }
+    manual-content-entry: { x: 100, y: 900 }
+    watch-filesystem: { x: 100, y: 1100 }
+    monitor-social-feeds: { x: 100, y: 1300 }
+    process-xml-feed: { x: 100, y: 1500 }
+  portals: {}

@@ -1,0 +1,69 @@
+flow:
+  id: route-to-specialist
+  name: Route to Specialist
+  type: traditional
+  domain: processing
+  description: Routes ingested content from API or webhook sources to a specialist analysis agent via handoff
+
+trigger:
+  id: trigger-q6v5d4h9
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: handoff-r9w0e7i3
+  spec:
+    event: "event:ContentIngested"
+    description: Triggered when content is ingested from API or webhook sources
+    filter:
+      source_type:
+        in:
+          - api
+          - webhook
+  label: API/Webhook Content Ingested
+
+nodes:
+  - id: handoff-r9w0e7i3
+    type: handoff
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-s2x4f0j7
+        sourceHandle: success
+      - targetNodeId: terminal-t8y1g5k2
+        sourceHandle: error
+    spec:
+      mode: consult
+      target:
+        flow: processing/analyze-with-agents
+      context_transfer:
+        include_types:
+          - content
+          - metadata
+        max_context_tokens: 8000
+      on_complete:
+        return_to: self
+        merge_strategy: append
+      on_failure:
+        action: escalate
+        timeout: 60000
+    label: Consult Analysis Specialist
+
+  - id: terminal-s2x4f0j7
+    type: terminal
+    position: { x: 400, y: 310 }
+    connections: []
+    spec:
+      success: true
+    label: Specialist Consultation Complete
+
+  - id: terminal-t8y1g5k2
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      success: false
+      error: "Specialist handoff failed"
+    label: Handoff Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

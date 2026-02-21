@@ -1,0 +1,13 @@
+{
+  "domains": [
+    { "name": "Ingestion", "description": "Content acquisition from external sources", "role": "process" },
+    { "name": "Processing", "description": "AI-powered content analysis pipeline", "role": "process" },
+    { "name": "Editorial", "description": "Human review and approval workflows", "role": "process" },
+    { "name": "Publishing", "description": "Multi-channel content distribution", "role": "process" },
+    { "name": "Analytics", "description": "Real-time and historical analytics", "role": "entity" },
+    { "name": "Users", "description": "User management and authentication", "role": "entity" },
+    { "name": "Content", "description": "Central content entity management and event wiring hub", "role": "entity" },
+    { "name": "Notifications", "description": "Alert and notification delivery", "role": "process" },
+    { "name": "Settings", "description": "System configuration and preferences", "role": "entity" }
+  ]
+}

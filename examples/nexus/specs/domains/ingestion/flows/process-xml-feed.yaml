@@ -1,0 +1,108 @@
+flow:
+  id: process-xml-feed
+  name: Process XML Feed
+  type: traditional
+  domain: ingestion
+  description: Process an incoming external XML feed event, parse the XML, transform to content format, and persist
+
+trigger:
+  id: trigger-vV7sG9bA
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: parse-wW8tH1cB
+  spec:
+    event: "event:ExternalFeedReceived"
+    source: Message Bus
+    description: Triggered when an external XML feed payload is received
+  label: ExternalFeedReceived
+
+nodes:
+  - id: parse-wW8tH1cB
+    type: parse
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: transform-xX9uI2dC
+        sourceHandle: success
+      - targetNodeId: terminal-yY1vJ3eD
+        sourceHandle: error
+    spec:
+      format: xml
+      input: "$.raw_xml"
+      strategy: strict
+      library: fast-xml-parser
+      output: "parsed_data"
+      description: Parse the raw XML feed into structured data
+    label: Parse XML Feed
+
+  - id: terminal-yY1vJ3eD
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to parse XML feed content
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "Malformed XML feed content"
+    label: Parse Error
+
+  - id: transform-xX9uI2dC
+    type: transform
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: data_store-zZ2wK4fE
+    spec:
+      input_schema: "parsed_data"
+      output_schema: "Content"
+      field_mappings:
+        title: "$.parsed_data.title"
+        body: "$.parsed_data.description"
+        url: "$.parsed_data.link"
+        source_type: "'xml'"
+        published_at: "$.parsed_data.pubDate"
+        external_id: "$.parsed_data.guid"
+      description: Transform parsed XML data into the standard Content format
+    label: Transform to Content
+
+  - id: data_store-zZ2wK4fE
+    type: data_store
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: terminal-aA3xL5gF
+        sourceHandle: success
+      - targetNodeId: terminal-bB4yM6hG
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Content
+      data: "$.content_record"
+      description: Save the transformed content record to the database
+    label: Create Content
+
+  - id: terminal-bB4yM6hG
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to save XML feed content
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to persist XML feed content"
+    label: Save Error
+
+  - id: terminal-aA3xL5gF
+    type: terminal
+    position: { x: 400, y: 570 }
+    connections: []
+    spec:
+      outcome: success
+      description: XML feed content processed and saved successfully
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

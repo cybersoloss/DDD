@@ -1,0 +1,141 @@
+flow:
+  id: generate-daily-report
+  name: Generate Daily Report
+  type: traditional
+  domain: analytics
+  description: Generate a daily analytics report from the past 24 hours of events
+
+trigger:
+  id: trigger-Rn4bGx7V
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-Ks8mPw2J
+  spec:
+    event: "cron 0 2 * * *"
+    source: Scheduler
+    description: Runs daily at 2am to generate the previous day's analytics report
+  label: Daily 2am
+
+nodes:
+  - id: data_store-Ks8mPw2J
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: collection-Fv3tLr9D
+        sourceHandle: success
+      - targetNodeId: terminal-Ew5hYq1N
+        sourceHandle: error
+    spec:
+      operation: read
+      model: AnalyticsEvent
+      query:
+        occurred_at: { gte: "$.twenty_four_hours_ago" }
+      description: Read all analytics events from the past 24 hours
+    label: Read Events
+
+  - id: collection-Fv3tLr9D
+    type: collection
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: collection-Xn6kWs4H
+        sourceHandle: result
+      - targetNodeId: terminal-Ew5hYq1N
+        sourceHandle: empty
+    spec:
+      operation: group_by
+      input: "$.analytics_events"
+      key: "item.event_type"
+      output: "grouped_events"
+      description: Group analytics events by event type
+    label: Group by Type
+
+  - id: collection-Xn6kWs4H
+    type: collection
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: data_store-Bm7cPv2Q
+        sourceHandle: result
+      - targetNodeId: terminal-Ew5hYq1N
+        sourceHandle: empty
+    spec:
+      operation: reduce
+      input: "$.grouped_events"
+      accumulator:
+        init: {}
+        expression: "{...acc, [item.event_type]: item.count}"
+      output: "report_json"
+      description: Reduce grouped events to calculate totals per type
+    label: Calculate Totals
+
+  - id: data_store-Bm7cPv2Q
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: event-Gt9dRx3K
+        sourceHandle: success
+      - targetNodeId: terminal-Lw8fNm5S
+        sourceHandle: error
+    spec:
+      store_type: filesystem
+      operation: create
+      path: "$.reports_dir/daily/$.date.json"
+      content: "$.report_json"
+      create_parents: true
+      description: Write daily report JSON to filesystem
+    label: Save Report
+
+  - id: event-Gt9dRx3K
+    type: event
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: terminal-Ah2jVw6C
+    spec:
+      direction: emit
+      event_name: ReportGenerated
+      payload:
+        report_type: "daily"
+        date: "$.date"
+        path: "$.reports_dir/daily/$.date.json"
+      async: true
+      description: Emit ReportGenerated event after daily report is saved
+    label: Emit ReportGenerated
+
+  - id: terminal-Ah2jVw6C
+    type: terminal
+    position: { x: 400, y: 830 }
+    connections: []
+    spec:
+      outcome: success
+      description: Daily report generated and saved successfully
+    label: Report Complete
+
+  - id: terminal-Ew5hYq1N
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to read events or no events found
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to generate daily report"
+    label: Read/Group Error
+
+  - id: terminal-Lw8fNm5S
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to write report to filesystem
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to save daily report to disk"
+    label: File Write Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

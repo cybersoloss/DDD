@@ -1,0 +1,67 @@
+page: editorial-queue
+route: /editorial
+
+sections:
+  - id: header
+    component: page-header
+    position: top
+    label: "Editorial Queue"
+    data_source: editorial/get-review-stats
+    fields:
+      subtitle: "$.pending_count items pending review"
+    actions:
+      - label: "Bulk Approve"
+        icon: check-circle
+        flow: editorial/bulk-approve
+        variant: primary
+        confirm: true
+        confirm_message: "Approve all selected content items?"
+      - label: Refresh
+        icon: refresh-cw
+        variant: ghost
+        flow: editorial/list-editorial-queue
+
+  - id: queue-list
+    component: item-list
+    position: main
+    label: "Pending Reviews"
+    data_source: editorial/list-editorial-queue
+    item_template:
+      title: "$.title"
+      subtitle: "$.source_type · $.submitted_at"
+      badge: "$.priority"
+    item_actions:
+      - label: Review
+        icon: eye
+        navigate: "/editorial/$.id/review"
+      - label: "Quick Approve"
+        icon: check
+        flow: editorial/approve-content
+        args: { id: "$.id" }
+        variant: primary
+        confirm: true
+        confirm_message: "Approve this content without full review?"
+      - label: Reject
+        icon: x
+        flow: editorial/reject-content
+        args: { id: "$.id" }
+        variant: destructive
+        confirm: true
+        confirm_message: "Reject this content?"
+    pagination:
+      type: cursor
+      page_size: 20
+    empty_state:
+      message: "No content pending review"
+      icon: check-circle
+
+forms: []
+
+state:
+  store: editorial-store
+  initial_fetch: [editorial/list-editorial-queue, editorial/get-review-stats]
+  realtime: null
+
+loading: skeleton
+error: retry-banner
+refresh: manual

@@ -1,0 +1,15 @@
+name: BaseContent
+description: Base model for specialized content schemas providing common content fields
+inherits: _base
+fields:
+  - name: title
+    type: string
+    required: true
+    constraints:
+      max_length: 500
+  - name: body
+    type: text
+    required: true
+  - name: content_type
+    type: string
+    required: true

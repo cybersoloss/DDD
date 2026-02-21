@@ -1,0 +1,190 @@
+flow:
+  id: login-user
+  name: Login User
+  type: traditional
+  domain: users
+  description: Authenticate a user with email and password, issue a JWT token
+
+trigger:
+  id: trigger-Kp4nFx7R
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-Wr9bHm3T
+  spec:
+    event: "HTTP POST /api/v1/auth/login"
+    source: API Gateway
+    description: User login endpoint
+  label: POST Login
+
+nodes:
+  - id: input-Wr9bHm3T
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: data_store-Gv5cLk8D
+        sourceHandle: valid
+      - targetNodeId: terminal-Xn2jPw6Q
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: email
+          type: string
+          required: true
+        - name: password
+          type: string
+          required: true
+      validation: "Email and password required"
+      description: Validate login credentials input
+    label: Validate Credentials
+
+  - id: data_store-Gv5cLk8D
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: crypto-Tn7fRx4S
+        sourceHandle: success
+      - targetNodeId: terminal-Bk3dNm9H
+        sourceHandle: error
+    spec:
+      operation: read
+      model: User
+      query:
+        email: "$.email"
+      description: Look up user record by email address
+    label: Find User
+
+  - id: crypto-Tn7fRx4S
+    type: crypto
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: decision-Mv8kJw2C
+        sourceHandle: success
+      - targetNodeId: terminal-Fp6gYr5L
+        sourceHandle: error
+    spec:
+      operation: verify
+      algorithm: bcrypt
+      input_fields: ["$.password", "$.user.password_hash"]
+      output_field: "password_valid"
+      description: Verify input password against stored bcrypt hash
+    label: Verify Password
+
+  - id: decision-Mv8kJw2C
+    type: decision
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: process-Qd3nBx9F
+        sourceHandle: "true"
+      - targetNodeId: terminal-Hw7cKm4P
+        sourceHandle: "false"
+    spec:
+      condition: "$.password_valid === true"
+      trueLabel: "Valid"
+      falseLabel: "Invalid"
+      description: Check if the bcrypt verification returned true
+    label: Password Valid?
+
+  - id: process-Qd3nBx9F
+    type: process
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: data_store-Xs5tVr8G
+    spec:
+      action: Generate JWT token with user claims
+      service: AuthService.generateToken
+      inputs: ["$.user.id", "$.user.email", "$.user.role"]
+      outputs: ["$.jwt_token"]
+      description: Create signed JWT token containing user identity and role claims
+    label: Generate JWT
+
+  - id: data_store-Xs5tVr8G
+    type: data_store
+    position: { x: 400, y: 830 }
+    connections:
+      - targetNodeId: terminal-Jn6wDx2K
+        sourceHandle: success
+      - targetNodeId: terminal-Fp6gYr5L
+        sourceHandle: error
+    spec:
+      operation: update
+      model: User
+      query:
+        id: "$.user.id"
+      data:
+        last_login_at: "$.now"
+      description: Update the user's last login timestamp
+    label: Update Last Login
+
+  - id: terminal-Jn6wDx2K
+    type: terminal
+    position: { x: 400, y: 960 }
+    connections: []
+    spec:
+      outcome: success
+      description: Return authenticated user with JWT token
+      status: 200
+      body:
+        user:
+          id: "$.user.id"
+          email: "$.user.email"
+          name: "$.user.name"
+          role: "$.user.role"
+        token: "$.jwt_token"
+    label: Login Success
+
+  - id: terminal-Xn2jPw6Q
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Invalid login input
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "$.validation_errors"
+    label: Invalid Input
+
+  - id: terminal-Bk3dNm9H
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: User not found by email
+      status: 401
+      body:
+        error: "UNAUTHORIZED"
+        message: "Invalid email or password"
+    label: User Not Found
+
+  - id: terminal-Hw7cKm4P
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Password does not match
+      status: 401
+      body:
+        error: "UNAUTHORIZED"
+        message: "Invalid email or password"
+    label: Wrong Password
+
+  - id: terminal-Fp6gYr5L
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Cryptographic operation or database update failed
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "An unexpected error occurred"
+    label: Server Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

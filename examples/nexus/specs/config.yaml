@@ -1,0 +1,87 @@
+required:
+  - name: DATABASE_URL
+    type: string
+    description: PostgreSQL connection string
+    example: "postgresql://user:pass@localhost:5432/nexus"
+    sensitive: true
+
+  - name: JWT_SECRET
+    type: string
+    description: Secret key for JWT signing
+    sensitive: true
+
+  - name: REDIS_URL
+    type: string
+    description: Redis connection string
+    example: "redis://localhost:6379"
+
+  - name: ENCRYPTION_KEY
+    type: string
+    description: AES-256 encryption key for data at rest
+    sensitive: true
+
+  - name: ANTHROPIC_API_KEY
+    type: string
+    description: Anthropic API key for Claude
+    sensitive: true
+
+  - name: OPENAI_API_KEY
+    type: string
+    description: OpenAI API key
+    sensitive: true
+
+  - name: WEBHOOK_SECRET
+    type: string
+    description: Webhook signature verification secret
+    sensitive: true
+
+optional:
+  - name: PORT
+    type: number
+    default: 3001
+    description: Server port
+
+  - name: LOG_LEVEL
+    type: string
+    default: "info"
+    description: Logging level (debug, info, warn, error)
+
+  - name: CORS_ORIGINS
+    type: string
+    default: "*"
+    description: Comma-separated allowed origins
+
+  - name: RATE_LIMIT_RPM
+    type: number
+    default: 60
+    description: Requests per minute per IP
+
+  - name: TWITTER_BEARER_TOKEN
+    type: string
+    description: Twitter API bearer token
+    sensitive: true
+
+  - name: SENDGRID_API_KEY
+    type: string
+    description: SendGrid API key
+    sensitive: true
+
+  - name: GOOGLE_CSE_KEY
+    type: string
+    description: Google Custom Search API key
+    sensitive: true
+
+  - name: STRIPE_SECRET_KEY
+    type: string
+    description: Stripe secret key
+    sensitive: true
+
+  - name: BCRYPT_ROUNDS
+    type: number
+    default: 12
+    description: Bcrypt hashing rounds
+
+  - name: TWITTER_SECRET
+    type: string
+    description: Twitter API secret for request signing
+    sensitive: true

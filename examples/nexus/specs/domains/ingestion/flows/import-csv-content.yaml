@@ -1,0 +1,157 @@
+flow:
+  id: import-csv-content
+  name: Import CSV Content
+  type: traditional
+  domain: ingestion
+  description: Accept a CSV file upload, parse and validate rows, filter valid entries, and bulk-insert as content records
+
+trigger:
+  id: trigger-lH7iV9rN
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: input-mJ8jW1sP
+  spec:
+    event: "HTTP POST /api/v1/content/import"
+    source: API Gateway
+    description: Upload endpoint for CSV content import
+  label: POST /content/import
+
+nodes:
+  - id: input-mJ8jW1sP
+    type: input
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: parse-nK9kX2tQ
+        sourceHandle: valid
+      - targetNodeId: terminal-oL1lY3uR
+        sourceHandle: invalid
+    spec:
+      fields:
+        - name: file
+          type: file
+          required: true
+      validation: "File must be present, content-type must be text/csv or application/csv, max size 10MB"
+      description: Validate the uploaded CSV file
+    label: Validate File Upload
+
+  - id: terminal-oL1lY3uR
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Invalid file upload
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "Invalid file upload: a CSV file is required"
+    label: Invalid Upload
+
+  - id: parse-nK9kX2tQ
+    type: parse
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: collection-pM2mZ4vS
+        sourceHandle: success
+      - targetNodeId: terminal-qN3nA5wT
+        sourceHandle: error
+    spec:
+      format: csv
+      input: "$.file_content"
+      strategy: strict
+      output: "parsed_rows"
+      description: Parse the CSV file into structured row objects
+    label: Parse CSV
+
+  - id: terminal-qN3nA5wT
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      description: Malformed CSV file
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "Failed to parse CSV file: malformed content"
+    label: Parse Error
+
+  - id: collection-pM2mZ4vS
+    type: collection
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: data_store-rP4oB6xU
+        sourceHandle: result
+      - targetNodeId: terminal-sQ5pC7yV
+        sourceHandle: empty
+    spec:
+      operation: filter
+      input: "$.parsed_rows"
+      predicate: "item.title && item.url"
+      output: "valid_rows"
+      description: Filter rows that have both a title and URL
+    label: Filter Valid Rows
+
+  - id: terminal-sQ5pC7yV
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: success
+      description: No valid rows found in the CSV file
+      status: 200
+      body:
+        message: "Import completed"
+        total_rows: "$.parsed_rows.length"
+        imported: 0
+        skipped: "$.parsed_rows.length"
+    label: No Valid Rows
+
+  - id: data_store-rP4oB6xU
+    type: data_store
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-tR6qD8zW
+        sourceHandle: success
+      - targetNodeId: terminal-uS7rE9aX
+        sourceHandle: error
+    spec:
+      operation: create_many
+      model: Content
+      data: "$.valid_rows"
+      returning: true
+      description: Bulk insert valid CSV rows as content records
+    label: Bulk Create Content
+
+  - id: terminal-uS7rE9aX
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to save imported content
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to persist imported content"
+    label: Save Error
+
+  - id: terminal-tR6qD8zW
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      description: CSV import completed with summary
+      status: 200
+      body:
+        message: "Import completed successfully"
+        total_rows: "$.parsed_rows.length"
+        imported: "$.valid_rows.length"
+        skipped: "$.parsed_rows.length - $.valid_rows.length"
+    label: Import Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

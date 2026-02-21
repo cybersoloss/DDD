@@ -1,0 +1,90 @@
+name: User
+description: Application user with role-based access and profile information
+inherits: _base
+fields:
+  - name: email
+    type: string
+    required: true
+    format: email
+    constraints:
+      unique: true
+      max_length: 255
+  - name: password_hash
+    type: string
+    required: true
+    encrypted: true
+    constraints:
+      max_length: 255
+  - name: name
+    type: string
+    required: true
+    constraints:
+      max_length: 100
+  - name: role
+    type: enum
+    values: [user, editor, admin]
+    required: true
+    default: user
+  - name: is_verified
+    type: boolean
+    required: true
+    default: false
+  - name: last_login_at
+    type: datetime
+    required: false
+  - name: avatar_url
+    type: string
+    required: false
+    constraints:
+      max_length: 500
+  - name: preferences
+    type: json
+    required: false
+indexes:
+  - fields: [email]
+    unique: true
+    description: Fast lookup by email for authentication
+  - fields: [role, created_at]
+    unique: false
+    type: btree
+    description: Filter users by role sorted by creation date
+  - fields: [last_login_at]
+    unique: false
+    type: btree
+    description: Track and query user activity by last login
+relationships:
+  - name: contents
+    type: has_many
+    target: Content
+    foreign_key: author_id
+  - name: api_keys
+    type: has_many
+    target: ApiKey
+    foreign_key: user_id
+  - name: role_ref
+    type: belongs_to
+    target: Role
+    foreign_key: role_id
+transitions:
+  field: role
+  states:
+    - from: user
+      to: [editor, admin]
+    - from: editor
+      to: [user, admin]
+    - from: admin
+      to: [editor]
+  on_invalid: reject
+seed:
+  - name: default-roles
+    strategy: migration
+    data:
+      - id: user
+        label: "User"
+        permissions: ["read"]
+      - id: editor
+        label: "Editor"
+        permissions: ["read", "write", "review"]
+      - id: admin
+        label: "Admin"
+        permissions: ["read", "write", "review", "admin"]

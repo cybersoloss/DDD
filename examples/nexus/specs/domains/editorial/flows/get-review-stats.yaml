@@ -1,0 +1,125 @@
+flow:
+  id: get-review-stats
+  name: Get Review Stats
+  type: traditional
+  domain: editorial
+  description: Retrieve editorial review statistics with Redis caching
+
+trigger:
+  id: trigger-g3tst4ts
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: cache-ch3ckst4
+  spec:
+    event: "HTTP GET /api/v1/editorial/stats"
+    source: API Gateway
+    description: Get review stats endpoint
+  label: Get Stats Request
+
+nodes:
+  - id: cache-ch3ckst4
+    type: cache
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: terminal-c4ch3h1t
+        sourceHandle: hit
+      - targetNodeId: data_store-4ggr3g8
+        sourceHandle: miss
+    spec:
+      key: "editorial:stats"
+      ttl_ms: 60000
+      store: redis
+      description: Check Redis cache for editorial stats
+    label: Check Stats Cache
+
+  - id: terminal-c4ch3h1t
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        data: "$.cached_stats"
+        cached: true
+      description: Return cached stats
+    label: Cache Hit
+
+  - id: data_store-4ggr3g8
+    type: data_store
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: process-f0rm4tst
+        sourceHandle: success
+      - targetNodeId: terminal-db3rr0r
+        sourceHandle: error
+    spec:
+      operation: read
+      model: Content
+      query:
+        aggregates:
+          total_pending: { status: pending_review }
+          approved_today: { status: approved, reviewed_at: "$.today" }
+          rejected_today: { status: rejected, reviewed_at: "$.today" }
+          avg_review_time: { function: "AVG(reviewed_at - created_at)" }
+      description: Aggregate editorial review statistics
+    label: Read Aggregate Stats
+
+  - id: process-f0rm4tst
+    type: process
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: cache-st0r3st4
+    spec:
+      action: Format statistics into response shape
+      service: EditorialService.formatStats
+      inputs: ["$.total_pending", "$.approved_today", "$.rejected_today", "$.avg_review_time"]
+      outputs: ["$.formatted_stats"]
+      description: Shape raw aggregates into client-friendly format
+    label: Format Stats
+
+  - id: cache-st0r3st4
+    type: cache
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: terminal-s4cc3ss
+        sourceHandle: hit
+      - targetNodeId: terminal-s4cc3ss
+        sourceHandle: miss
+    spec:
+      key: "editorial:stats"
+      ttl_ms: 60000
+      store: redis
+      description: Store formatted stats in Redis cache
+    label: Store in Cache
+
+  - id: terminal-s4cc3ss
+    type: terminal
+    position: { x: 400, y: 700 }
+    connections: []
+    spec:
+      outcome: success
+      status: 200
+      body:
+        data: "$.formatted_stats"
+        cached: false
+      description: Return fresh stats
+    label: Success
+
+  - id: terminal-db3rr0r
+    type: terminal
+    position: { x: 650, y: 310 }
+    connections: []
+    spec:
+      outcome: error
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to compute editorial stats"
+      description: Database error computing aggregates
+    label: DB Error
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

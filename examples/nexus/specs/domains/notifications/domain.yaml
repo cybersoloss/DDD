@@ -1,0 +1,56 @@
+name: Notifications
+description: Alert and notification delivery
+owns_schemas: ["Notification"]
+event_groups:
+  - name: editorial_alerts
+    description: "Events requiring editorial notification"
+    events: [ContentApproved, ContentRejected, ReviewerAssigned, BulkOperationCompleted]
+flows:
+  - id: send-realtime-alert
+    name: Send Realtime Alert
+    description: Send immediate real-time notification
+    type: traditional
+  - id: send-pattern-alert
+    name: Send Pattern Alert
+    description: Send alert based on detected patterns
+    type: traditional
+  - id: send-batch-digest
+    name: Send Batch Digest
+    description: Send batched notification digest
+    type: traditional
+  - id: get-notification-preferences
+    name: Get Notification Preferences
+    description: Retrieve user notification preferences
+    type: traditional
+publishes_events:
+  - event: NotificationSent
+    from_flow: send-realtime-alert
+    description: A notification has been sent
+consumes_events:
+  - event: ContentApproved
+    from_flow: editorial/review-content
+    handled_by_flow: send-realtime-alert
+    description: Content approval triggers real-time alert
+  - event: ContentRejected
+    from_flow: editorial/reject-content
+    handled_by_flow: send-realtime-alert
+    description: Content rejection triggers real-time alert
+  - event: PublishFailed
+    from_flow: publishing/publish-content
+    handled_by_flow: send-realtime-alert
+    description: Publish failure triggers real-time alert
+  - event: UserRegistered
+    from_flow: users/register-user
+    handled_by_flow: send-batch-digest
+    description: New user registration included in batch digest
+  - event: ReportGenerated
+    from_flow: analytics/generate-daily-report
+    handled_by_flow: send-batch-digest
+    description: Report generation included in batch digest
+layout:
+  flows:
+    send-realtime-alert: { x: 100, y: 100 }
+    send-pattern-alert: { x: 100, y: 300 }
+    send-batch-digest: { x: 100, y: 500 }
+    get-notification-preferences: { x: 100, y: 700 }
+  portals: {}

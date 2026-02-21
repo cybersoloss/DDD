@@ -1,0 +1,218 @@
+flow:
+  id: scrape-web-content
+  name: Scrape Web Content
+  type: traditional
+  domain: ingestion
+  description: Periodically scrape web pages from configured targets, extract structured content using CSS selectors, and persist as content entries
+
+trigger:
+  id: trigger-pK3mY5vQ
+  type: trigger
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: data_store-qL4nZ6wR
+  spec:
+    event: "cron 0 */4 * * *"
+    source: Scheduler
+    description: Runs every 4 hours to scrape configured web targets
+  label: Cron Every 4hrs
+
+nodes:
+  - id: data_store-qL4nZ6wR
+    type: data_store
+    position: { x: 400, y: 180 }
+    connections:
+      - targetNodeId: loop-rM5oA7xS
+        sourceHandle: success
+      - targetNodeId: terminal-sN6pB8yT
+        sourceHandle: error
+    spec:
+      operation: read
+      model: ContentSource
+      query:
+        source_type: web
+        is_active: true
+      description: Read all active web scraping targets from the database
+    label: Read Scraping Targets
+
+  - id: terminal-sN6pB8yT
+    type: terminal
+    position: { x: 650, y: 180 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to read scraping targets from database
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to load scraping targets"
+    label: DB Read Error
+
+  - id: loop-rM5oA7xS
+    type: loop
+    position: { x: 400, y: 310 }
+    connections:
+      - targetNodeId: service_call-tP7qC9zU
+        sourceHandle: body
+      - targetNodeId: terminal-aV3wI5fA
+        sourceHandle: done
+    spec:
+      collection: "$.targets"
+      iterator: target
+      on_error: continue
+      description: Iterate through each scraping target
+    label: Loop Through Targets
+
+  - id: service_call-tP7qC9zU
+    type: service_call
+    position: { x: 400, y: 440 }
+    connections:
+      - targetNodeId: parse-uQ8rD1aV
+        sourceHandle: success
+      - targetNodeId: terminal-vR9sE2bW
+        sourceHandle: error
+        behavior: circuit_break
+    spec:
+      method: GET
+      url: "$.target.url"
+      timeout_ms: 30000
+      retry:
+        max_attempts: 2
+        backoff_ms: 3000
+        strategy: exponential
+      description: Fetch the raw HTML page from the target URL
+    label: Fetch Web Page
+
+  - id: terminal-vR9sE2bW
+    type: terminal
+    position: { x: 650, y: 440 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to fetch web page, circuit breaker may be open
+      status: 502
+      body:
+        error: "SERVICE_UNAVAILABLE"
+        message: "Failed to fetch page from $.target.url"
+    label: Fetch Error
+
+  - id: parse-uQ8rD1aV
+    type: parse
+    position: { x: 400, y: 570 }
+    connections:
+      - targetNodeId: delay-wS1tF3cX
+        sourceHandle: success
+      - targetNodeId: terminal-xT2uG4dY
+        sourceHandle: error
+    spec:
+      format: html
+      input: "$.raw_html"
+      strategy:
+        selectors:
+          - { name: title, css: "h1" }
+          - { name: body, css: "article", extract: text }
+          - { name: links, css: "a[href]", extract: href, multiple: true }
+      library: cheerio
+      output: "extracted_data"
+      description: Extract structured content from HTML using CSS selectors
+    label: Parse HTML
+
+  - id: terminal-xT2uG4dY
+    type: terminal
+    position: { x: 650, y: 570 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to parse HTML content
+      status: 422
+      body:
+        error: "VALIDATION_ERROR"
+        message: "Failed to extract content from $.target.url"
+    label: Parse Error
+
+  - id: delay-wS1tF3cX
+    type: delay
+    position: { x: 400, y: 700 }
+    connections:
+      - targetNodeId: transform-yU3vH5eZ
+    spec:
+      min_ms: 1000
+      max_ms: 3000
+      strategy: random
+      description: Random delay between requests to respect rate limits and avoid detection
+    label: Rate Limit Delay
+
+  - id: transform-yU3vH5eZ
+    type: transform
+    position: { x: 400, y: 830 }
+    connections:
+      - targetNodeId: data_store-zV4wI6fA
+    spec:
+      input_schema: "extracted_data"
+      output_schema: "Content"
+      field_mappings:
+        title: "$.extracted_data.title"
+        body: "$.extracted_data.body"
+        url: "$.target.url"
+        source_type: "'web'"
+        source_id: "$.target.id"
+        external_links: "$.extracted_data.links"
+      description: Transform extracted HTML data into the standard Content format
+    label: Transform to Content
+
+  - id: data_store-zV4wI6fA
+    type: data_store
+    position: { x: 400, y: 960 }
+    connections:
+      - targetNodeId: event-aW5xJ7gB
+        sourceHandle: success
+      - targetNodeId: terminal-bX6yK8hC
+        sourceHandle: error
+    spec:
+      operation: create
+      model: Content
+      data: "$.content_record"
+      description: Save the scraped content entry to the database
+    label: Save Content
+
+  - id: terminal-bX6yK8hC
+    type: terminal
+    position: { x: 650, y: 960 }
+    connections: []
+    spec:
+      outcome: error
+      description: Failed to save scraped content
+      status: 500
+      body:
+        error: "INTERNAL_ERROR"
+        message: "Failed to persist scraped content"
+    label: Save Error
+
+  - id: event-aW5xJ7gB
+    type: event
+    position: { x: 400, y: 1090 }
+    connections:
+      - targetNodeId: terminal-aV3wI5fA
+    spec:
+      direction: emit
+      event_name: ContentIngested
+      payload:
+        source_id: "$.target.id"
+        content_id: "$.content_record.id"
+        source_type: web
+      async: true
+      description: Emit event to notify downstream services of new scraped content
+    label: Emit ContentIngested
+
+  - id: terminal-aV3wI5fA
+    type: terminal
+    position: { x: 400, y: 1220 }
+    connections: []
+    spec:
+      outcome: success
+      description: Web scraping cycle completed successfully
+    label: Success
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"
