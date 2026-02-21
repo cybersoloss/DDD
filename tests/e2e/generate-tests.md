@@ -406,6 +406,7 @@ Verify the product-features.md:
 - [ ] Describes schemas with full field definitions
 - [ ] Describes UI pages with sections and forms
 - [ ] Describes infrastructure with all service types
+- [ ] When run with `--shortfalls`, the product should produce near-complete feature coverage (it exercises every DDD feature by design)
 
 ### Check 4: Feature Delta
 
@@ -420,6 +421,28 @@ Changed code paths: [list any ddd-tool functions that moved or changed signature
 ```
 
 This delta helps the user understand what evolved.
+
+### Check 5: Shortfall Report Validation
+
+The e2e test uses `/ddd-create --from product-features.md --shortfalls`. Since the product is designed to exercise every DDD feature, verify the product-features.md would produce a valid shortfall report:
+
+**Template compliance:**
+- [ ] The shortfall report must use the structured format (`missing_node_types`, `inadequate_existing_nodes`, `missing_spec_fields`, etc.) — NOT flat lists or custom categories
+- [ ] No `scope_exclusion` or `gap` or `quality_note` categories — those are prohibited
+- [ ] No project scope decisions — only DDD framework limitations
+
+**Feature Usage Matrix:**
+- [ ] The `summary.feature_coverage` section must show near-complete coverage:
+  - Node types: should use most of the 28 types (the product is designed for this)
+  - Trigger types: should cover all 13 trigger patterns
+  - UI component types: should use all 9 built-in components
+  - Form field types: should exercise all 14 field types
+- [ ] `unused_but_applicable` should be empty or near-empty (any entries indicate the product description needs a flow/page using that feature)
+- [ ] If any feature category shows low coverage, go back to Phase 2/3 and add a product requirement that naturally exercises it
+
+**What shortfalls SHOULD appear** (real framework gaps the product will hit):
+- These are expected and valid — they test that the shortfall detector works
+- Review each one: is it a genuine DDD limitation, or did the product description fail to use an available feature?
 
 ---
 

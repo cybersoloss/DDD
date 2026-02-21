@@ -82,16 +82,23 @@ Claude will:
 After generation, the test cycle is:
 
 ```bash
-# Step 1: Generate a DDD project from the product features
+# Step 1: Generate a DDD project from the product features (with shortfall analysis)
 cd /tmp && mkdir nexus-test && cd nexus-test
 # In a fresh Claude Code session:
-/ddd-create --from ~/dev/DDD/tests/e2e/product-features.md
+/ddd-create --from ~/dev/DDD/tests/e2e/product-features.md --shortfalls
 
-# Step 2: Run the auto-test against the generated project
+# Step 2: Verify the shortfall report
+# The shortfall report tests two things:
+#   a) Template compliance — must use the structured format (not flat lists)
+#   b) Feature coverage — the Feature Usage Matrix should show near-complete coverage
+#      since the product is designed to exercise every DDD feature
+cat /tmp/nexus-test/specs/shortfalls.yaml
+
+# Step 3: Run the auto-test against the generated project
 cd ~/dev/ddd-tool
 npm run auto-test -- /tmp/nexus-test
 
-# Step 3: Read the reports
+# Step 4: Read the reports
 cat /tmp/nexus-test/.ddd/reports/tool-compatibility-report.yaml
 cat /tmp/nexus-test/.ddd/reports/spec-quality-report.yaml
 ```
