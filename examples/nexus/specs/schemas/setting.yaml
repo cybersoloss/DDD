@@ -1,0 +1,52 @@
+inherits: _base
+description: Persistent system configuration setting
+fields:
+  - name: key
+    type: string
+    required: true
+    unique: true
+    description: Setting key identifier (e.g., "max_ingestion_rate")
+  - name: value
+    type: jsonb
+    required: true
+    description: Setting value (any JSON-serializable type)
+  - name: category
+    type: string
+    required: true
+    description: Setting category (e.g., "ingestion", "publishing", "notifications")
+  - name: description
+    type: string
+    description: Human-readable description of the setting
+  - name: default_value
+    type: jsonb
+    description: Default value to restore on reset
+indexes:
+  - fields: [key]
+    unique: true
+    type: btree
+    description: Fast lookup by setting key
+  - fields: [category]
+    type: btree
+    description: Filter settings by category
+seed:
+  strategy: migration
+  data:
+    - key: max_ingestion_rate
+      value: 100
+      category: ingestion
+      description: Maximum content items to ingest per hour
+      default_value: 100
+    - key: default_publish_channels
+      value: ["website", "newsletter"]
+      category: publishing
+      description: Default channels for content publication
+      default_value: ["website"]
+    - key: notification_batch_interval_ms
+      value: 3600000
+      category: notifications
+      description: Interval for batch notification digests (ms)
+      default_value: 3600000
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"

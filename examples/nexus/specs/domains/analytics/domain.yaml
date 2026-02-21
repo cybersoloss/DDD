@@ -1,6 +1,6 @@
 name: Analytics
 description: Real-time and historical analytics
-owns_schemas: ["AnalyticsEvent"]
+owns_schemas: ["AnalyticsEvent", "WeeklyDigest"]
 flows:
   - id: stream-live-metrics
     name: Stream Live Metrics

@@ -1,0 +1,41 @@
+inherits: _base
+description: Record of content rejection with reviewer feedback
+fields:
+  - name: content_id
+    type: uuid
+    required: true
+    description: Foreign key to Content
+  - name: reviewer_id
+    type: uuid
+    required: true
+    description: Foreign key to User (the reviewer who rejected)
+  - name: reason
+    type: string
+    required: true
+    description: Rejection reason code (e.g., "inaccurate", "off_topic", "low_quality")
+  - name: feedback
+    type: text
+    required: true
+    description: Detailed feedback for the content author
+  - name: rejected_at
+    type: timestamp
+    required: true
+    description: When the rejection occurred
+relationships:
+  - type: belongs_to
+    model: Content
+    foreign_key: content_id
+  - type: belongs_to
+    model: User
+    foreign_key: reviewer_id
+indexes:
+  - fields: [content_id]
+    type: btree
+    description: Look up all rejections for a content item
+  - fields: [reviewer_id, rejected_at]
+    type: btree
+    description: Filter rejections by reviewer and time
+
+metadata:
+  created: "2026-02-21T00:00:00Z"
+  modified: "2026-02-21T00:00:00Z"
