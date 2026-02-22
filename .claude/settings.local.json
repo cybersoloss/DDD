@@ -45,7 +45,8 @@
       "Bash(/Users/mhcandan/dev/DDD/ddd-evolution-plan-gtdos.yaml:*)",
       "Bash(gh pr list:*)",
       "Bash(gh issue list:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(gh release create:*)"
     ]
   }
 }
