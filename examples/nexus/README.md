@@ -60,7 +60,7 @@ Once generated, feed the `product-definition.md` to `/ddd-create` as described i
 ### Scenario 1 — DDD Commands Effectiveness Test
 *Validates that `/ddd-create` and the Usage Guide produce correct specs from a product brief.*
 
-**Purpose:** Recreate Nexus from scratch using only the product definition and DDD commands. If the resulting specs score 98+/100 and cover 28/28 node types, the commands and Usage Guide are working correctly.
+**Purpose:** Recreate Nexus from scratch using only the product definition and `/ddd-create`. If the resulting specs score 98+/100 and cover 28/28 node types, the command and Usage Guide are working correctly.
 
 **Steps:**
 
@@ -68,22 +68,14 @@ Once generated, feed the `product-definition.md` to `/ddd-create` as described i
 # 1. Create a fresh project folder
 mkdir ~/dev/nexus-test && cd ~/dev/nexus-test
 
-# 2. Run ddd-create with the product definition
-#    Open a Claude Code session here, then:
-/ddd-create   # paste the contents of product-definition.md when prompted
+# 2. Open a Claude Code session in ~/dev/nexus-test
+#    Tell Claude: "Use ~/dev/DDD/examples/nexus/product-definition.md as the product brief"
+#    Then run:
+/ddd-create
 
-# 3. Implement all flows
-/ddd-implement
-
-# 4. Run tests
-/ddd-test
-
-# 5. Run the automated benchmark (from ddd-tool repo)
+# 3. Run the automated benchmark (from ddd-tool repo)
 cd ~/dev/ddd-tool
 npm run test:specs -- ~/dev/nexus-test
-
-# 6. Compare against Nexus benchmarks
-#    Target: score ≥ 98/100, node type coverage = 28/28, 0 errors
 ```
 
 **Pass criteria:**
@@ -92,7 +84,9 @@ npm run test:specs -- ~/dev/nexus-test
 - Node type coverage = 28/28
 - 0 parse or normalize failures
 
-The product brief is in [`product-definition.md`](product-definition.md). It includes the full domain structure, flow descriptions, tech stack, and a node type coverage checklist to guide spec generation.
+**When to run:** After any change to `/ddd-create` or `DDD-USAGE-GUIDE.md`. If score drops below 98 or coverage falls below 28/28, the command or guide degraded.
+
+The product brief is in [`product-definition.md`](product-definition.md). It contains a DDD Feature Coverage Matrix mapping every Usage Guide feature to a specific flow, schema, or UI page — use the checklist at the end to verify all features were generated.
 
 ---
 
