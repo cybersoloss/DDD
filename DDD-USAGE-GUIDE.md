@@ -3011,10 +3011,10 @@ This generates the complete spec structure — `ddd-project.json`, supplementary
 1. **Create** (Phase 1) — Run `/ddd-create` with a project description. Generates specs for all four pillars: backend flows (Logic), schemas with indexes and seed data (Data), UI page specs (Interface), and infrastructure config (Infrastructure)
 2. **Design** (Phase 2) — Open the project in DDD Tool to visualize, validate, and refine specs on the canvas
 3. **Scaffold** (Phase 3) — Run `/ddd-scaffold` to set up project skeleton from specs — backend structure, frontend pages, database with seed data, startup scripts
-4. **Implement** (Phase 3) — Run `/ddd-implement --all` to generate backend flow code, frontend page components, and tests
-5. **Test** (Phase 3) — Run `/ddd-test --all` to verify all tests pass
-6. **Reflect** (Phase 4) — Run `/ddd-sync` to check alignment, `/ddd-reflect` to capture implementation wisdom, `/ddd-promote` to move approved patterns into specs
-7. **Iterate** — Use `/ddd-status` to check state, `/ddd-update` to modify specs, `/ddd-implement` to update code
+4. **Implement** (Phase 3) — Run `/ddd-implement` (no flags) to generate backend flow code, frontend page components, and tests — reads pending entries from `.ddd/change-history.yaml` automatically
+5. **Test** (Phase 3) — Run `/ddd-test` (no flags) to verify recently implemented flows — scoped to change-history entries, not the full project. **The core Build loop ends here.**
+6. **Reflect** (Phase 4, periodic) — After a development session spanning multiple flows, run `/ddd-reflect {scope}` to capture implementation wisdom as annotations, then `/ddd-promote --review` to move approved patterns into permanent specs. Run `/ddd-sync` when you want a full project-wide alignment check. These are intentional periodic activities — not required after every build cycle.
+7. **Iterate** — The daily loop is: `/ddd-update` → `/ddd-implement` → `/ddd-test {scope}`. Repeat per change. Run Reflect phase commands when ready to lock in accumulated wisdom.
 
 > **Note:** Legacy documentation may reference "Session A" (= Phase 1 + Phase 2) and "Session B" (= Phase 3 + Phase 4).
 
