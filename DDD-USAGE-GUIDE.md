@@ -2693,39 +2693,78 @@ spec:
 ### 6.3 Agent Nodes (for `type: agent` flows)
 
 #### agent_loop
-LLM agent with tools in a loop.
+LLM agent with tools in a loop. Each iteration: send messages → get response → if tool_call, execute tool → append result → repeat. Exits on final answer, `is_terminal` tool use, or `max_iterations`.
 
 | Spec Field | Type | Values |
 |------------|------|--------|
-| `model` | string | Model ID |
+| `model` | string | Model ID (e.g., `"claude-sonnet-4-6"`) |
 | `system_prompt` | string | Agent instructions |
-| `max_iterations` | number | Max tool-use loops |
+| `max_iterations` | number | Max tool-use loops (recommend 5–20) |
 | `temperature` | number | 0.0 - 1.0 |
-| `stop_conditions` | string[] | When to stop (e.g., "answer_provided") |
+| `stop_conditions` | string[] | When to stop early — see values below |
 | `tools` | ToolDefinition[] | Available tools (see below) |
 | `memory` | MemoryStoreDefinition[] | Memory stores (see below) |
 | `on_max_iterations` | string | `'escalate' \| 'respond' \| 'error'` |
+
+**`stop_conditions` values:**
+
+| Value | Meaning |
+|-------|---------|
+| `"answer_provided"` | Agent has returned a direct answer (no tool call) |
+| `"task_complete"` | Agent explicitly signals task is done |
+| `"requires_human"` | Agent signals it needs human input — route to `human_gate` |
+| `"max_confidence_reached"` | Agent confidence score exceeds threshold |
+| `"tool_result_terminal"` | A tool marked `is_terminal: true` was used |
 
 **ToolDefinition:**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | Unique tool ID |
-| `name` | string | Function name |
-| `description` | string | What the tool does |
+| `name` | string | Function name called by the LLM |
+| `description` | string | What the tool does (shown to LLM) |
 | `parameters` | string | JSON schema of parameters |
-| `implementation` | string? | Implementation reference |
-| `is_terminal` | boolean? | Ends the loop when used |
-| `requires_confirmation` | boolean? | Needs human approval |
+| `implementation` | string? | Reference to the registered tool function (e.g., `"tools/search-db"`). If omitted, `/ddd-implement` generates a stub. |
+| `is_terminal` | boolean? | If `true`, using this tool ends the agent loop immediately — use for "submit answer" or "complete task" tools |
+| `requires_confirmation` | boolean? | If `true`, before executing this tool `/ddd-implement` generates a `human_gate` step — the agent proposes the tool call and waits for human approval before executing |
 
 **MemoryStoreDefinition:**
 
 | Field | Type | Values |
 |-------|------|--------|
-| `name` | string | Store name |
-| `type` | string | `'conversation_history' \| 'vector_store' \| 'key_value'` |
-| `max_tokens` | number? | Token limit |
-| `strategy` | string? | Eviction strategy (e.g., "sliding_window") |
+| `name` | string | Store name (referenced in tool implementations) |
+| `type` | string | `'conversation_history'` — full message thread; `'vector_store'` — semantic search; `'key_value'` — shared state between agents |
+| `max_tokens` | number? | Token limit before eviction |
+| `strategy` | string? | Eviction: `"sliding_window"` (drop oldest), `"summarize"` (compress), `"truncate"` (drop from start) |
+
+```yaml
+# Example: fact-checking agent loop
+- id: loop-factCheck
+  type: agent_loop
+  spec:
+    model: "claude-sonnet-4-6"
+    system_prompt: "You are a fact-checker. Use your tools to verify each claim."
+    max_iterations: 8
+    temperature: 0.2
+    stop_conditions: ["answer_provided", "task_complete"]
+    on_max_iterations: escalate
+    tools:
+      - id: tool-search
+        name: search_web
+        description: "Search the web for information about a claim"
+        parameters: '{"query": {"type": "string"}}'
+        implementation: "tools/web-search"
+      - id: tool-submit
+        name: submit_verdict
+        description: "Submit the final fact-check verdict"
+        parameters: '{"verdict": {"type": "string", "enum": ["true", "false", "unverifiable"]}, "confidence": {"type": "number"}}'
+        is_terminal: true
+    memory:
+      - name: fact_check_history
+        type: conversation_history
+        max_tokens: 4000
+        strategy: sliding_window
+```
 
 #### guardrail
 Input/output validation for agent flows. Guardrails are **inline and sequential** — data flows through them in order. They are NOT sidecars or parallel watchers. Place them before or after an agent_loop in the connection chain.
@@ -2751,51 +2790,273 @@ Asynchronous human approval step for agent workflows. The agent pauses and waits
 ### 6.4 Orchestration Nodes
 
 #### orchestrator
-Manages multiple agents.
+Dispatches work across multiple agents using a coordination strategy. Use when a single agent_loop isn't enough — you have multiple specialized agents that need to collaborate.
+
+**Strategy decision table:**
+
+| Strategy | When to use | How it works |
+|---|---|---|
+| `supervisor` | Complex tasks needing dynamic routing | Supervisor LLM decides which agent to call next; loops until done |
+| `round_robin` | Sequential pipeline, each agent adds to context | Calls agents in `agents[]` order, passing accumulated result |
+| `broadcast` | Need all agents' opinions in parallel | `Promise.all` over all agents, merge results |
+| `consensus` | Need agreement across multiple perspectives | All agents run, supervisor picks or combines per `result_merge_strategy` |
 
 | Spec Field | Type | Values |
 |------------|------|--------|
 | `strategy` | string | `'supervisor' \| 'round_robin' \| 'broadcast' \| 'consensus'` |
-| `model` | string | Supervisor model |
-| `supervisor_prompt` | string | Instructions for the supervisor |
-| `agents` | OrchestratorAgent[] | `{ id, flow, specialization?, priority? }` |
-| `fallback_chain` | string[] | Fallback agent order |
-| `shared_memory` | SharedMemoryEntry[] | `{ name, type, access: 'read_write' \| 'read_only' }` |
-| `supervision` | object | `{ monitor_iterations?, intervene_on?: SupervisionRule[] }` |
-| `result_merge_strategy` | string | `'last_wins' \| 'best_of' \| 'combine' \| 'supervisor_picks'` |
+| `model` | string | Supervisor model (used for `supervisor` and `consensus` strategies) |
+| `supervisor_prompt` | string | Instructions for the supervisor LLM |
+| `agents` | OrchestratorAgent[] | See type definition below |
+| `fallback_chain` | string[] | Agent IDs to try if primary fails, in order |
+| `shared_memory` | SharedMemoryEntry[] | `{ name, type: 'key_value' \| 'vector_store', access: 'read_write' \| 'read_only' }` |
+| `supervision` | object | See sub-fields below |
+| `result_merge_strategy` | string | `'last_wins'` — use final agent's result; `'best_of'` — supervisor picks highest quality; `'combine'` — concatenate all results; `'supervisor_picks'` — supervisor selects and explains best result |
+
+**OrchestratorAgent type:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique agent ID within this orchestrator |
+| `flow` | string | Flow reference: `"domain/flow-name"` |
+| `specialization` | string? | What this agent is best at (used by supervisor for routing decisions) |
+| `priority` | number? | Higher priority = preferred when multiple agents qualify |
+
+**`supervision` sub-fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `monitor_iterations` | number? | How often supervisor checks in (e.g., `3` = check every 3 agent calls) |
+| `intervene_on` | SupervisionRule[]? | Conditions that trigger supervisor intervention |
+
+**SupervisionRule:** `{ condition: string, action: 'redirect' \| 'pause' \| 'escalate', target?: string }`
+
+```yaml
+# Example: supervisor orchestrator for content analysis
+- id: orch-analyze
+  type: orchestrator
+  spec:
+    strategy: supervisor
+    model: "claude-opus-4-6"
+    supervisor_prompt: >
+      You coordinate content analysis agents. Based on the content type and
+      current results, decide which specialist to call next. Stop when you have
+      fact-check verdict, quality score, and bias assessment.
+    agents:
+      - id: fact-checker
+        flow: processing/fact-check-agent
+        specialization: "Verifying factual claims against sources"
+        priority: 1
+      - id: quality-scorer
+        flow: processing/score-quality
+        specialization: "Assessing writing quality and clarity"
+      - id: bias-detector
+        flow: processing/bias-check-agent
+        specialization: "Detecting ideological or factual bias"
+    shared_memory:
+      - name: analysis_state
+        type: key_value
+        access: read_write
+    supervision:
+      monitor_iterations: 3
+      intervene_on:
+        - condition: "confidence < 0.6"
+          action: redirect
+          target: fact-checker
+    result_merge_strategy: supervisor_picks
+    fallback_chain: [quality-scorer]
+```
 
 #### smart_router
-Routes to different agents based on rules.
+Routes to different flows or agents based on rules. Works in **both traditional flows and agent flows** — use it anywhere you need 3+ branches (replaces chained decision nodes).
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `rules` | SmartRouterRule[] | `{ id, condition, route, priority? }` |
-| `llm_routing` | object | `{ enabled?, model?, routing_prompt?, confidence_threshold?, routes? }` |
-| `fallback_chain` | string[] | Fallback route order |
-| `policies` | object | retry, timeout, circuit_breaker configs |
+| `rules` | SmartRouterRule[] | Rule-based routing (evaluated in priority order) |
+| `llm_routing` | object | LLM-based routing (used when rules don't match) |
+| `fallback_chain` | string[] | Route IDs to try if no rule matches and LLM routing fails |
+| `policies` | object | `{ retry?: { max_attempts, backoff }, timeout?: { ms }, circuit_breaker?: { threshold } }` |
+
+**SmartRouterRule type:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Route ID — used as `sourceHandle` in connections |
+| `condition` | string | Expression evaluated against input (e.g., `"content.type === 'video'"`, `"score > 0.8"`) |
+| `route` | string | Route label (matches `id` for connection) |
+| `priority` | number? | Evaluation order — higher priority evaluated first (default: 0) |
+
+**`llm_routing` sub-fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | boolean | Whether LLM routing is active |
+| `model` | string | Model to use for routing decisions |
+| `routing_prompt` | string | Instructions for the routing LLM |
+| `confidence_threshold` | number | Minimum confidence (0.0–1.0) to accept LLM route — below this falls to `fallback_chain` |
+| `routes` | string[] | Available route IDs the LLM can choose from |
+
+```yaml
+# Example: route content to specialist processor
+- id: router-specialist
+  type: smart_router
+  connections:
+    - targetNodeId: process-video
+      sourceHandle: "video"
+    - targetNodeId: process-article
+      sourceHandle: "article"
+    - targetNodeId: process-social
+      sourceHandle: "social"
+    - targetNodeId: process-generic
+      sourceHandle: "fallback"
+  spec:
+    rules:
+      - id: video
+        condition: "content.type === 'video' || content.format === 'mp4'"
+        route: video
+        priority: 10
+      - id: article
+        condition: "content.wordCount > 200"
+        route: article
+        priority: 5
+      - id: social
+        condition: "content.source === 'twitter' || content.source === 'linkedin'"
+        route: social
+        priority: 5
+    llm_routing:
+      enabled: true
+      model: "claude-haiku-4-5-20251001"
+      routing_prompt: "Based on the content metadata, classify it as: video, article, social, or fallback"
+      confidence_threshold: 0.7
+      routes: [video, article, social, fallback]
+    fallback_chain: [fallback]
+```
 
 #### handoff
-Transfer control between agents.
+Transfer control from one agent to another, carrying context. Use when a specialist agent is better suited to continue the task.
+
+**Mode decision table:**
+
+| Mode | When to use | Behavior |
+|---|---|---|
+| `transfer` | Hand off and forget | Fire-and-forget — current agent stops, target takes over |
+| `consult` | Get specialist input, then continue | Call target agent, wait for result, resume current agent with the result |
+| `collaborate` | Ongoing back-and-forth | Target agent and current agent exchange messages until resolution |
 
 | Spec Field | Type | Values |
 |------------|------|--------|
 | `mode` | string | `'transfer' \| 'consult' \| 'collaborate'` |
-| `target` | object | `{ flow?, domain? }` |
-| `context_transfer` | object | `{ include_types?, max_context_tokens? }` |
-| `on_complete` | object | `{ return_to?, merge_strategy? }` |
-| `on_failure` | object | `{ action?, timeout? }` |
-| `notify_customer` | boolean | Notify the end user? |
+| `target` | object | See sub-fields below |
+| `context_transfer` | object | See sub-fields below |
+| `on_complete` | object | See sub-fields below |
+| `on_failure` | object | See sub-fields below |
+| `notify_customer` | boolean | Send a notification to the end user about the handoff |
+
+**`target` sub-fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `flow` | string? | Target flow reference: `"domain/flow-name"` |
+| `domain` | string? | Domain to route to (when letting the domain pick the flow) — use with smart_router |
+
+**`context_transfer` sub-fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `include_types` | string[]? | What to include: `"conversation_history"`, `"tool_results"`, `"user_data"`, `"task_state"` |
+| `max_context_tokens` | number? | Token budget for transferred context — older entries are dropped first |
+
+**`on_complete` sub-fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `return_to` | string? | Flow to return to after target completes (for `consult` mode) |
+| `merge_strategy` | string? | How to merge target result back: `"replace"` — use target result; `"append"` — add to current result; `"merge_fields"` — combine specific fields |
+
+**`on_failure` sub-fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | string? | `"retry"` — try again; `"escalate"` — route to fallback agent; `"error"` — fail the flow |
+| `timeout` | number? | Ms to wait before triggering `action` |
+
+```yaml
+# Example: handoff to specialist for complex cases
+- id: handoff-specialist
+  type: handoff
+  spec:
+    mode: consult
+    target:
+      flow: processing/fact-check-agent
+    context_transfer:
+      include_types: [conversation_history, task_state]
+      max_context_tokens: 2000
+    on_complete:
+      return_to: processing/classify-content
+      merge_strategy: merge_fields
+    on_failure:
+      action: escalate
+      timeout: 30000
+    notify_customer: false
+```
 
 #### agent_group
-Group of agents working together.
+A named pool of agents that work together on a task. Use when you have multiple instances or variants of an agent type and need to coordinate their execution.
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
 | `name` | string | Group name |
 | `description` | string | What this group does |
-| `members` | AgentGroupMember[] | `{ flow, domain? }` |
-| `shared_memory` | SharedMemoryEntry[] | Shared state |
-| `coordination` | object | `{ communication?, max_active_agents?, selection_strategy?, sticky_session? }` |
+| `members` | AgentGroupMember[] | See type definition below |
+| `shared_memory` | SharedMemoryEntry[] | `{ name, type: 'key_value' \| 'vector_store', access: 'read_write' \| 'read_only' }` — state shared across all members |
+| `coordination` | object | See sub-fields below |
+
+**AgentGroupMember type:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `flow` | string | Flow reference: `"domain/flow-name"` |
+| `domain` | string? | Domain override (if different from current) |
+
+**`coordination` sub-fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `selection_strategy` | string | How members are chosen — see strategies below |
+| `max_active_agents` | number? | Max members running concurrently (default: all) |
+| `communication` | string? | How members share data: `"shared_memory"` (via key_value store), `"message_passing"` (sequential), `"broadcast"` (all receive all results) |
+| `sticky_session` | boolean? | If `true`, same member handles all requests from a given session |
+
+**`selection_strategy` options:**
+
+| Strategy | Behavior |
+|---|---|
+| `round_robin` | Distribute evenly across members in order |
+| `broadcast` | Run all members simultaneously, collect all results |
+| `sequential` | Run members one after another, each gets previous result |
+| `random` | Pick a random member each time |
+| `priority` | Use member order as priority — first available by index |
+
+```yaml
+# Example: agent group of analysis specialists
+- id: group-analysts
+  type: agent_group
+  spec:
+    name: content-analysts
+    description: Pool of content analysis specialists
+    members:
+      - flow: processing/fact-check-agent
+      - flow: processing/bias-check-agent
+      - flow: processing/score-quality
+    shared_memory:
+      - name: analysis_results
+        type: key_value
+        access: read_write
+    coordination:
+      selection_strategy: broadcast
+      max_active_agents: 3
+      communication: shared_memory
+      sticky_session: false
+```
 
 ---
 
@@ -4380,6 +4641,150 @@ flows:
       api_integration: linkedin-api
       publish_endpoint: /v2/ugcPosts
 ```
+
+### Multi-Agent Orchestration
+
+Use this pattern when a task requires multiple specialized agents collaborating with shared state and optional human escalation. The pattern combines `orchestrator` (supervisor strategy), `agent_group`, and `human_gate`.
+
+**When to use:** Complex analysis or decision tasks where:
+- No single agent can handle the full problem
+- Results need to be cross-checked or combined
+- Human review is required for low-confidence or high-stakes decisions
+
+**Pattern:**
+```
+trigger → orchestrator(supervisor) → human_gate(if needed) → terminal
+                   ↓ delegates to
+            agent_group(specialists)
+                   ↓ results via
+              shared_memory(key_value)
+```
+
+**Full example — content analysis pipeline:**
+
+```yaml
+flow:
+  id: orchestrate-content-analysis
+  type: agent
+  domain: processing
+  description: >
+    Supervisor orchestrator dispatches content to specialist agents
+    (fact-checker, quality-scorer, bias-detector). Shares state via
+    key_value memory. Routes to human review if confidence is low.
+
+trigger:
+  id: trigger-analyzeContent
+  type: trigger
+  spec:
+    event: "ItemCreated"
+    source: content-domain
+
+nodes:
+  # Step 1: Orchestrator dispatches to specialists
+  - id: orch-analyze
+    type: orchestrator
+    spec:
+      strategy: supervisor
+      model: "claude-opus-4-6"
+      supervisor_prompt: >
+        Coordinate content analysis. Call fact-checker, quality-scorer,
+        and bias-detector as appropriate. Stop when all three have
+        reported results in shared memory.
+      agents:
+        - id: fact-checker
+          flow: processing/fact-check-agent
+          specialization: "Verifying factual accuracy"
+          priority: 1
+        - id: quality-scorer
+          flow: processing/score-quality
+          specialization: "Assessing writing quality"
+        - id: bias-detector
+          flow: processing/bias-check-agent
+          specialization: "Detecting bias or slant"
+      shared_memory:
+        - name: analysis_state
+          type: key_value
+          access: read_write
+      supervision:
+        monitor_iterations: 3
+        intervene_on:
+          - condition: "iterations > 10"
+            action: escalate
+      result_merge_strategy: supervisor_picks
+      fallback_chain: [quality-scorer]
+    connections:
+      - targetNodeId: decide-confidence
+
+  # Step 2: Route to human gate if confidence is low
+  - id: decide-confidence
+    type: decision
+    spec:
+      condition: "$.analysis_state.confidence >= 0.8"
+      trueLabel: Auto-approve
+      falseLabel: Needs review
+    connections:
+      - targetNodeId: terminal-approved
+        sourceHandle: "true"
+      - targetNodeId: gate-humanReview
+        sourceHandle: "false"
+
+  # Step 3: Human gate for low-confidence results
+  - id: gate-humanReview
+    type: human_gate
+    spec:
+      notification_channels: [slack, email]
+      approval_options:
+        - id: approve
+          label: Approve
+          description: Content passes review
+        - id: reject
+          label: Reject
+          description: Content fails review
+        - id: escalate
+          label: Escalate
+          description: Route to senior editor
+      timeout:
+        duration: 86400000
+        action: escalate
+      context_for_human:
+        - analysis_state.fact_check_verdict
+        - analysis_state.quality_score
+        - analysis_state.bias_assessment
+    connections:
+      - targetNodeId: terminal-approved
+        sourceHandle: approve
+      - targetNodeId: terminal-rejected
+        sourceHandle: reject
+      - targetNodeId: terminal-escalated
+        sourceHandle: escalate
+
+  - id: terminal-approved
+    type: terminal
+    spec:
+      status: success
+      body: "$.analysis_state"
+
+  - id: terminal-rejected
+    type: terminal
+    spec:
+      status: rejected
+      body: "Content rejected by reviewer"
+
+  - id: terminal-escalated
+    type: terminal
+    spec:
+      status: escalated
+      body: "Escalated to senior editor"
+```
+
+**Key design rules for this pattern:**
+
+1. **Shared memory is the communication bus** — agents write results to `analysis_state` key_value store; the supervisor reads it to decide what to do next
+2. **Supervisor model should be more capable** than specialist models — use opus for supervisor, sonnet/haiku for specialists
+3. **Always set `supervision.monitor_iterations`** — prevents infinite loops when agents get stuck
+4. **Human gate timeout must have an action** — never leave `timeout.action` empty; default to `escalate` for high-stakes flows
+5. **Use `result_merge_strategy: supervisor_picks`** when results may conflict — the supervisor LLM explains its choice
+6. **`fallback_chain` is mandatory** for production flows — at least one fallback agent in case the primary fails
 
 ---
 
