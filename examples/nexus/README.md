@@ -18,6 +18,43 @@ Nexus is a fictional **AI-powered content intelligence platform** used as the be
 
 ---
 
+## Generating a Coverage-Driven Product Definition
+
+The [`product-definition.md`](product-definition.md) in this folder was designed to exercise every feature in the DDD Usage Guide. If you want to generate a new version (or create a similar brief for a different app), give Claude this prompt:
+
+---
+
+> **Prompt to give Claude:**
+>
+> Read the DDD Usage Guide at `~/dev/DDD/DDD-USAGE-GUIDE.md` in full.
+>
+> Design a product called **[your app name]** that exercises every documented feature across all four DDD pillars — Logic, Data, Interface, and Infrastructure.
+>
+> Requirements:
+> - **Logic:** Every trigger type must appear at least once (HTTP, cron, event, webhook, ipc, ws, pattern, manual, interval, event_group). Every node type must appear at least once, including all variants: all orchestrator strategies (supervisor/round_robin/broadcast/consensus), all handoff modes (transfer/consult/collaborate), all agent_group coordination strategies (broadcast/round_robin/sequential), all collection operations (filter/sort/deduplicate/merge/group_by/aggregate/reduce/flatten/first/last/join), parallel with both failure_policy variants (all_required and best_effort), loop with break_condition, transform in both schema and expression modes, agent_loop with is_terminal tool, requires_confirmation tool, and all memory types (conversation_history/vector_store/key_value), guardrail in both input and output positions.
+> - **Data:** Every schema must include typed fields, relationships (has_many/belongs_to/has_one/many_to_many), indexes, soft_delete where relevant, seed data where relevant, and state machine transitions for status fields.
+> - **Interface:** Every UI page must specify component types (stat-card/item-list/card-grid/detail-card/chart/filter-bar/button-group/page-header/status-bar), use all 14 form field types across the page set (text/number/select/multi-select/search-select/date/datetime/date-range/textarea/toggle/tag-input/file/color/slider/markdown), include at least one of each interaction (bulk-select/inline-edit/drag-drop/reorder), and define realtime state (WebSocket) on at least two pages.
+> - **Infrastructure:** Define all service types (server/worker/datastore/proxy), with depends_on, startup_order, dev_command, and setup for each.
+> - **Cross-cutting:** All 6 patterns must be formally defined in architecture.yaml (stealth_http, api_key_resolution, encryption, soft_delete, content_hashing, error_handling).
+> - **Domain:** Use all domain role types (process/entity/gateway). Every cross-domain event must include a payload schema. At least one flow must use event_group trigger.
+>
+> Output a `product-definition.md` with:
+> 1. App concept and tech stack
+> 2. A DDD Feature Coverage Matrix (table mapping every Usage Guide feature to the flow/page/schema that exercises it)
+> 3. Logic pillar — domains and flows with explicit DDD feature annotations per flow
+> 4. Data pillar — schemas with all features specified
+> 5. Interface pillar — UI pages with component/field/interaction specs
+> 6. Infrastructure pillar — service definitions
+> 7. Cross-cutting patterns
+> 8. Domain events with payload schemas
+> 9. A node type + trigger type + schema + UI + infrastructure checklist at the end
+
+---
+
+Once generated, feed the `product-definition.md` to `/ddd-create` as described in Scenario 1 below.
+
+---
+
 ## Two Test Scenarios
 
 ### Scenario 1 — DDD Commands Effectiveness Test
