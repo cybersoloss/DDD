@@ -46,7 +46,9 @@
       "Bash(gh pr list:*)",
       "Bash(gh issue list:*)",
       "Bash(wc:*)",
-      "Bash(gh release create:*)"
+      "Bash(gh release create:*)",
+      "Bash(for repo in DDD claude-commands ddd-tool)",
+      "Bash(do)"
     ]
   }
 }
