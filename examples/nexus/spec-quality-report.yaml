@@ -1,13 +1,17 @@
 report: spec-quality-report
-generated_at: 2026-02-21T13:32:14.352Z
+generated_at: 2026-02-22T23:16:07.674Z
 project: /Users/mhcandan/dev/DDD/examples/nexus
 summary:
   quality_score: 98
-  total_issues: 22
+  total_issues: 24
   errors: 0
-  warnings: 10
+  warnings: 12
   info: 12
   issues_by_category:
+    graph_completeness:
+      errors: 0
+      warnings: 2
+      info: 0
     event_wiring:
       errors: 0
       warnings: 10
@@ -100,8 +104,8 @@ coverage:
     traditional: 48
     agent: 5
     with_errors: 0
-    with_warnings: 0
-    clean: 53
+    with_warnings: 1
+    clean: 52
 flow_validation:
   - flow: analytics/generate-daily-report
     valid: true
@@ -281,8 +285,22 @@ flow_validation:
   - flow: processing/score-quality
     valid: true
     errors: 0
-    warnings: 0
-    issues: []
+    warnings: 2
+    issues:
+      - severity: warning
+        category: graph_completeness
+        message: Smart Router "Route by Content Category" is missing a connection for route "fact-check-agent"
+        suggestion: Connect the "fact-check-agent" handle to a downstream node
+        node_id: smart_router-u0z8h3l4
+        flow_id: score-quality
+        domain_id: processing
+      - severity: warning
+        category: graph_completeness
+        message: Smart Router "Route by Content Category" is missing a connection for route "bias-check-agent"
+        suggestion: Connect the "bias-check-agent" handle to a downstream node
+        node_id: smart_router-u0z8h3l4
+        flow_id: score-quality
+        domain_id: processing
   - flow: processing/summarize-batch
     valid: true
     errors: 0
