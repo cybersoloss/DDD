@@ -4,6 +4,8 @@
 
 **Design software visually. Let AI implement it.**
 
+![DDD Demo](assets/ddd-demo.gif)
+
 Design Driven Development is a methodology for building software through visual flow diagrams that output YAML specs. Specs and code are both sources of truth at different levels — specs define what/why, code accumulates how. The Reflect phase feeds implementation wisdom back into specs.
 
 > **Note:** The abbreviation "DDD" is used throughout this project for brevity. This is not related to Eric Evans' Domain-Driven Design, which is an entirely separate methodology. We use the full name "Design Driven Development" to avoid confusion.
@@ -165,3 +167,5 @@ A self-regenerating test infrastructure that verifies the DDD ecosystem (guide +
 |------|-----------|-------------|
 | [ddd-tool](https://github.com/cybersoloss/ddd-tool) | Desktop app — visual flow editor | Users designing specs on canvas |
 | [claude-commands](https://github.com/cybersoloss/claude-commands) | Claude Code slash commands | Users running DDD commands in the terminal |
+
+![DDD Tool Canvas](assets/ddd-tool-demo-2.gif)
