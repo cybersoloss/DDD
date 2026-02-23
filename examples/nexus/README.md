@@ -68,10 +68,8 @@ Once generated, feed the `product-definition.md` to `/ddd-create` as described i
 # 1. Create a fresh project folder
 mkdir ~/dev/nexus-test && cd ~/dev/nexus-test
 
-# 2. Open a Claude Code session in ~/dev/nexus-test
-#    Tell Claude: "Use ~/dev/DDD/examples/nexus/product-definition.md as the product brief"
-#    Then run:
-/ddd-create
+# 2. Open a Claude Code session in ~/dev/nexus-test, then run:
+/ddd-create --from ~/dev/DDD/examples/nexus/product-definition.md --shortfalls
 
 # 3. Run the automated benchmark (from ddd-tool repo)
 cd ~/dev/ddd-tool
@@ -83,8 +81,9 @@ npm run test:specs -- ~/dev/nexus-test
 - `tool-compatibility-report.yaml` success_rate_pct = 100
 - Node type coverage = 28/28
 - 0 parse or normalize failures
+- `specs/shortfalls.yaml` — review for any DDD framework limitations hit during generation
 
-**When to run:** After any change to `/ddd-create` or `DDD-USAGE-GUIDE.md`. If score drops below 98 or coverage falls below 28/28, the command or guide degraded.
+**When to run:** After any change to `/ddd-create` or `DDD-USAGE-GUIDE.md`. If score drops below 98 or coverage falls below 28/28, the command or guide degraded. Shortfalls report reveals framework gaps that should feed into `/ddd-evolve`.
 
 The product brief is in [`product-definition.md`](product-definition.md). It contains a DDD Feature Coverage Matrix mapping every Usage Guide feature to a specific flow, schema, or UI page — use the checklist at the end to verify all features were generated.
 
