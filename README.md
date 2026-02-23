@@ -150,7 +150,7 @@ DDD/
 ## Key Documents
 
 ### [DDD Usage Guide](DDD-USAGE-GUIDE.md)
-The definitive reference for writing Design Driven Development specs. Covers all 28 node types, YAML formats, connection patterns, supplementary spec files, validation rules, design patterns, and complete examples. This is what `/ddd-create` fetches at runtime to generate correct specs.
+The definitive reference for writing Design Driven Development specs. Covers all 29 node types, YAML formats, connection patterns, supplementary spec files, validation rules, design patterns, and complete examples. This is what `/ddd-create` fetches at runtime to generate correct specs.
 
 ### [Examples](examples/)
 Complete spec sets you can open in the DDD Tool or feed to `/ddd-implement`.
