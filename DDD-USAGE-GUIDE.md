@@ -3582,6 +3582,10 @@ Run tests for implemented flows without re-generating code. Use after manual edi
 | `--all` | All implemented flows | `/ddd-test --all` |
 | `{domain}` | All flows in a domain | `/ddd-test users` |
 | `{domain}/{flow}` | Single flow | `/ddd-test users/user-register` |
+| `--ui` | All UI page tests | `/ddd-test --ui` |
+| `--ui {page-id}` | Single page tests | `/ddd-test --ui dashboard` |
+| `--schema` | All schema tests | `/ddd-test --schema` |
+| `--infra` | Infrastructure tests | `/ddd-test --infra` |
 | *(empty)* | Interactive mode | `/ddd-test` |
 
 **What it does:**
@@ -3692,6 +3696,10 @@ Captures implementation wisdom — patterns and details that code has but specs 
 | `--all` | Entire project | `/ddd-reflect --all` |
 | `{domain}` | All flows in a domain | `/ddd-reflect monitoring` |
 | `{domain}/{flow}` | Single flow | `/ddd-reflect monitoring/check-social-sources` |
+| `--ui` | UI implementation patterns | `/ddd-reflect --ui` |
+| `--ui {page-id}` | Single page patterns | `/ddd-reflect --ui dashboard` |
+| `--schema` | Schema implementation patterns | `/ddd-reflect --schema` |
+| `--infra` | Infrastructure patterns | `/ddd-reflect --infra` |
 | *(empty)* | Interactive mode | `/ddd-reflect` |
 
 **What it does:**
@@ -3716,7 +3724,12 @@ Moves approved annotations into permanent specs. This is how implementation wisd
 |----------|-------|---------|
 | `--all` | Promote all approved annotations | `/ddd-promote --all` |
 | `--review` | Interactive review of candidates | `/ddd-promote --review` |
+| `{domain}` | All flows in a domain | `/ddd-promote monitoring` |
 | `{domain}/{flow}` | Scope to specific flow | `/ddd-promote monitoring/check-social-sources` |
+| `--ui` | UI-related annotations | `/ddd-promote --ui` |
+| `--ui {page-id}` | Single page annotations | `/ddd-promote --ui dashboard` |
+| `--schema` | Schema annotations | `/ddd-promote --schema` |
+| `--infra` | Infrastructure annotations | `/ddd-promote --infra` |
 
 **What it does:**
 1. Reads all `.ddd/annotations/` files
