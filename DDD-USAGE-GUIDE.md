@@ -118,6 +118,8 @@ layout:
 | `on_error` | DomainOnError? | Domain-level error hook — `/ddd-implement` adds this behavior to all error terminals in the domain |
 | `event_groups` | EventGroup[]? | Named groups of events for use in multi-event triggers |
 | `groups` | FlowGroup[]? | Visual grouping of flows at L2 |
+| `sla_config` | object? | Domain-level SLA thresholds: `{ max_latency_ms: number, alert_threshold_ms: number, on_breach: event_name }`. `/ddd-scaffold` generates latency monitoring hooks; when breach occurs the named event is emitted. |
+| `memory_stores` | MemoryTopologyEntry[]? | Agent memory stores used in this domain. Shown at L2 alongside database/cache nodes: `[{ name: string, type: 'vector_store' \| 'key_value' \| 'conversation_history', used_by: flow_ids[] }]`. |
 | `layout` | DomainLayout | Canvas positions (managed by DDD Tool) |
 
 ### FlowGroup
@@ -137,6 +139,7 @@ Named collections of events for use in multi-event triggers. Instead of listing 
 | `name` | string | Group name (referenced as `event_group:{name}` in triggers) |
 | `description` | string? | What this group represents |
 | `events` | string[] | Event names in this group |
+| `correlation_key` | string? | Payload field to correlate events across invocations (e.g., `"sku_id"`, `"order_id"`). When set, the trigger only fires when all events in the group share the same value for this field — enabling fan-in join patterns like "wait for `stock.depleted` AND `order.cancelled` for the same sku". |
 
 ```yaml
 # Example: define event groups in domain.yaml
@@ -317,6 +320,26 @@ integrations:
 ```
 
 > **Note:** The `queue` field determines event infrastructure: when set (e.g., `BullMQ`), `/ddd-scaffold` generates queue-based event infrastructure and `/ddd-implement` uses it for async events. When absent, use an in-process EventEmitter for domain events.
+
+#### ws_topology
+
+Declare WebSocket channel relationships for L1 visualization. Shown as realtime arrows connecting producer flows to consuming pages.
+
+```yaml
+ws_topology:
+  - channel: "shipment-updates"
+    producer_flow: "logistics/stream-shipment-position"
+    consumer_pages: ["shipment-tracking", "analytics-dashboard"]
+  - channel: "live-metrics"
+    producer_flow: "analytics/stream-live-metrics"
+    consumer_pages: ["analytics-dashboard"]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `channel` | string | Socket.io room / WS channel name |
+| `producer_flow` | string | Flow that broadcasts to this channel (`domain/flow-id`) |
+| `consumer_pages` | string[] | Page IDs that subscribe to this channel (from pages.yaml) |
 
 #### IntegrationConfig
 
@@ -1240,6 +1263,7 @@ refresh: manual
 | `item_actions` | ItemAction[]? | Per-item action buttons |
 | `buttons` | ButtonSpec[]? | Button group entries (for button-group component) |
 | `visible_when` | string? | Conditional visibility expression |
+| `realtime_behavior` | object? | How the section reacts when WebSocket data arrives (requires `data_source` pointing to a `ws`-triggered flow): `{ on_new_item?: 'prepend' \| 'append' \| 'refresh', on_update?: 'highlight' \| 'silent' \| 'badge_count', highlight_duration_ms?: number }`. `/ddd-implement` generates the appropriate WebSocket subscription and DOM update logic. |
 
 #### Component Type Field Reference
 
@@ -1248,7 +1272,7 @@ Different component types use different subsets of PageSection fields. Here's wh
 | Component | Key Fields | Notes |
 |-----------|------------|-------|
 | `stat-card` | `fields.value`, `fields.subtitle`, `fields.urgency` (with `rules`), `actions` (e.g., `click: {navigate}`), optional `trend` (`{ value: "$.prev", direction: 'auto' \| 'up' \| 'down', format: 'delta' \| 'percent' \| 'raw' }`) | Single metric display |
-| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll`, optional `interactions`, optional `group_by` (`{ field: "$.category", label_field?: "$.label", show_count?: boolean, collapsible?: boolean }`) | Scrollable list with optional section grouping |
+| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll`, optional `interactions`, optional `group_by` (`{ field: "$.category", label_field?: "$.label", show_count?: boolean, collapsible?: boolean }`), optional `realtime_insert_position` (`'top' \| 'bottom'` — when the data_source has a realtime WebSocket feed, declares whether new items prepend or append) | Scrollable list with optional section grouping and realtime update support |
 | `card-grid` | `data_source`, `fields.columns` (responsive: desktop/tablet/mobile), `item_template` (image/title/description/footer), `item_actions`, `empty_state`, optional `interactions` | Responsive grid |
 | `detail-card` | `data_source`, `fields` mapping with `$.field` syntax (optional `editable`), `actions` (edit/delete/archive), optional `tabs` | Single record view |
 | `button-group` | `buttons` (ButtonSpec[]) with `label`, `flow`, `args`, `variant`, `icon`, `visible_when`, `confirm` | Action buttons |
@@ -1256,6 +1280,8 @@ Different component types use different subsets of PageSection fields. Here's wh
 | `status-bar` | `fields.items` array with `label`, `value` ($.field), `color_when` conditions | Status indicators |
 | `chart` | `data_source`, `fields` (series, labels, values), `chart_type` (line/bar/pie/area/donut) | Data visualization |
 | `filter-bar` | `fields` (FormField[] for filter inputs), binds to sibling section's `query` | Inline filters for lists/grids |
+| `map-view` | `data_source`, `center_lat`/`center_lng` (initial center), `zoom` (initial zoom), `markers` (array — `{ lat_field, lng_field, label_field?, color_field?, click_action? }`), `routes` (array — `{ points_field, color?, width? }`), `realtime` (boolean — enables live marker updates via WebSocket) | Geographic map with markers and optional routes. Use for shipment tracking, field service, delivery maps. Do NOT use `chart` with `chart_type: map` for geographic data. |
+| `timeline` | `data_source`, `timestamp_field`, `title_field`, `status_field`, `icon_field?`, `color_when` (conditions → color), `direction` (`'vertical' \| 'horizontal'`) | Ordered event sequence with time steps. Use for shipment history, activity logs, audit trails. |
 
 > To use a shared component, set `component` to the shared component's ID from `pages.yaml` → `shared_components`.
 
@@ -1307,6 +1333,17 @@ When `editable: true` is set on a field, the UI renders a click-to-edit control.
 | `fields` | FormField[] | Form fields |
 | `submit` | FormSubmit | Submit configuration |
 | `auto_save` | FormAutoSave? | Auto-save configuration. When set, replaces the submit button with a debounced save — no button is rendered. |
+| `wizard` | FormWizard? | When set, renders the form as a multi-step wizard with Next/Back navigation. See FormWizard below. |
+
+**FormWizard fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `steps` | array | Wizard steps: `[{ id: string, title: string, description?: string, fields: string[] }]` — `fields` is a list of field names assigned to this step |
+| `show_progress` | boolean? | Show a step progress indicator (default: `true`) |
+| `allow_skip` | boolean? | Allow advancing without completing all step fields (default: `false`) |
+
+`/ddd-implement` generates a wizard component with per-step validation. All field names in `wizard.steps[].fields` must exist in the `fields` array. Use for complex multi-stage forms (supplier onboarding, project setup, multi-step checkout).
 
 **FormAutoSave fields:**
 
@@ -1323,7 +1360,7 @@ When `auto_save` is set, `/ddd-implement` generates a `useEffect` with debounced
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | Field name (sent to backend) |
-| `type` | string | Input type: `'text' \| 'number' \| 'select' \| 'multi-select' \| 'search-select' \| 'date' \| 'datetime' \| 'date-range' \| 'textarea' \| 'toggle' \| 'tag-input' \| 'file' \| 'color' \| 'slider' \| 'markdown'` |
+| `type` | string | Input type: `'text' \| 'number' \| 'select' \| 'multi-select' \| 'search-select' \| 'date' \| 'datetime' \| 'date-range' \| 'textarea' \| 'toggle' \| 'tag-input' \| 'file' \| 'color' \| 'slider' \| 'markdown' \| 'repeating_group'` |
 | `markdown_config` | object? | Only valid when `type: 'markdown'`. `{ mode?: 'toggle' \| 'split', toolbar?: boolean, min_height?: number }` — `toggle` (default) shows edit and preview tabs; `split` shows them side by side. `/ddd-implement` renders an appropriate markdown editor component (e.g., `@uiw/react-md-editor`). |
 | `label` | string | Display label |
 | `placeholder` | string? | Placeholder text |
@@ -1340,6 +1377,8 @@ When `auto_save` is set, `/ddd-implement` generates a `useEffect` with debounced
 | `default` | any? | Default value |
 | `validation` | string? | Validation rule description |
 | `visible_when` | string? | Conditional visibility expression |
+| `options_depends_on` | object? | Dynamic option filtering based on another field's value: `{ field: string, transform: 'filter' \| 'set_default' \| 'set_options', source_field: string }`. Example: currency dropdown filtered by the currently selected supplier. |
+| `repeating_group` | object? | **Only valid when `type: 'repeating_group'`.** Configuration for an editable sub-table: `{ columns: [{ name, type, label, required?, options? }], min_rows?: number, max_rows?: number, add_label?: string, remove_label?: string }`. `/ddd-implement` renders an add/remove-row grid component. Use for purchase order line items, invoice rows, schedule entries, etc. |
 
 #### FormSubmit
 
@@ -1456,6 +1495,7 @@ deployment:
 | `dev_command` | string? | Command to start in development |
 | `setup` | string? | One-time setup command (e.g., DB migration) |
 | `engine` | string? | Engine name for datastores |
+| `queues` | array? | **`worker` type only.** Queue membership for L1/L2 visualization: `[{ name: string, consumer_flows?: string[], producer_flows?: string[] }]`. Shown as queue-topology badges at L2 on flows that belong to this worker's queues. |
 
 #### DeploymentConfig
 
@@ -1605,6 +1645,8 @@ metadata:
 | `flow.contract` | object? | Sub-flow input/output contract (see below) |
 | `flow.emits` | string[]? | Events this flow emits (informational — domain.yaml remains source of truth). DDD Tool auto-populates from event nodes. |
 | `flow.listens_to` | string[]? | Events this flow consumes (informational — domain.yaml remains source of truth). DDD Tool auto-populates from trigger/event nodes. |
+| `flow.auth` | object? | Authentication requirements: `{ required: boolean, roles?: string[], strategy?: 'jwt' \| 'api_key' \| 'none' }`. `/ddd-implement` generates auth middleware for HTTP-triggered flows. Internal, cron, and event-triggered flows may omit this field. `/ddd-create` emits a warning (not error) for HTTP flows without this field. |
+| `flow.metrics` | array? | Custom Prometheus metrics for this flow: `[{ name: string, type: 'counter' \| 'gauge' \| 'histogram', labels?: string[] }]`. `/ddd-scaffold` generates metric registration stubs. |
 | `trigger` | DddFlowNode | The entry point node |
 | `nodes` | DddFlowNode[] | All other nodes |
 | `metadata` | object | `{ created, modified }` ISO timestamps |
@@ -1616,13 +1658,14 @@ Every node has:
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | Unique node ID |
-| `type` | DddNodeType | One of the 28 node types |
+| `type` | DddNodeType | One of the 29 node types |
 | `position` | `{ x, y }` | Canvas position |
 | `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior?, label? }` |
 | `spec` | object | Type-specific configuration (see below) |
 | `label` | string | Display name on canvas |
 | `observability` | object? | Logging/metrics/tracing config |
 | `security` | object? | Auth/rate-limiting/encryption config |
+| `log` | object? | Structured business event log declaration: `{ level: 'info' \| 'warn' \| 'error', fields: string[], condition?: string }`. When set, `/ddd-implement` emits a structured log entry with the listed fields at this node. Use for business-significant events (order approved, supplier flagged) that need audit trails beyond standard error logging. |
 | `parentId` | string? | ID of a container node (loop or parallel). When set, this node is rendered inside the container on the canvas. |
 
 ### Connection Data Annotations
@@ -1666,12 +1709,28 @@ Connections can optionally include a `behavior` field to distinguish error handl
 | `retry` | Retry before failing (retry count configured at node level) |
 | `circuit_break` | Use circuit breaker pattern |
 
+When `behavior: circuit_break`, add `circuit_break_config` to configure the breaker:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `circuit_break_config.failure_threshold` | number | Consecutive failures before opening the circuit (e.g., `5`) |
+| `circuit_break_config.recovery_timeout_ms` | number | Time in open state before allowing a test call (e.g., `30000`) |
+| `circuit_break_config.half_open_max_calls` | number? | Max test calls in half-open state before closing (default: `1`) |
+
+`/ddd-implement` reads `circuit_break_config` to generate an [opossum](https://nodeshift.dev/opossum/) or equivalent circuit breaker wrapping the downstream call.
+
 ```yaml
 connections:
   - targetNodeId: terminal-error-001
     sourceHandle: error
     behavior: continue
     label: "Log and skip"
+  - targetNodeId: service-carrier-001
+    behavior: circuit_break
+    circuit_break_config:
+      failure_threshold: 5
+      recovery_timeout_ms: 30000
+      half_open_max_calls: 1
 ```
 
 ### Connection Format Compatibility
@@ -1744,6 +1803,8 @@ The entry point of every flow. Exactly one per flow.
 | `debounce_ms` | number? | Debounce delay in milliseconds. When set, `/ddd-implement` wraps the event handler in a debounce function. Only meaningful for `event:`, `ipc:`, `shortcut`, and `ui:` triggers. |
 | `rate_limit` | object? | `{ window_ms: number, max_requests: number, key_by?: 'ip' \| 'user' \| 'api_key', on_exceeded?: 'reject' \| 'queue' \| 'delay' }` — per-endpoint rate limiting. `/ddd-implement` generates middleware. |
 | `signature` | object? | `{ algorithm: 'hmac-sha256' \| 'hmac-sha1', key_source: { env: string }, header: string }` — webhook signature validation. `/ddd-implement` verifies before handler. |
+| `connection_config` | object? | **WebSocket (`ws`) triggers only.** `{ auth_required: boolean, auth_strategy?: 'jwt' \| 'api_key' \| 'none', heartbeat_ms?: number, max_connections_per_client?: number, reconnect?: boolean }` — `/ddd-implement` generates WebSocket auth middleware and connection lifecycle management. |
+| `tier_limits` | array? | **HTTP triggers only.** Per-role rate limit overrides: `[{ role: string, max_requests: number, window_ms: number }]` — applied after global `rate_limit`. Allows admin roles higher throughput. |
 | `description` | string | Details |
 
 **Trigger type conventions** — use these patterns in the `event` field to communicate trigger semantics:
@@ -1814,11 +1875,17 @@ spec:
   source: API Gateway
   description: Real-time update stream for dashboard
 
-# WebSocket trigger
+# WebSocket trigger — with optional connection config
 spec:
   event: "ws /api/live"
   source: API Gateway
   description: Bidirectional real-time connection
+  connection_config:
+    auth_required: true
+    auth_strategy: jwt          # 'jwt' | 'api_key' | 'none'
+    heartbeat_ms: 30000         # ping interval (default: 30000)
+    max_connections_per_client: 3   # optional per-IP limit
+    reconnect: true             # allow client reconnect (default: true)
 
 # Event pattern trigger — fires when a pattern of events occurs
 spec:
@@ -2149,6 +2216,7 @@ External API call. Use `sourceHandle` values `"success"` and `"error"` on connec
 | `request_config` | RequestConfig? | Outbound request behavior configuration |
 | `integration` | string? | Reference to integration defined in system.yaml |
 | `oauth_config` | object? | OAuth2 token lifecycle management. When set, `/ddd-implement` generates automatic token refresh before the request. Can be omitted when the integration reference in `system.yaml` already defines `auth.type: oauth2` — in that case the integration's token config is inherited automatically. |
+| `fallback` | object? | Graceful degradation for non-critical calls: `{ value: any, log?: boolean }`. When set, a failed service_call uses `value` as its output instead of routing to the `error` handle. Useful for optional data enrichment (e.g., currency rates, metadata lookups) where failure should not abort the flow. |
 | `description` | string | Details |
 
 **Error mapping example:**
@@ -2246,6 +2314,7 @@ Publish or subscribe to an event.
 | `priority` | number? | Job priority when enqueueing |
 | `delay_ms` | number? | Delay before processing |
 | `dedup_key` | string? | Deduplication key |
+| `correlation_id` | string? | Expression for distributed tracing correlation (e.g., `"$.order_id"`). When set, `/ddd-implement` propagates the correlation ID in event headers for cross-domain trace linking. |
 | `description` | string | Details |
 
 #### loop
@@ -2255,7 +2324,7 @@ Iterate over a collection. Has two output paths: `"body"` for the loop body and 
 |------------|------|-------------|
 | `collection` | string | What to iterate (e.g., "users", "$.items") |
 | `iterator` | string | Iterator variable name |
-| `break_condition` | string | When to stop early |
+| `break_condition` | string \| object? | When to stop early. Accepts either a free-text string (`"when queue is empty"`) or a structured condition: `{ type: 'expression' \| 'field_check' \| 'event', field?: string, operator?: 'eq \| gt \| gte \| lt \| lte \| in', value?: any, event?: string }`. Structured conditions enable static analysis and canvas visualization of loop termination logic. |
 | `on_error` | string? | `'continue' \| 'break' \| 'fail'` — behavior when iteration fails (default: 'fail') |
 | `accumulate` | AccumulateConfig? | Collect results across iterations |
 | `body_start` | string? | Node ID of the first node in the loop body. Used for nested layout — nodes with `parentId` matching this loop's ID are rendered inside the loop container. |
@@ -2402,6 +2471,7 @@ Cache operations: check (read-through with hit/miss), set (explicit write), inva
 | `key` | string | Cache key template (e.g., "search:{query}") |
 | `ttl_ms` | number? | Time-to-live in milliseconds (for `check` and `set`) |
 | `value` | string? | Value expression to store (required for `set`, e.g., `"$.settings"`) |
+| `ttl_jitter_ms` | number? | **`set` operation only.** Randomizes TTL between `ttl_ms` and `ttl_ms + ttl_jitter_ms` to prevent cache stampede when many keys expire simultaneously (thundering herd). |
 | `store` | string | `'redis' \| 'memory'` |
 | `description` | string | What is being cached |
 
@@ -2626,7 +2696,8 @@ Execute a heterogeneous list of operations against a collection where each item 
 | Spec Field | Type | Description |
 |------------|------|-------------|
 | `input` | string | Collection to iterate over (e.g., `"$.api_keys"`) |
-| `operation_template` | object | Per-item operation config (see below) |
+| `operation_template` | object? | Per-item operation config (see below). Mutually exclusive with `sub_flow_ref`. |
+| `sub_flow_ref` | string? | Sub-flow to call for each item in `input` (e.g., `"forecasting/generate-ai-forecast"`). Mutually exclusive with `operation_template`. The referenced flow must have a `contract` section defining its inputs/outputs. `/ddd-implement` generates a per-item sub-flow invocation with error capture. |
 | `concurrency` | number? | Max parallel operations |
 | `on_error` | string? | `'continue' \| 'stop'` — per-item error handling |
 | `output` | string | Output variable (array of `{ item, result, success }`) |
@@ -2736,6 +2807,10 @@ LLM agent with tools in a loop. Each iteration: send messages → get response �
 | `type` | string | `'conversation_history'` — full message thread; `'vector_store'` — semantic search; `'key_value'` — shared state between agents |
 | `max_tokens` | number? | Token limit before eviction |
 | `strategy` | string? | Eviction: `"sliding_window"` (drop oldest), `"summarize"` (compress), `"truncate"` (drop from start) |
+| `embedding_model` | string? | **`vector_store` type only.** Embedding model to use (e.g., `"text-embedding-3-small"`, `"text-embedding-3-large"`). `/ddd-implement` initializes the vector client with this model. |
+| `similarity_threshold` | number? | **`vector_store` type only.** Minimum cosine similarity for search results (0–1, e.g., `0.75`). Results below threshold are excluded. |
+| `max_results` | number? | **`vector_store` type only.** Maximum number of results returned per semantic search query (e.g., `5`). |
+| `namespace` | string? | **`vector_store` type only.** Isolation namespace for multi-tenant stores (e.g., `"user-{user_id}"`). Keeps each user's memory separate. |
 
 ```yaml
 # Example: fact-checking agent loop
@@ -3058,6 +3133,46 @@ A named pool of agents that work together on a task. Use when you have multiple 
       sticky_session: false
 ```
 
+### 6.5 Realtime Nodes
+
+#### websocket_broadcast
+Push data from a flow to connected WebSocket clients. Use for server-initiated fan-out: live metric updates, shipment position updates, chat messages, notification delivery. Has a single output handle: `"done"`.
+
+> This is the **server-push** complement to the `ws` trigger (which handles **client-to-server** messages). Use `websocket_broadcast` in flows triggered by events, cron, or other server-side triggers that need to update connected clients.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `channel` | string | Socket.io room name or WebSocket topic (e.g., `"shipment-{shipment_id}"`, `"live-metrics"`) |
+| `event_name` | string | WebSocket event identifier sent to clients (e.g., `"position_update"`, `"metric_tick"`) |
+| `payload` | string \| object | Data to broadcast. Accepts a variable reference (`"$.metrics_snapshot"`) or an inline object template. |
+| `include_sender` | boolean? | Whether to echo the broadcast back to the originating connection (default: `false`). Only meaningful when the flow was triggered by the sender's `ws` trigger. |
+| `description` | string | Details |
+
+```yaml
+# Example: broadcast live metrics to dashboard subscribers
+- id: ws-broadcast-metrics
+  type: websocket_broadcast
+  spec:
+    channel: "live-metrics"
+    event_name: metric_tick
+    payload: "$.metrics_snapshot"
+    include_sender: false
+    description: Push metrics update to all dashboard subscribers
+
+# Example: targeted shipment position update
+- id: ws-broadcast-position
+  type: websocket_broadcast
+  spec:
+    channel: "shipment-$.shipment_id"
+    event_name: position_update
+    payload:
+      lat: "$.current_lat"
+      lng: "$.current_lng"
+      status: "$.status"
+      timestamp: "$.updated_at"
+    description: Push shipment GPS position to tracking page subscribers
+```
+
 ---
 
 ## 7. Cross-Cutting Concerns (Per-Node)
@@ -3134,6 +3249,7 @@ Connections define the flow graph. Each connection is `{ targetNodeId, sourceHan
 | `agent_loop` | `"done"` | `"error"` | |
 | `smart_router` | dynamic route IDs | | From `rules[].id` |
 | `human_gate` | dynamic option IDs | | From `approval_options[].id` |
+| `websocket_broadcast` | `"done"` | | Single output — no error branching |
 | All others | *(single unnamed output)* | | process, delay, transform, sub_flow, orchestrator, handoff, agent_group, event, terminal |
 
 ### Examples
@@ -3167,7 +3283,7 @@ connections:
     sourceHandle: "reject"
 ```
 
-**Single output** (process, delay, transform, sub_flow, orchestrator, handoff, agent_group):
+**Single output** (process, delay, transform, sub_flow, orchestrator, handoff, agent_group, websocket_broadcast):
 ```yaml
 connections:
   - targetNodeId: next-node-id
