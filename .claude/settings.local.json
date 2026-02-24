@@ -48,7 +48,16 @@
       "Bash(wc:*)",
       "Bash(gh release create:*)",
       "Bash(for repo in DDD claude-commands ddd-tool)",
-      "Bash(do)"
+      "Bash(do)",
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:agentfactory.panaversity.org)",
+      "WebFetch(domain:www.infoq.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(for repo in cybersoloss/DDD cybersoloss/ddd-tool cybersoloss/claude-commands)",
+      "Bash(do echo \"=== $repo ===\" gh api repos/$repo/traffic/views)",
+      "Bash(gh search:*)",
+      "WebFetch(domain:cybersol.nl)"
     ]
   }
 }
