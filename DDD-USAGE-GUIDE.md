@@ -1377,6 +1377,7 @@ When `auto_save` is set, `/ddd-implement` generates a `useEffect` with debounced
 | `default` | any? | Default value |
 | `validation` | string? | Validation rule description |
 | `visible_when` | string? | Conditional visibility expression |
+| `required_when` | object? | Conditional required validation: `{ field: string, value: any }`. When set, `/ddd-implement` generates a validation rule: if `form[field] === value` then this field is required. Accepts array value for "required when field is any of [...values]": `{ field: 'platform', value: ['twitter', 'x'] }`. Symmetric with `visible_when`. Example: Twitter credentials are required when `platform === 'twitter'`. |
 | `options_depends_on` | object? | Dynamic option filtering based on another field's value: `{ field: string, transform: 'filter' \| 'set_default' \| 'set_options', source_field: string }`. Example: currency dropdown filtered by the currently selected supplier. |
 | `repeating_group` | object? | **Only valid when `type: 'repeating_group'`.** Configuration for an editable sub-table: `{ columns: [{ name, type, label, required?, options? }], min_rows?: number, max_rows?: number, add_label?: string, remove_label?: string }`. `/ddd-implement` renders an add/remove-row grid component. Use for purchase order line items, invoice rows, schedule entries, etc. |
 
@@ -1667,6 +1668,7 @@ Every node has:
 | `security` | object? | Auth/rate-limiting/encryption config |
 | `log` | object? | Structured business event log declaration: `{ level: 'info' \| 'warn' \| 'error', fields: string[], condition?: string }`. When set, `/ddd-implement` emits a structured log entry with the listed fields at this node. Use for business-significant events (order approved, supplier flagged) that need audit trails beyond standard error logging. |
 | `parentId` | string? | ID of a container node (loop or parallel). When set, this node is rendered inside the container on the canvas. |
+| `pattern_governed` | string? | Name of the `cross_cutting_pattern` from `architecture.yaml` that governs this node (e.g., `"encryption"`, `"stealth_http"`). Set automatically by `/ddd-create` when generating a node that matches a known pattern. DDD Tool renders a subtle pattern badge on the canvas. Informational only — does not affect behavior. |
 
 ### Connection Data Annotations
 
@@ -2064,7 +2066,8 @@ Data storage operation. Supports databases, filesystem, and in-memory stores. Us
 | `group_by` | string[]? | Only for `operation: aggregate`. List of field names to group by (e.g., `["status", "category"]`). Omit for ungrouped aggregations (returns a single row). |
 | `model` | string | Entity/table name (database) |
 | `data` | `Record<string, string>` | Fields to write (for create/update) |
-| `query` | `Record<string, string>` | Query conditions (for read/update/delete) |
+| `query` | `Record<string, string>` | Query conditions (for read/update/delete). All entries treated as required filters. For optional filters, use `filters` instead. |
+| `filters` | array? | Optional/conditional filter array: `[{ field: string, value: string, required?: boolean }]`. When `required: false`, `/ddd-implement` wraps the clause in a conditional — the filter is only applied if the value is defined and non-null. Backwards compatible with `query` (both can be used together; `query` entries are always required). Example: `[{ field: 'status', value: '$.status', required: false }]` — skip the status filter if `$.status` is null. |
 | `description` | string | Details |
 | `pagination` | object? | Pagination config (for list operations) |
 | `sort` | object? | Sort config (for list operations) |
@@ -2216,6 +2219,8 @@ External API call. Use `sourceHandle` values `"success"` and `"error"` on connec
 | `request_config` | RequestConfig? | Outbound request behavior configuration |
 | `integration` | string? | Reference to integration defined in system.yaml |
 | `oauth_config` | object? | OAuth2 token lifecycle management. When set, `/ddd-implement` generates automatic token refresh before the request. Can be omitted when the integration reference in `system.yaml` already defines `auth.type: oauth2` — in that case the integration's token config is inherited automatically. |
+| `oauth1a_config` | object? | OAuth 1.0a auth (Twitter API v1.1, legacy integrations). Requires 4 credential fields: `{ api_key_field, api_key_secret_field, access_token_field, access_token_secret_field }` — all values are references to decrypted credential fields in the flow context. `/ddd-implement` generates HMAC-SHA1 per-request signature (Authorization header). Cannot be used with `oauth_config` on the same node. |
+| `capture_headers` | string[]? | List of response header names to capture (e.g., `['x-restli-id', 'x-rate-limit-remaining']`). Captured headers are available as `$.response_headers['header-name']` in subsequent nodes. Use when an API returns critical data in headers (resource IDs, pagination cursors, ETags, rate limits). |
 | `fallback` | object? | Graceful degradation for non-critical calls: `{ value: any, log?: boolean }`. When set, a failed service_call uses `value` as its output instead of routing to the `error` handle. Useful for optional data enrichment (e.g., currency rates, metadata lookups) where failure should not abort the flow. |
 | `description` | string | Details |
 
@@ -2254,6 +2259,44 @@ spec:
 | `client_secret_env` | string | Environment variable name containing the OAuth client secret |
 
 When `oauth_config` is set, `/ddd-implement` generates pre-call logic that: loads stored tokens, checks expiry, refreshes via `refresh_url` if expired, re-encrypts and stores the new tokens, then proceeds with the authenticated request. This eliminates the need for a repeated process node pattern in every OAuth-connected flow. When `integration` references a system.yaml integration with `auth.type: oauth2`, the oauth lifecycle is inherited automatically — `oauth_config` can be omitted.
+
+**oauth1a_config** — OAuth 1.0a credential fields (when `oauth1a_config` is set on a service_call):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `api_key_field` | string | Flow context path to the API key / consumer key (e.g., `"$.credentials.api_key"`) |
+| `api_key_secret_field` | string | Flow context path to the API key secret / consumer secret |
+| `access_token_field` | string | Flow context path to the OAuth access token |
+| `access_token_secret_field` | string | Flow context path to the OAuth access token secret |
+
+All four fields are required. `/ddd-implement` generates HMAC-SHA1 request signing: builds the OAuth 1.0a Authorization header (including timestamp, nonce, signature method, and base string) before each call. Typical usage: decrypt credentials with a crypto node first, then reference the decrypted fields here.
+
+```yaml
+# OAuth 1.0a — Twitter API v1.1
+spec:
+  method: POST
+  url: "https://api.twitter.com/2/tweets"
+  oauth1a_config:
+    api_key_field: "$.credentials.api_key"
+    api_key_secret_field: "$.credentials.api_key_secret"
+    access_token_field: "$.credentials.access_token"
+    access_token_secret_field: "$.credentials.access_token_secret"
+  description: Publish tweet via Twitter API v1.1
+```
+
+**capture_headers** — capture response headers for use in subsequent nodes:
+
+```yaml
+# Capture LinkedIn resource ID from response header
+spec:
+  method: POST
+  url: "https://api.linkedin.com/v2/ugcPosts"
+  capture_headers:
+    - x-restli-id          # LinkedIn post ID is in this header, not the body
+    - x-rate-limit-remaining
+  description: Publish LinkedIn post — ID returned in x-restli-id header
+# Subsequent nodes access: $.response_headers['x-restli-id']
+```
 
 #### ipc_call
 Local IPC or native function call (Tauri commands, Electron IPC, React Native bridge, etc.). Use `sourceHandle` values `"success"` and `"error"` on connections for success/error routing.
@@ -2316,6 +2359,32 @@ Publish or subscribe to an event.
 | `dedup_key` | string? | Deduplication key |
 | `correlation_id` | string? | Expression for distributed tracing correlation (e.g., `"$.order_id"`). When set, `/ddd-implement` propagates the correlation ID in event headers for cross-domain trace linking. |
 | `description` | string | Details |
+
+**Job Queue Enqueue Pattern** — using the event node to enqueue BullMQ / Redis Queue jobs:
+
+The `target_queue`, `priority`, `delay_ms`, and `dedup_key` fields make the event node the correct mechanism for job queue enqueue operations in event-driven architectures (BullMQ, Bull, Redis Queue). This is distinct from domain events (pub/sub broadcast to multiple consumers). Use `direction: emit` with `target_queue` set to the worker queue name.
+
+```yaml
+# Enqueue a BullMQ job — use event node, NOT a process node
+- id: event-enqueue-publish-twitter
+  type: event
+  spec:
+    direction: emit
+    event_name: PublishJobEnqueued
+    target_queue: publish-twitter      # ← BullMQ queue name
+    priority: 1
+    delay_ms: 0
+    async: true
+    payload_source: "$.publish_job_payload"
+    description: Enqueue post to Twitter publish worker queue
+```
+
+| Use | Mechanism | When |
+|-----|-----------|------|
+| Domain event (pub/sub) | `event` without `target_queue` | Multiple consumers, event sourcing, cross-domain notifications |
+| Job queue enqueue (BullMQ) | `event` + `target_queue` | Exactly-once worker processing, retry budgets, concurrency control |
+
+The corresponding worker flow uses a cron or event trigger with `job_config` to declare queue membership and concurrency. Do NOT use a `process` node with `category: infrastructure` for enqueueing — use `event + target_queue`.
 
 #### loop
 Iterate over a collection. Has two output paths: `"body"` for the loop body and `"done"` for after the loop completes. Use `sourceHandle` values on connections.
@@ -2383,6 +2452,7 @@ Run branches concurrently. The `branches` field documents what each branch does 
 | `join` | string | `'all' \| 'any' \| 'n_of'` |
 | `join_count` | number | Required if join is `n_of` |
 | `failure_policy` | string? | `'all_required' \| 'any_required' \| 'best_effort'` — default: `'all_required'`. When `best_effort`: the `done` handle always fires regardless of individual branch errors; `$.branch_errors` contains per-branch error details. Use this for dashboard flows where some data sources can fail without blocking the overall result. |
+| `merge_strategy` | object? | How branch results are combined at the `done` handle: `{ type: 'keyed_by_output_key' \| 'collect_success' \| 'collect_all' \| 'first_success' }`. Default: `keyed_by_output_key` (object keyed by each branch's `output_key`). `collect_success` = array of successful results only. `collect_all` = array including nulls for failed branches. `first_success` = first branch result that succeeds, others aborted. |
 | `timeout_ms` | number | Max wait time |
 | `description` | string | Details |
 
@@ -2511,6 +2581,21 @@ Structured data mapping between formats. Prefer over process nodes when the oper
 | `mode` | string? | `'schema' \| 'expression'` — defaults to `'schema'`. Expression mode allows computed fields without requiring input/output schema references |
 | `description` | string | What transformation is performed |
 
+**Expression Syntax** — when `mode: expression`, field_mapping values are JavaScript expressions evaluated at runtime by `/ddd-implement`. Supported syntax:
+
+| Pattern | Example |
+|---------|---------|
+| Field access | `"$.user.name"` |
+| Ternary conditional | `"$.platform === 'twitter' ? $.handle : 'urn:li:person:' + $.handle"` |
+| Null coalescing | `"$.value ?? 'default'"` |
+| String methods | `"$.title.toLowerCase()"`, `"$.name.trim()"` |
+| Math | `"Math.round($.score * 100) / 100"` |
+| Template literal | `"\`${$.firstName} ${$.lastName}\`"` |
+| Array/length | `"$.items.length"` |
+| Type coercion | `"String($.id)"`, `"Number($.count)"` |
+
+Use `mode: expression` instead of a `process` node for: conditional string transforms, response body shaping, field normalization, and computed derived values. For imperative multi-step logic (loops, multiple conditions with side effects), use `process`.
+
 ```yaml
 # Schema-to-schema mapping (default mode)
 spec:
@@ -2520,6 +2605,14 @@ spec:
     title: "$.source.name"
     url: "$.source.feed_url"
     type: "$.source.source_type"
+
+# Expression mode — conditional string normalization
+spec:
+  mode: expression
+  field_mappings:
+    urn: "$.handle.startsWith('urn:li:') ? $.handle : 'urn:li:person:' + $.handle"
+    display_name: "$.name ?? $.handle"
+  description: Normalize LinkedIn handle to URN format
 
 # Expression mode — computed fields for response shaping
 spec:
@@ -2667,19 +2760,23 @@ spec:
 ```
 
 #### crypto
-Cryptographic operations: encrypt, decrypt, hash, sign, verify, generate_key. Use instead of process nodes for any security operation. Has two output handles: `"success"` and `"error"` (crypto failure).
+Cryptographic operations: encrypt, decrypt, hash, sign, verify, generate_key, generate_token. Use instead of process nodes for any security operation. Has two output handles: `"success"` and `"error"` (crypto failure).
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `operation` | string | `'encrypt' \| 'decrypt' \| 'hash' \| 'sign' \| 'verify' \| 'generate_key'` |
-| `algorithm` | string | `'aes-256-gcm' \| 'aes-256-cbc' \| 'sha256' \| 'sha512' \| 'hmac-sha256' \| 'rsa-oaep' \| 'ed25519'` |
-| `key_source` | object | Where the key comes from: `{ env: string }` |
+| `operation` | string | `'encrypt' \| 'decrypt' \| 'hash' \| 'sign' \| 'verify' \| 'generate_key' \| 'generate_token'` |
+| `algorithm` | string | `'aes-256-gcm' \| 'aes-256-cbc' \| 'sha256' \| 'sha512' \| 'hmac-sha256' \| 'rsa-oaep' \| 'ed25519'` — not required for `generate_token` |
+| `key_source` | object | Where the key comes from: `{ env: string }` — required for `encrypt`, `decrypt`, `sign`; not needed for `hash`, `generate_key`, `generate_token` |
 | `input_fields` | string[] | Field(s) to process |
 | `output_field` | string | Result field name |
-| `encoding` | string? | `'base64' \| 'hex'` — output encoding |
+| `encoding` | string? | `'base64' \| 'hex' \| 'base64url'` — output encoding. For `generate_token`, also accepts `'uuid'` |
+| `length` | number? | **`generate_token` only.** Number of random bytes to generate before encoding (e.g., `32` → 32-byte token). Defaults to 32. |
 | `description` | string | Details |
 
+> **generate_key vs generate_token:** `generate_key` generates cryptographic key material (fixed-length bytes for use in ciphers — output is raw bytes or base64). `generate_token` generates an opaque random string in a human-readable encoding (hex, base64url, uuid) — use for API keys, bearer tokens, invitation codes, session IDs.
+
 ```yaml
+# Encrypt credential field for storage
 spec:
   operation: encrypt
   algorithm: aes-256-gcm
@@ -2688,6 +2785,21 @@ spec:
   output_field: "encrypted_key"
   encoding: base64
   description: Encrypt API key for storage
+
+# Generate API key string (32-byte random, hex-encoded = 64-char string)
+spec:
+  operation: generate_token
+  length: 32
+  encoding: hex
+  output_field: "api_key"
+  description: Generate cryptographically random API key
+
+# Generate UUID token
+spec:
+  operation: generate_token
+  encoding: uuid
+  output_field: "session_id"
+  description: Generate UUID session token
 ```
 
 #### batch
