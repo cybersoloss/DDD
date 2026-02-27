@@ -57,7 +57,11 @@
       "Bash(for repo in cybersoloss/DDD cybersoloss/ddd-tool cybersoloss/claude-commands)",
       "Bash(do echo \"=== $repo ===\" gh api repos/$repo/traffic/views)",
       "Bash(gh search:*)",
-      "WebFetch(domain:cybersol.nl)"
+      "WebFetch(domain:cybersol.nl)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(git stash)",
+      "Bash(git stash pop)",
+      "Bash(git stash drop)"
     ]
   }
 }
