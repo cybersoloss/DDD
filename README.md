@@ -6,6 +6,8 @@
 
 ![DDD Demo](assets/ddd-demo.gif)
 
+**Full Lifecycle Demo** — from `/ddd-create` to passing tests in one flow: Create specs, design visually, implement code, run tests:
+
 ![DDD Lifecycle Demo](assets/ddd-lifecycle-demo.gif)
 
 **Full Feature Preview** — 9 domains, 53 flows, 28 node types (Vantage supply chain project):
