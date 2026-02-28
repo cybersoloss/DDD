@@ -3525,6 +3525,8 @@ You can also create specs by hand:
 
 ## 11. Slash Commands
 
+> **Examples and workflows:** For comprehensive usage examples, command option coverage, P/S/C transition model, and typical workflow patterns (new project, add feature, code drifted, etc.), see the [DDD Commands Reference](https://github.com/cybersoloss/claude-commands/blob/main/DDD-commands.md). This section focuses on flag descriptions and behavioral details.
+
 ### /ddd-create
 
 Generates a complete DDD project from a natural-language description and/or design files.
