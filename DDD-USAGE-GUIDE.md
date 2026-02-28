@@ -3710,6 +3710,7 @@ Run tests for implemented flows without re-generating code. Use after manual edi
 | `--ui` | All UI page tests | `/ddd-test --ui` |
 | `--ui {page-id}` | Single page tests | `/ddd-test --ui dashboard` |
 | `--schema` | All schema tests | `/ddd-test --schema` |
+| `--schema {model}` | Single schema model tests | `/ddd-test --schema User` |
 | `--infra` | Infrastructure tests | `/ddd-test --infra` |
 | *(empty)* | Interactive mode | `/ddd-test` |
 
@@ -3823,7 +3824,8 @@ Captures implementation wisdom — patterns and details that code has but specs 
 | `{domain}/{flow}` | Single flow | `/ddd-reflect monitoring/check-social-sources` |
 | `--ui` | UI implementation patterns | `/ddd-reflect --ui` |
 | `--ui {page-id}` | Single page patterns | `/ddd-reflect --ui dashboard` |
-| `--schema` | Schema implementation patterns | `/ddd-reflect --schema` |
+| `--schema` | All schema patterns | `/ddd-reflect --schema` |
+| `--schema {model}` | Single schema model | `/ddd-reflect --schema User` |
 | `--infra` | Infrastructure patterns | `/ddd-reflect --infra` |
 | *(empty)* | Interactive mode | `/ddd-reflect` |
 
@@ -3853,7 +3855,8 @@ Moves approved annotations into permanent specs. This is how implementation wisd
 | `{domain}/{flow}` | Scope to specific flow | `/ddd-promote monitoring/check-social-sources` |
 | `--ui` | UI-related annotations | `/ddd-promote --ui` |
 | `--ui {page-id}` | Single page annotations | `/ddd-promote --ui dashboard` |
-| `--schema` | Schema annotations | `/ddd-promote --schema` |
+| `--schema` | All schema annotations | `/ddd-promote --schema` |
+| `--schema {model}` | Single schema model | `/ddd-promote --schema User` |
 | `--infra` | Infrastructure annotations | `/ddd-promote --infra` |
 
 **What it does:**
