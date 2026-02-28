@@ -8,6 +8,8 @@
 
 ![DDD Lifecycle Demo](assets/ddd-lifecycle-demo.gif)
 
+**Full Feature Preview** — 9 domains, 53 flows, 28 node types (Vantage supply chain project):
+
 ![DDD Tool Feature Preview](https://raw.githubusercontent.com/cybersoloss/ddd-tool/main/demo/demo-feature-preview.gif)
 
 Design Driven Development is a methodology for building software through visual flow diagrams that output YAML specs. Specs and code are both sources of truth at different levels — specs define what/why, code accumulates how. The Reflect phase feeds implementation wisdom back into specs.
