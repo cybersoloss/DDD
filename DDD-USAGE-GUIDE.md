@@ -3536,7 +3536,7 @@ Generates a complete DDD project from a natural-language description and/or desi
 
 | Flag | Purpose |
 |------|---------|
-| `--from <path-or-url>` | Use a design file as reference input. Supports images (PNG, JPG), PDFs, markdown, text, YAML, and URLs (Figma, Miro). Extracts domains, flows, data models, UI screens, events, and architecture from the design. |
+| `--from <path-or-url>` | Use a design file as reference input. Supports images (PNG, JPG), PDFs, markdown, text, YAML, and URLs (Figma, Miro, web pages). Extracts all four pillars — domains, flows, data models, UI pages, events, infrastructure, and architecture — from the design. Combine with a text description for additional context. |
 | `--shortfalls` | Generate `specs/shortfalls.yaml` — a structured gap analysis report documenting DDD framework limitations encountered during design (7 categories: missing node types, inadequate nodes, missing fields, connection limitations, layer gaps, workarounds, cross-cutting gaps). Feed into `/ddd-evolve` for analysis. |
 
 **Examples:**
@@ -3610,6 +3610,12 @@ Generates implementation code from DDD specs.
 | `--all` | Entire project | `/ddd-implement --all` |
 | `{domain}` | All flows in a domain | `/ddd-implement users` |
 | `{domain}/{flow}` | Single flow | `/ddd-implement users/user-register` |
+| `--ui` | All UI pages | `/ddd-implement --ui` |
+| `--ui {page-id}` | Single UI page | `/ddd-implement --ui dashboard` |
+| `--schema` | Regenerate data layer from schemas | `/ddd-implement --schema` |
+| `--schema {model}` | Single schema model | `/ddd-implement --schema User` |
+| `--infra` | Regenerate infrastructure from specs | `/ddd-implement --infra` |
+| `--ignore-history` | Ignore change-history, implement scope directly | `/ddd-implement --all --ignore-history` |
 | *(empty)* | Interactive mode | `/ddd-implement` |
 
 **What it does:**
@@ -3634,6 +3640,10 @@ Updates DDD project specs (YAML files) to reflect design changes during developm
 | `{domain}` | Update domain config and/or its flows | `/ddd-update users` |
 | `--add-flow {domain}` | Add a new flow to a domain | `/ddd-update --add-flow users` |
 | `--add-domain` | Add a new domain to the project | `/ddd-update --add-domain` |
+| `--ui {page-id}` | Update a UI page spec | `/ddd-update --ui dashboard` |
+| `--add-page` | Add a new UI page spec | `/ddd-update --add-page` |
+| `--schema {model}` | Update a schema | `/ddd-update --schema User` |
+| `--infra` | Update infrastructure spec | `/ddd-update --infra` |
 | *(empty)* | Interactive mode | `/ddd-update` |
 
 **What it does:**
@@ -3664,8 +3674,9 @@ Synchronizes specs with implementation state using bidirectional analysis. This 
 | `--discover` | Also discover untracked code and propose new specs (analyze → approve → apply) |
 | `--fix-drift` | Resolve all drift using the decision tree: metadata→hash, code-ahead→reverse, new-logic→implement |
 | `--full` | All of the above |
+| `--verify` | Behavioral conformance — node-by-node comparison of specs vs code (read-only diagnostic). Not included in `--full`; use `--full --verify` for comprehensive analysis. |
 
-**Key behavior:** `/ddd-sync` never blindly updates hashes. It classifies each drift (metadata-only, spec enriched, code ahead, new logic) and only updates hashes when both spec→code and code→spec checks pass. Flows where code is ahead of spec are flagged for `/ddd-reverse` instead. See Section 12.1 for the full drift management workflow.
+**Key behavior:** `/ddd-sync` never blindly updates hashes. It classifies each drift (metadata-only, spec enriched, code ahead, new logic) and only updates hashes when both spec→code and code→spec checks pass. Flows where code is ahead of spec are flagged for `/ddd-reverse` instead. With `--verify`, it additionally performs node-level behavioral conformance checking — reading implementation code to verify each spec node's intent is implemented, and scanning code for behaviors the spec doesn't describe. See Section 12.1 for the full drift management workflow.
 
 ### /ddd-status
 
@@ -4113,6 +4124,30 @@ Hash mismatch detected
 3. **Never update a hash when code is ahead of spec.** If implementation has details the spec doesn't describe, the correct action is `/ddd-reverse` to enrich the spec first, then `/ddd-sync` to update the hash. Updating the hash directly means future `/ddd-implement` runs will generate code WITHOUT those details.
 
 4. **Cross-cutting patterns belong in `architecture.yaml`.** Implementation details used across multiple flows (stealth HTTP, encryption, API key resolution with DB+env fallback, soft-delete conventions) should be documented in `architecture.yaml` so all flows benefit from them during implementation.
+
+#### Beyond Hash Drift: Behavioral Conformance
+
+Hash-based drift detection answers "has the file changed?" but never "does the code actually do what the spec describes?" A flow can show `in_sync` (hashes match) while missing node implementations or containing undocumented behavior. The `--verify` flag on `/ddd-sync` fills this gap.
+
+| Aspect | Hash Drift (default) | Behavioral Conformance (`--verify`) |
+|--------|---------------------|--------------------------------------|
+| **Question** | Has the file changed since last sync? | Does code implement what the spec describes? |
+| **Method** | SHA-256 comparison | Node-by-node semantic analysis |
+| **Speed** | Fast (hash comparison) | Expensive (reads every implementation file) |
+| **Direction** | File-level (changed / unchanged) | Bidirectional (spec→code and code→spec) |
+| **When to use** | Every sync | When you need confidence that code matches intent |
+
+**Conformance statuses** (S = Spec, C = Code):
+
+| Status | S / C | Meaning | Suggested Action |
+|--------|-------|---------|-----------------|
+| `conforms` | S✓ C✓ | Spec describes it, code implements it | None needed |
+| `missing_in_code` | S✓ C✗ | Spec describes it, code doesn't implement it | `/ddd-implement {scope}` |
+| `missing_in_spec` | S✗ C✓ | Code has it, spec doesn't describe it | `/ddd-reflect {scope}` → `/ddd-promote --review` |
+| `diverged` | S✓ C≠ | Both exist, behavior differs | Manual review — decide whether spec or code is correct |
+| `partial` | S✓ C~ | Spec describes it, code partially implements it | Context-dependent |
+
+Cross-cutting patterns from `architecture.yaml` are accounted for — code behavior that matches a documented cross-cutting pattern is classified as `conforms`, not `missing_in_spec`.
 
 ---
 
