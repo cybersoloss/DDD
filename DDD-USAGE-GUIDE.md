@@ -3716,8 +3716,7 @@ Run tests for implemented flows without re-generating code. Use after manual edi
 | `{domain}/{flow}` | Single flow | `/ddd-test users/user-register` |
 | `--ui` | All UI page tests | `/ddd-test --ui` |
 | `--ui {page-id}` | Single page tests | `/ddd-test --ui dashboard` |
-| `--schema` | All schema tests | `/ddd-test --schema` |
-| `--schema {model}` | Single schema model tests | `/ddd-test --schema User` |
+| `--schema` | Schema/migration tests (validates entire schema, not per-model) | `/ddd-test --schema` |
 | `--infra` | Infrastructure tests | `/ddd-test --infra` |
 | *(empty)* | Scoped to recently implemented entries from change-history. If none, interactive | `/ddd-test` |
 
