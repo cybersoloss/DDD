@@ -4157,10 +4157,68 @@ Hash-based drift detection answers "has the file changed?" but never "does the c
 | `conforms` | S✓ C✓ | Spec describes it, code implements it | None needed |
 | `missing_in_code` | S✓ C✗ | Spec describes it, code doesn't implement it | `/ddd-implement {scope}` |
 | `missing_in_spec` | S✗ C✓ | Code has it, spec doesn't describe it | `/ddd-reflect {scope}` → `/ddd-promote --review` |
-| `diverged` | S✓ C≠ | Both exist, behavior differs | Manual review — decide whether spec or code is correct |
+| `diverged` | S✓ C≠ | Both exist, behavior differs | `/ddd-reflect {scope}` → `/ddd-promote --review` (human decides direction) |
 | `partial` | S✓ C~ | Spec describes it, code partially implements it | Context-dependent |
 
 Cross-cutting patterns from `architecture.yaml` are accounted for — code behavior that matches a documented cross-cutting pattern is classified as `conforms`, not `missing_in_spec`.
+
+#### Post-Verify Remediation Workflow
+
+When `--verify` produces **mixed findings** (any combination of `missing_in_spec`, `diverged`, or `partial` together with `missing_in_code`), use the complete phase-ordered remediation sequence below. Do NOT treat each finding type as an independent action — this fragments the workflow and interleaves phases.
+
+**Finding-to-phase mapping:**
+
+| Finding | Phase | Command | Why |
+|---------|-------|---------|-----|
+| `conforms` | — | None | Already aligned |
+| `missing_in_spec` (S✗ C✓) | Reflect | `/ddd-reflect` (step 1) | Code has behavior to capture |
+| `diverged` (S✓ C≠) | Reflect | `/ddd-reflect` (step 1) | Both exist, reflect captures difference |
+| `partial` (S✓ C~) | Reflect | `/ddd-reflect` (step 1) | Reflect captures what's done vs not |
+| `missing_in_code` (S✓ C✗) | Build | `/ddd-implement` (step 4) | Spec exists, code needs it |
+
+**Complete remediation sequence:**
+
+```
+── Reflect Phase (complete first) ─────────────────────────────────────────────
+1. /ddd-reflect {scope}         — captures ALL non-conforming findings
+                                  (missing_in_spec + diverged + partial)
+                                  as candidate annotations in one pass
+2. /ddd-promote --review        — human decides per annotation:
+                                  approve (enrich spec) or dismiss (flag for implement)
+
+── Build Phase (after Reflect completes) ──────────────────────────────────────
+3. /ddd-update                  — only for pure structural gaps where NEITHER
+                                  spec NOR code has the behavior. Skip if all
+                                  gaps were covered by reflect+promote.
+4. /ddd-implement {scope}       — implements: dismissed annotations from step 2
+                                  + missing_in_code findings from --verify
+5. /ddd-test {scope}
+6. /ddd-sync (plain, no flags)  — updates hashes after all issues are resolved
+```
+
+**Common mistakes to avoid:**
+
+1. **Don't recommend `/ddd-update` or `/ddd-implement` for `diverged` findings.** `/ddd-reflect` captures the difference first; `/ddd-promote --review` is where the human decides direction.
+2. **Don't scope `/ddd-reflect` to only `missing_in_spec` findings.** It handles all non-conforming statuses (`missing_in_spec` + `diverged` + `partial`) in one pass.
+3. **Don't use `--fix-drift` as a hash cleanup step.** `--fix-drift` re-implements code (destructive). Plain `/ddd-sync` updates hashes safely.
+4. **Don't fragment mixed findings into independent remediation paths.** Reflect phase must complete before Build phase begins.
+
+If all findings are a single status (e.g., only `missing_in_code`), a single per-status action is fine — the orchestrated workflow is only needed for mixed findings.
+
+#### Mixed Test Failure Remediation
+
+When `/ddd-test` produces both **spec-drift failures** and **manual-code-change failures** in the same run, fix in dependency order:
+
+```
+1. /ddd-reflect {flows with manual changes}   — capture manual wisdom BEFORE
+                                                 it gets overwritten
+2. /ddd-promote --review                       — approve or dismiss annotations
+3. /ddd-implement {flows with spec drift       — now safe to regenerate code
+    + dismissed annotations}
+4. /ddd-test {scope}                           — verify fixes landed
+```
+
+**Critical warning:** `/ddd-implement` regenerates code and **destroys manual changes**. Always run `/ddd-reflect` first on any flow with manual code edits to capture implementation wisdom before regenerating.
 
 ---
 
