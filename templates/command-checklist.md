@@ -128,6 +128,7 @@ Commands with `## Scope Resolution` should support arguments appropriate to thei
 | Argument | implement | test | update | reflect | promote |
 |----------|-----------|------|--------|---------|---------|
 | `--all` | Required | Required | — | Required | Required |
+| `--review` | — | — | — | — | Required |
 | `{domain}` | Required | Required | Required | Required | Required |
 | `{domain}/{flow}` | Required | Required | Required | Required | Required |
 | `--ui` | Required | Required | Required | Required | Required |
