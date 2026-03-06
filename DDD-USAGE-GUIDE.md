@@ -4729,7 +4729,7 @@ metadata:
 5. **Decision nodes need both branches** — always wire both `true` and `false` handles
 6. **Agent flows need terminal tools** — at least one tool must have `is_terminal: true`
 7. **Use `flow_ref` format** — sub_flow references should be `domain-id/flow-id`
-8. **Node IDs must be unique** within a flow — use a prefix matching the type (e.g., `input-001`, `process-002`)
+8. **Node IDs must be unique** within a flow — use `{type}-{6char-hash}` format (e.g., `input-a1b2c3`, `process-d4e5f6`)
 9. **Position doesn't affect logic** — positions are for canvas layout only, connections define the actual flow
 10. **Cross-cutting concerns are optional** — only add observability/security when needed for implementation hints
 11. **Always use sourceHandle on branching nodes** — see Section 8 for the complete handle reference per node type
