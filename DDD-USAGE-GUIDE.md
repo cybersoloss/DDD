@@ -3066,7 +3066,8 @@ Routes to different flows or agents based on rules. Works in **both traditional 
 |------------|------|-------------|
 | `rules` | SmartRouterRule[] | Rule-based routing (evaluated in priority order) |
 | `llm_routing` | object | LLM-based routing (used when rules don't match) |
-| `fallback_chain` | string[] | Route IDs to try if no rule matches and LLM routing fails |
+| `fallback_chain` | string[] or `"skip"` | Route IDs to try if no rule matches and LLM routing fails. Use `"skip"` with a `fallback_note` when the input domain is guaranteed by an upstream filter (e.g., a data_store `in` filter), making the fallback path unreachable by design. |
+| `fallback_note` | string | Documents why `fallback_chain: skip` is safe — e.g., which upstream node constrains the input domain |
 | `policies` | object | `{ retry?: { max_attempts, backoff }, timeout?: { ms }, circuit_breaker?: { threshold } }` |
 
 **SmartRouterRule type:**
@@ -3451,7 +3452,7 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 ### Orchestration (Error)
 - Orchestrator must have 2+ agents and a strategy
 - Smart Router must have rules defined or LLM routing enabled
-- Smart Router with empty `fallback_chain` and no LLM routing — warning
+- Smart Router with empty `fallback_chain` and no LLM routing — warning (suppressed when `fallback_chain: skip`)
 - Handoff must have a target (flow or domain)
 - Agent Group must have 2+ members
 
