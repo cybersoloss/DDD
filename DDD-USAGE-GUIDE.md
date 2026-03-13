@@ -3760,13 +3760,15 @@ Reverse-engineers DDD specs from an existing codebase. Points at source code and
 
 **Usage:**
 ```
-/ddd-reverse <project-path> [--output <path>] [--domains <d1,d2>] [--merge] [--strategy <name>]
+/ddd-reverse <project-path> [--output <path>] [--domains <d1,d2>] [--flows <domain/flow,...>] [--connections-only] [--merge] [--strategy <name>]
 ```
 
 | Flag | Purpose | Default |
 |------|---------|---------|
 | `--output <path>` | Where to write specs | Same as project path |
 | `--domains <d1,d2>` | Only reverse specific domains | All domains |
+| `--flows <domain/flow,...>` | Only reverse specific flows (reads implementation files from `.ddd/mapping.yaml`). Implies `--merge`. | All flows |
+| `--connections-only` | Only reconstruct `connections` arrays — preserve all node definitions. Requires `--flows`. | Full reverse |
 | `--merge` | Merge with existing specs (don't overwrite) | Overwrite |
 | `--strategy <name>` | Override auto-selected strategy | Auto by file count |
 
