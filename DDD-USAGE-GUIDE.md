@@ -62,7 +62,7 @@ Each domain entry can include an optional `role` field:
 { "name": "Users", "description": "User management and authentication", "role": "entity" }
 ```
 
-Optional `role` values: `entity` (CRUD/data), `process` (automated workflows), `interface` (human-facing). Used by DDD Tool for visual differentiation at L1.
+Optional `role` values: `entity` (CRUD/data), `process` (automated workflows), `interface` (human-facing), `orchestration` (coordinates other domains). Used by DDD Tool for visual differentiation at L1.
 
 Domain IDs are derived from names: lowercase, spaces replaced with hyphens (e.g., "Users" -> "users").
 
@@ -1666,7 +1666,7 @@ Every node has:
 | `id` | string | Unique node ID |
 | `type` | DddNodeType | One of the 29 node types |
 | `position` | `{ x, y }` | Canvas position |
-| `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior?, label? }` |
+| `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior?, label? }`. The canonical field name is `targetNodeId`; the DDD Tool normalizer also accepts `target` and `targetId` as shorthands. |
 | `spec` | object | Type-specific configuration (see below) |
 | `label` | string | Display name on canvas |
 | `observability` | object? | Logging/metrics/tracing config |
@@ -1674,6 +1674,8 @@ Every node has:
 | `log` | object? | Structured business event log declaration: `{ level: 'info' \| 'warn' \| 'error', fields: string[], condition?: string }`. When set, `/ddd-implement` emits a structured log entry with the listed fields at this node. Use for business-significant events (order approved, supplier flagged) that need audit trails beyond standard error logging. |
 | `parentId` | string? | ID of a container node (loop or parallel). When set, this node is rendered inside the container on the canvas. |
 | `pattern_governed` | string? | Name of the `cross_cutting_pattern` from `architecture.yaml` that governs this node (e.g., `"encryption"`, `"stealth_http"`). Set automatically by `/ddd-create` when generating a node that matches a known pattern. DDD Tool renders a subtle pattern badge on the canvas. Informational only — does not affect behavior. |
+
+**Node ID convention:** Use `{type}-{nanoid(8)}` format — 8-character alphanumeric string, matching the DDD Tool's ID generation (e.g., `input-aR9tK3wN`, `process-sN4xY7eQ`, `data_store-gT5yK8nR`).
 
 ### Connection Data Annotations
 
