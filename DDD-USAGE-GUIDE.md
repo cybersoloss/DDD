@@ -3359,6 +3359,15 @@ security:
 
 Connections define the flow graph. Each connection is `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior?, label? }` (see Section 5 for `data`, `behavior`, and `label` details).
 
+**Two connection formats exist** — the DDD Tool normalizer accepts both:
+
+| Format | Where connections live | Field names | Used by |
+|--------|----------------------|-------------|---------|
+| **Per-node** (canonical) | `node.connections[]` array on each node | `targetNodeId`, `sourceHandle` | DDD Tool internal, Usage Guide examples, `/ddd-create` |
+| **Top-level** (external) | Separate `connections:` section at flow root | `from`, `to`, `sourceHandle` | Some generators, `/ddd-reverse` |
+
+**When reading flow YAML**, always check for both formats. **When writing flow YAML**, always use the per-node format. Commands that read a top-level `connections:` section must convert to per-node format before rewriting — otherwise all wiring is silently destroyed.
+
 **Convention:** For nodes with multiple output paths, always use `sourceHandle` to label each path. This makes the flow graph unambiguous for both the DDD Tool and `/ddd-implement`.
 
 ### sourceHandle Reference
