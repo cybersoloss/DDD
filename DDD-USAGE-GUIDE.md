@@ -2643,6 +2643,7 @@ Single LLM invocation (not an agent loop).
 | `structured_output` | `Record<string, unknown>` | Expected output schema. Property values support a `ref` shorthand to resolve enum values from `shared/types.yaml` without duplication: `{ type: string, ref: my_enum_name }` — `/ddd-implement` resolves the ref and injects the enum values as a JSON Schema `enum` constraint. |
 | `retry` | object | `{ max_attempts?, backoff_ms?, strategy?: 'fixed' \| 'linear' \| 'exponential', jitter?: boolean }` |
 | `context_sources` | `Record<string, ContextSource>`? | Formal variable bindings with optional transforms |
+| `prompt_files` | `string[]`? | Relative paths to external prompt files (system prompts, templates, guardrails) that contribute to the final prompt. `/ddd-sync` hashes these files alongside the spec YAML — changes to prompt files trigger drift detection. `/ddd-implement` reads them for context when generating LLM integration code. |
 | `description` | string | Details |
 
 **ContextSource fields:**
@@ -2669,6 +2670,18 @@ spec:
     keywords:
       from: "$.subject.keywords"
       transform: join(", ")
+
+# LLM call with external prompt files
+spec:
+  model: claude-sonnet
+  prompt_template: "Draft a {platform} post for: {content}"
+  prompt_files:
+    - "docs/drafting-style-system-prompt.txt"
+    - "docs/drafting-style-prompt-template.txt"
+  context_sources:
+    content:
+      from: "$.content_item.raw_content"
+      transform: truncate(4000)
 ```
 
 #### collection

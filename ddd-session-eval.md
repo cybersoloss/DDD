@@ -4,6 +4,13 @@
 
 Reflect on your usage of DDD commands, the DDD Usage Guide, and the claude-commands ecosystem in THIS session. Produce a structured report using real examples — not hypothetical ones.
 
+**Accuracy rules:**
+- Only report what actually happened this session. Do not invent findings to fill sections.
+- If a section has no relevant observations, write "N/A — not applicable this session." Empty sections are better than padded ones.
+- Token counts and overhead percentages are estimates — label them as such (use "~" prefix). Do not fabricate precision.
+- For the non-DDD command table: only fill rows where you genuinely used the command or genuinely wished you had it during a specific moment. Leave other rows blank.
+- Speculative questions (marked with "↳") are clearly opinion — answer honestly, including "I don't know" if you don't have a basis for the answer.
+
 **This evaluation produces two outputs:**
 1. `docs/ddd-session-eval-{YYYY-MM-DD}.md` — full human-readable report (all findings)
 2. `docs/ddd-session-shortfalls-{YYYY-MM-DD}.yaml` — machine-readable subset for `/ddd-evolve` (only qualifying spec/framework gaps)
@@ -19,6 +26,19 @@ gh api repos/cybersoloss/claude-commands/contents/ddd-create.md --jq '.content' 
 ```
 
 Find Step 16 (`--shortfalls` section) which defines the `shortfalls.yaml` YAML structure. This is the format you must use for the YAML output. Understand the sections (`missing_node_types`, `inadequate_existing_nodes`, `missing_spec_fields`, `connection_limitations`, `layer_gaps`, `workarounds`, `cross_cutting_gaps`, `ui_shortfalls`, `pillar_balance`, `summary`) and the content rules (shortfalls are DDD framework limitations, NOT project scope decisions or spec quality issues).
+
+Also check for prior eval reports (`docs/ddd-session-eval-*.md`) and shortfalls files (`docs/ddd-session-shortfalls-*.yaml`) in the project. Note their finding IDs for cross-referencing in Section 12.
+
+## Finding IDs
+
+Every finding in Sections 10a–10d and Section 11 must have a unique ID. Format: `{project-short}-{YYYYMMDD}-{seq}` where `{project-short}` is a short project identifier (e.g., `cc` for content-curator, `ddt` for ddd-tool) and `{seq}` is a zero-padded sequence number starting at `001`.
+
+Examples: `cc-20260313-001`, `cc-20260313-002`, `ddt-20260315-001`
+
+Use these IDs in:
+- The markdown report (prefix each finding row/bullet with its ID)
+- The YAML shortfalls (add an `eval_id` field to each entry that qualifies)
+- Section 12 (reference prior findings by ID)
 
 ---
 
@@ -49,6 +69,12 @@ For each significant task this session:
 - Tasks where specs would have helped but were skipped:
 - Edge cases or error paths that specs revealed but code alone wouldn't:
 
+**Methodology efficiency:**
+- When was reading specs redundant or wasteful? (spec added nothing the code didn't already tell you)
+- When were specs wrong or stale, and code was the actual truth?
+- When did spec-driven workflow add overhead without improving the outcome?
+- ↳ If you redid this session without DDD at all, what would you lose? What would be easier?
+
 ## 3. Error Prevention Analysis
 
 List bugs, rework, or missed requirements from this session. For each:
@@ -70,16 +96,24 @@ For each DDD command that references the Usage Guide:
 - **Total fetch events:**
 - **Necessary fetches:**
 - **Unnecessary fetches:**
+- **Estimated tokens wasted on unnecessary fetches:** (Usage Guide is ~5,200 lines / ~18,000 tokens per full fetch)
+- **If you fetched the guide at least once but skipped it for later commands, why?** (e.g., internalized the relevant sections, node types were familiar, guide was too large for the value it provided, fetched section wasn't relevant to the task)
+- **If you never fetched the guide this session, why not?** (e.g., all node types familiar, no command required it, consciously skipped to save tokens)
 
 ## 5. Command Prompt Utilization
 
-For each DDD command executed, which sections of the command prompt did you actually reference during execution?
+For each DDD command executed, estimate how much of the command prompt was useful vs overhead:
 
-| Command | Sections Referenced | Sections Ignored | Notes |
-|---------|---------------------|------------------|-------|
-| _example: `/ddd-update` single flow_ | _Scope resolution, change-history format_ | _Infrastructure scope, schema scope, UI spec integrity_ | _Simple flow change, most pillar-specific sections unused_ |
+| Command | Prompt Size (est. lines) | Sections Referenced | Sections Ignored | Est. Overhead % | What Was Overhead |
+|---------|--------------------------|---------------------|------------------|-----------------|-------------------|
+| _example: `/ddd-update` single flow_ | _~320_ | _Scope resolution, change-history format_ | _Infra, schema, UI integrity, add-domain_ | _~85%_ | _All non-Logic pillar instructions, Usage Guide fetch instructions, add-domain/add-page scope tables_ |
+| _example: `/ddd-update` question_ | _~320_ | _None_ | _Entire prompt_ | _~98%_ | _User asked "why is X happening?" — entire spec-editing pipeline loaded for a question that needed zero command structure_ |
 
-Focus on what you observably consulted, not what percentage was "overhead" — some sections influence behavior implicitly.
+Some sections influence behavior implicitly — note those in the "Sections Referenced" column even if you didn't actively consult them.
+
+**Session total:** Estimated tokens of command prompt overhead across all invocations: ___
+
+**↳ What patterns do you see in the overhead?** Look across all rows. Is the overhead concentrated in specific commands? Specific types of invocations (e.g., questions vs changes)? Specific unused pillar instructions? What structural change to commands or the Usage Guide would eliminate the most waste?
 
 ## 6. Spec Freshness Observations
 
@@ -107,6 +141,18 @@ e.g. User asked about a bug → read code directly → fixed it →
 - Where did you break out of the DDD command flow? Why?
 - Where did the command pipeline feel natural?
 - Where did a command load context you didn't need?
+- ↳ Was there a task that NO DDD command could help with? What would that command look like?
+- Did the user invoke a DDD command for something it wasn't designed for? What was the user's actual intent vs the command's purpose?
+
+**Human-AI collaboration through DDD:**
+
+How well did DDD serve as a collaboration layer between you and the user this session? Cite specific moments.
+
+- Did the user struggle to pick the right DDD command for their intent? What were they trying to do and what did they reach for?
+- Did the user make a design decision during conversation (verbally or by approving a fix) that should have been captured in specs but wasn't? What fell through the cracks?
+- Did DDD's pipeline (update spec → implement → test) add ceremony the user didn't need, or did it give useful structure they wouldn't have had otherwise?
+- Were there moments where you and the user were aligned on what to do, but DDD's structure got in the way? Or moments where DDD helped you stay aligned?
+- ↳ What changes to DDD commands, Usage Guide, or workflow would improve how the user communicates intent and reviews your work? (new commands, new modes, guide sections, scope changes)
 
 ## 8. Node Type Usage
 
@@ -114,18 +160,41 @@ e.g. User asked about a bug → read code directly → fixed it →
 - **Needed reference for:**
 - **Knew from prior context:**
 - **Never used (of 29 available):**
+- **Used `process` node as a workaround** for something a structured node type should handle? (If yes, describe what the process node does and what node type you wish existed — this feeds into the shortfalls YAML)
 
 ## 9. Cross-Command Observations
 
-**Duplication noticed** across commands or between commands and the Usage Guide:
-- (list specific repeated content you encountered)
+### 9a. Duplication Analysis
 
-**Non-DDD command integration opportunities** — did you use or wish you could use non-DDD commands alongside DDD?
+List specific content you **actually noticed** repeated across commands you executed this session. Only report duplication you encountered firsthand — do not read other command prompts just to find duplication:
 
-| Non-DDD Command | Used? | Observation |
-|-----------------|-------|-------------|
-| _example: `/code-review`_ | _No_ | _Would have been useful to check code against spec after manual fix_ |
-| _example: `/pre-deploy`_ | _Yes_ | _Didn't check spec drift — could have caught stale mapping_ |
+| Duplicated Content | Where It Appears | Times Loaded This Session | Could Be Shared? |
+|--------------------|------------------|---------------------------|-------------------|
+| _example: "Read project context" file list_ | _`/ddd-update`, `/ddd-implement`, `/ddd-test`_ | _3_ | _Yes — identical across all commands_ |
+| _example: Cross-cutting patterns explanation_ | _`/ddd-update`, `/ddd-implement`_ | _2_ | _Yes — same ~30 lines_ |
+
+**↳ What would you extract or deduplicate?** If you could restructure the commands and Usage Guide to eliminate the repetition you observed, what would you change? (e.g., shared preamble file, reference-instead-of-reproduce, conditional loading)
+
+### 9b. Non-DDD Command Integration
+
+For each command below, note whether you used it or genuinely wished you had at a specific moment this session. Leave rows blank if you have no real observation — do not fill rows speculatively:
+
+| Non-DDD Command | Used? | Relationship to DDD | Observation |
+|-----------------|-------|---------------------|-------------|
+| `/code-review` | | Could verify code matches spec | |
+| `/security-scan` | | Overlaps with architecture.yaml security patterns | |
+| `/test-coverage` | | Overlaps with `/ddd-test` | |
+| `/spec-verify` | | Could use mapping.yaml for verification | |
+| `/perf-review` | | Independent | |
+| `/pre-deploy` | | Could include `/ddd-status` drift check | |
+| `/simplify` | | Could check if simplifications break spec compliance | |
+| `/trust-verify` | | Could use spec-to-code mapping as trust evidence | |
+| _(other)_ | | | |
+
+**↳ Integration architecture questions** (only answer if grounded in observations above):
+- Which non-DDD commands should be DDD-aware (read specs, mapping, or architecture.yaml)?
+- Which DDD commands could delegate work to non-DDD commands instead of reimplementing?
+- Are there workflow combinations that should be a single command?
 
 ## 10. DDD Framework Feedback
 
@@ -135,10 +204,10 @@ Report problems, gaps, and inconsistencies you encountered in the DDD commands a
 
 Issues encountered while executing DDD slash commands:
 
-| Command | Step/Section | Problem Type | Description |
-|---------|-------------|--------------|-------------|
-| _example: `/ddd-implement`_ | _Step 11 (cross-cutting)_ | _Unclear guidance_ | _Says "apply matching patterns" but doesn't say what to do when two patterns conflict_ |
-| _example: `/ddd-sync`_ | _Step 6 (drift analysis)_ | _Missing instruction_ | _No guidance for handling a flow that exists in mapping.yaml but spec file was deleted_ |
+| ID | Command | Step/Section | Problem Type | Description |
+|----|---------|-------------|--------------|-------------|
+| _cc-20260313-001_ | _`/ddd-implement`_ | _Step 11 (cross-cutting)_ | _Unclear guidance_ | _Says "apply matching patterns" but doesn't say what to do when two patterns conflict_ |
+| _cc-20260313-002_ | _`/ddd-sync`_ | _Step 6 (drift analysis)_ | _Missing instruction_ | _No guidance for handling a flow that exists in mapping.yaml but spec file was deleted_ |
 
 **Problem types:** unclear guidance, missing instruction, wrong instruction, ambiguous step, silent failure, missing error handling, missing scope support
 
@@ -146,10 +215,10 @@ Issues encountered while executing DDD slash commands:
 
 Issues with the DDD Usage Guide content:
 
-| Section | Problem Type | Description |
-|---------|--------------|-------------|
-| _example: Section 6, `smart_router` node_ | _Incomplete spec_ | _Lists fields but no example YAML — unclear how to set `routes`_ |
-| _example: Section 8, connection patterns_ | _Missing pattern_ | _No example for connecting `parallel` node outputs to a `collection` node_ |
+| ID | Section | Problem Type | Description |
+|----|---------|--------------|-------------|
+| _cc-20260313-003_ | _Section 6, `smart_router` node_ | _Incomplete spec_ | _Lists fields but no example YAML — unclear how to set `routes`_ |
+| _cc-20260313-004_ | _Section 8, connection patterns_ | _Missing pattern_ | _No example for connecting `parallel` node outputs to a `collection` node_ |
 
 **Problem types:** incomplete spec, wrong information, missing example, unclear explanation, outdated content, missing section
 
@@ -157,34 +226,68 @@ Issues with the DDD Usage Guide content:
 
 Conflicting or mismatched content between commands, or between commands and the Usage Guide:
 
-| Location A | Location B | Inconsistency |
-|------------|------------|---------------|
-| _example: `/ddd-implement` step 5_ | _`/ddd-update` step 6_ | _Different node ID format conventions (one says 8-char, other says 6-char)_ |
-| _example: `/ddd-sync` next steps_ | _Usage Guide Section 12.1_ | _Different remediation order for `diverged` findings_ |
+| ID | Location A | Location B | Inconsistency |
+|----|------------|------------|---------------|
+| _cc-20260313-005_ | _`/ddd-implement` step 5_ | _`/ddd-update` step 6_ | _Different node ID format conventions (one says 8-char, other says 6-char)_ |
+| _cc-20260313-006_ | _`/ddd-sync` next steps_ | _Usage Guide Section 12.1_ | _Different remediation order for `diverged` findings_ |
 
 ### 10d. Missing Capabilities
 
 Things you needed to express or do but DDD didn't support:
 
-- _example: "Needed to spec a WebSocket reconnection strategy but no node type or spec field supports it"_
-- _example: "Wanted to mark a flow as deprecated in the spec but there's no `status` or `lifecycle` field"_
-- _example: "Command doesn't support `--dry-run` — would have been useful to preview changes"_
+- _cc-20260313-007: "Needed to spec a WebSocket reconnection strategy but no node type or spec field supports it"_
+- _cc-20260313-008: "Wanted to mark a flow as deprecated in the spec but there's no `status` or `lifecycle` field"_
+- _cc-20260313-009: "Command doesn't support `--dry-run` — would have been useful to preview changes"_
 
 ## 11. Recommendations
 
-For each recommendation, provide:
+### 11a. Tactical Fixes
 
-| # | What to Change | Category | Evidence From This Session | Priority |
-|---|----------------|----------|---------------------------|----------|
-| | | _quality / efficiency / workflow / integration / safety_ | | _high / medium / low_ |
+Specific fixes for issues found in Sections 10a–10d:
+
+| ID | What to Change | Category | Evidence From This Session | Estimated Impact | Priority |
+|----|----------------|----------|---------------------------|------------------|----------|
+| _cc-20260313-010_ | | _quality / efficiency / workflow / integration / safety_ | | _e.g., "~5,000 tokens saved per invocation" or "prevents class of bugs"_ | _high / medium / low_ |
+
+### 11b. Systemic Improvements
+
+Step back from individual findings. Based on the overhead data (Section 5), duplication analysis (Section 9a), workflow friction (Section 7), and integration gaps (Section 9b), what **structural changes** to the DDD framework would have the highest impact? Only propose changes grounded in your actual observations — do not generate generic optimization ideas.
+
+Think about:
+- How should the Usage Guide be structured for AI consumption? (monolithic file vs split sections, navigation aids, caching strategies)
+- How should command prompts be organized to reduce overhead? (shared preambles, conditional loading, fast paths for simple operations)
+- What recurring patterns across commands should be extracted or deduplicated?
+- What new commands or command modes would eliminate friction you observed?
+- How should DDD commands integrate with non-DDD commands in the ecosystem?
+
+For each proposal:
+
+| ID | Structural Change | What It Eliminates | Estimated Token/Workflow Impact |
+|----|-------------------|--------------------|-------------------------------|
+| _cc-20260313-015_ | _e.g., Split Usage Guide into fetchable sections by topic_ | _~15,000 tokens of unnecessary content per fetch_ | _60-80% reduction per Usage Guide reference_ |
+| _cc-20260313-016_ | _e.g., Add fast-path mode to `/ddd-update` for single-flow changes_ | _Pillar instructions, cross-domain analysis, scope tables for unused scopes_ | _~1,500 tokens saved for simple changes_ |
 
 ## 12. Prior Reports
 
-If prior evaluation reports exist in this project's `docs/` directory (`ddd-session-eval-*.md`), briefly note:
-- Which prior recommendations you can now confirm or refute based on this session
-- Any patterns emerging across multiple reports
+If prior eval reports exist in the project's `docs/` directory (`ddd-session-eval-*.md` or `ddd-session-shortfalls-*.yaml`), scan their finding IDs. Only report on prior findings whose scenario you **actually re-encountered** this session:
+
+- **Confirmed:** You hit the same issue again this session (reference by ID, e.g., "Confirms `cc-20260310-003` — same inconsistency still present")
+- **Fixed:** You encountered the same scenario but the problem was gone (e.g., "`cc-20260310-001` — I used `/ddd-update` for a question and it correctly detected non-spec intent")
+- **Patterns:** Recurring themes you observe across reports you've read
+
+Do NOT guess whether prior findings are fixed if you didn't encounter their scenario this session. Silence is honest; guessing is not. Do NOT copy prior findings into this report. Reference by ID only.
 
 If no prior reports exist, skip this section.
+
+## 13. DDD Usage Statistics
+
+Provide project-level usage context that makes findings credible across reports:
+
+- **Change-history entries by pillar:** Logic: ___ | Data: ___ | Interface: ___ | Infrastructure: ___
+- **Most common DDD operations this session:** (e.g., `/ddd-update` single flow 45%, `/ddd-implement` pending 25%)
+- **Node types actively used in project:** ___ of 29
+- **Node types used this session:** ___ of 29
+- **Usage Guide fetches this session vs total command invocations:** ___/___ (fetch rate: __%)
 
 ---
 
@@ -227,9 +330,19 @@ ddd_version: "1.0"
 source: "ddd-session-eval"  # distinguishes from /ddd-create --shortfalls output
 ```
 
+Add an `eval_id` field to each shortfall entry so it can be traced back to the markdown report:
+```yaml
+missing_node_types:
+  - eval_id: "cc-20260313-007"  # links to markdown finding
+    name: "reconnection-strategy"
+    severity: medium
+    # ... rest of standard shortfalls.yaml fields
+```
+
 ### After writing
 
 Tell the user the file path(s) and summarize:
-- How many findings went into the markdown report
+- How many findings went into the markdown report (tactical fixes in 11a + systemic proposals in 11b)
 - How many (if any) qualified as shortfalls for the YAML output
+- Highlight the top systemic proposal from 11b if one stands out
 - Suggested next step: if YAML was produced, suggest `/ddd-evolve docs/ddd-session-shortfalls-{date}.yaml`
