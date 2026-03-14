@@ -433,7 +433,7 @@ The e2e test uses `/ddd-create --from product-features.md --shortfalls`. Since t
 
 **Feature Usage Matrix:**
 - [ ] The `summary.feature_coverage` section must show near-complete coverage:
-  - Node types: should use most of the 28 types (the product is designed for this)
+  - Node types: should use most of the 30 types (the product is designed for this)
   - Trigger types: should cover all 13 trigger patterns
   - UI component types: should use all 9 built-in components
   - Form field types: should exercise all 14 field types

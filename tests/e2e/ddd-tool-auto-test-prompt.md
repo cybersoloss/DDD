@@ -200,6 +200,7 @@ const ALL_NODE_TYPES = [
   'transform', 'collection', 'parse', 'crypto', 'batch',
   'transaction', 'agent_loop', 'guardrail', 'human_gate',
   'orchestrator', 'smart_router', 'handoff', 'agent_group',
+  'text_split', 'websocket_broadcast',
 ];
 
 const ALL_TRIGGER_TYPES = [
@@ -211,6 +212,7 @@ const ALL_TRIGGER_TYPES = [
 const ALL_COLLECTION_OPS = [
   'filter', 'sort', 'deduplicate', 'merge',
   'group_by', 'aggregate', 'reduce', 'flatten',
+  'first', 'last', 'join',
 ];
 
 const ALL_CRYPTO_OPS = [
@@ -574,7 +576,7 @@ This should produce reports with:
 1. `npm run auto-test -- <path>` runs without crashing on any valid DDD project
 2. Produces `tool-compatibility-report.yaml` and `spec-quality-report.yaml` in the output directory
 3. Reports are valid YAML that can be parsed by any YAML library
-4. Coverage checker correctly identifies all 28 node types, all 16 trigger types, all 8 collection ops, etc.
+4. Coverage checker correctly identifies all 30 node types, all 16 trigger types, all 11 collection ops, etc.
 5. Validation results match what the DDD Tool app would show for the same project
 6. Parse/normalize errors are caught and reported (not thrown as uncaught exceptions)
 7. The runner exits with code 0 if no errors, 1 if errors found, 2 if fatal crash

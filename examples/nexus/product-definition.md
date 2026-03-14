@@ -94,7 +94,7 @@ Every section below is mapped to Usage Guide features. The matrix is the test co
 | **Interface** | ui: detail-card component | `content-detail` page |
 | **Interface** | ui: chart component | `analytics` page |
 | **Interface** | ui: filter-bar component | `content-feed`, `editorial-queue` pages |
-| **Interface** | ui: form field types (all 14) | `manual-content-entry`, `general-settings`, `notification-settings` forms |
+| **Interface** | ui: form field types (14 of 16) | `manual-content-entry`, `general-settings`, `notification-settings` forms |
 | **Interface** | ui: interaction: bulk-select | `content-feed`, `editorial-queue` pages |
 | **Interface** | ui: interaction: inline-edit | `content-detail` page |
 | **Interface** | ui: interaction: drag-drop | `sources` page (reorder priority) |
@@ -442,7 +442,7 @@ Use this as the test contract when scoring generated specs.
 **Trigger types (10):**
 - [ ] HTTP · [ ] cron · [ ] event · [ ] webhook · [ ] ipc · [ ] ws · [ ] pattern · [ ] manual · [ ] interval · [ ] event_group
 
-**Node types (28):**
+**Node types (28 of 30):**
 - [ ] trigger · [ ] input · [ ] process · [ ] decision · [ ] terminal
 - [ ] data_store (read/write/update/delete/aggregate/update_where)
 - [ ] service_call · [ ] ipc_call · [ ] event · [ ] sub_flow (with contract)
@@ -463,7 +463,7 @@ Use this as the test contract when scoring generated specs.
 - [ ] Indexes (unique/composite/gin) · [ ] Seed data · [ ] Soft delete · [ ] State machine transitions
 
 **UI features:**
-- [ ] All 9 component types · [ ] All 14 form field types
+- [ ] 9 of 16 component types · [ ] 14 of 16 form field types
 - [ ] bulk-select · [ ] inline-edit · [ ] drag-drop · [ ] reorder
 - [ ] realtime (WebSocket) · [ ] initial_fetch · [ ] loading/error/empty states
 

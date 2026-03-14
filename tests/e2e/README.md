@@ -149,7 +149,7 @@ A change in any one can break the test. The generator reads all three.
 
 ### Why not hardcode feature catalogs?
 
-The generator prompt does NOT contain lists like "28 node types: trigger, input, process...". Instead, it tells Claude to **read the current Usage Guide and extract whatever is there**. If next month has 32 node types, the generator finds all 32 without any prompt changes.
+The generator prompt does NOT contain lists like "30 node types: trigger, input, process...". Instead, it tells Claude to **read the current Usage Guide and extract whatever is there**. If next month has 32 node types, the generator finds all 32 without any prompt changes.
 
 ## File Structure
 

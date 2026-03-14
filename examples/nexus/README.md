@@ -10,7 +10,7 @@ Nexus is a fictional **AI-powered content intelligence platform** used as the be
 
 | Coverage | Count |
 |---|---|
-| Node types used | **28/28** (100% of catalog) |
+| Node types used | **28/30** (93% of catalog) |
 | Flows | **53** across 9 domains |
 | Schemas | **17** |
 | UI page specs | **13** |
@@ -33,7 +33,7 @@ The [`product-definition.md`](product-definition.md) in this folder was designed
 > Requirements:
 > - **Logic:** Every trigger type must appear at least once (HTTP, cron, event, webhook, ipc, ws, pattern, manual, interval, event_group). Every node type must appear at least once, including all variants: all orchestrator strategies (supervisor/round_robin/broadcast/consensus), all handoff modes (transfer/consult/collaborate), all agent_group coordination strategies (broadcast/round_robin/sequential), all collection operations (filter/sort/deduplicate/merge/group_by/aggregate/reduce/flatten/first/last/join), parallel with both failure_policy variants (all_required and best_effort), loop with break_condition, transform in both schema and expression modes, agent_loop with is_terminal tool, requires_confirmation tool, and all memory types (conversation_history/vector_store/key_value), guardrail in both input and output positions.
 > - **Data:** Every schema must include typed fields, relationships (has_many/belongs_to/has_one/many_to_many), indexes, soft_delete where relevant, seed data where relevant, and state machine transitions for status fields.
-> - **Interface:** Every UI page must specify component types (stat-card/item-list/card-grid/detail-card/chart/filter-bar/button-group/page-header/status-bar), use all 14 form field types across the page set (text/number/select/multi-select/search-select/date/datetime/date-range/textarea/toggle/tag-input/file/color/slider/markdown), include at least one of each interaction (bulk-select/inline-edit/drag-drop/reorder), and define realtime state (WebSocket) on at least two pages.
+> - **Interface:** Every UI page must specify component types (stat-card/item-list/card-grid/detail-card/chart/filter-bar/button-group/page-header/status-bar — 9 of 16 available), use 14 of 16 form field types across the page set (text/number/select/multi-select/search-select/date/datetime/date-range/textarea/toggle/tag-input/file/color/slider/markdown), include at least one of each interaction (bulk-select/inline-edit/drag-drop/reorder), and define realtime state (WebSocket) on at least two pages.
 > - **Infrastructure:** Define all service types (server/worker/datastore/proxy), with depends_on, startup_order, dev_command, and setup for each.
 > - **Cross-cutting:** All 6 patterns must be formally defined in architecture.yaml (stealth_http, api_key_resolution, encryption, soft_delete, content_hashing, error_handling).
 > - **Domain:** Use all domain role types (process/entity/gateway). Every cross-domain event must include a payload schema. At least one flow must use event_group trigger.
@@ -60,7 +60,7 @@ Once generated, feed the `product-definition.md` to `/ddd-create` as described i
 ### Scenario 1 — DDD Commands Effectiveness Test
 *Validates that `/ddd-create` and the Usage Guide produce correct specs from a product brief.*
 
-**Purpose:** Recreate Nexus from scratch using only the product definition and `/ddd-create`. If the resulting specs score 98+/100 and cover 28/28 node types, the command and Usage Guide are working correctly.
+**Purpose:** Recreate Nexus from scratch using only the product definition and `/ddd-create`. If the resulting specs score 98+/100 and cover 28/30 node types, the command and Usage Guide are working correctly.
 
 **Steps:**
 
@@ -79,18 +79,18 @@ npm run test:specs -- ~/dev/nexus-test
 **Pass criteria:**
 - `spec-quality-report.yaml` score ≥ 98/100
 - `tool-compatibility-report.yaml` success_rate_pct = 100
-- Node type coverage = 28/28
+- Node type coverage = 28/30
 - 0 parse or normalize failures
 - `specs/shortfalls.yaml` — review for any DDD framework limitations hit during generation
 
-**When to run:** After any change to `/ddd-create` or `DDD-USAGE-GUIDE.md`. If score drops below 98 or coverage falls below 28/28, the command or guide degraded. Shortfalls report reveals framework gaps that should feed into `/ddd-evolve`.
+**When to run:** After any change to `/ddd-create` or `DDD-USAGE-GUIDE.md`. If score drops below 98 or coverage falls below 28/30, the command or guide degraded. Shortfalls report reveals framework gaps that should feed into `/ddd-evolve`.
 
 The product brief is in [`product-definition.md`](product-definition.md). It contains a DDD Feature Coverage Matrix mapping every Usage Guide feature to a specific flow, schema, or UI page — use the checklist at the end to verify all features were generated.
 
 ---
 
 ### Scenario 2 — DDD Tool Compatibility Test
-*Validates that the ddd-tool app correctly handles all 28 node types and the full spec format.*
+*Validates that the ddd-tool app correctly handles all 30 node types and the full spec format.*
 
 **Purpose:** Run the automated test runner against the committed Nexus specs. If all 99 files parse and normalize correctly, the tool is compatible with the current spec format.
 
@@ -107,14 +107,14 @@ npm run test:specs -- ~/dev/DDD/examples/nexus
   [2/4] Parsing YAML...             Parsed: 99 OK, 0 failed
   [3/4] Normalizing flow documents  Normalized: 53 OK, 0 failed
   [4/4] Running validation...       Issues: 0 errors, 12 warnings
-                                    Node type coverage: 28/28
+                                    Node type coverage: 28/30
 
   Compatibility: FULLY_COMPATIBLE
   Quality:       EXCELLENT (score: 98/100)
   Completed in 0.17s
 ```
 
-**When to run:** After any change to ddd-tool's parser, normalizer, or validator. If score drops or coverage falls below 28/28, something broke.
+**When to run:** After any change to ddd-tool's parser, normalizer, or validator. If score drops or coverage falls below 28/30, something broke.
 
 ---
 
@@ -144,7 +144,7 @@ npm run test:specs -- ~/dev/DDD/examples/nexus
 
 ## Node Type Coverage Map
 
-Every node type in the 28-type catalog is exercised. Rare types and the flows that use them:
+28 of 30 node types in the catalog are exercised (`text_split` and `websocket_broadcast` are not used). Rare types and the flows that use them:
 
 | Node Type | Flow Example |
 |---|---|
@@ -168,6 +168,8 @@ Every node type in the 28-type catalog is exercised. Rare types and the flows th
 | `transform` | `publishing/publish-to-website`, `content/get-content` |
 | `loop` | `publishing/retry-failed-publish`, `analytics/stream-live-metrics` |
 | `delay` | `publishing/schedule-publication` |
+| `text_split` | *Not used* |
+| `websocket_broadcast` | *Not used* |
 
 Common types (`trigger`, `data_store`, `process`, `decision`, `input`, `event`, `service_call`, `terminal`) appear throughout all domains.
 
