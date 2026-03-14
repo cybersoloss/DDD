@@ -528,7 +528,7 @@ Deployment: local strategy process-manager, production strategy docker-compose.
 
 This product description is designed to exercise every DDD feature. Here's the traceability:
 
-### Node Types (all 28)
+### Node Types (all 30)
 | Node Type | Flow(s) |
 |---|---|
 | trigger | Every flow |
@@ -559,8 +559,10 @@ This product description is designed to exercise every DDD feature. Here's the t
 | smart_router | score-quality (rules + LLM routing) |
 | handoff | route-to-specialist (consult mode) |
 | agent_group | collaborative-review |
+| websocket_broadcast | publish-sse-updates, stream-live-metrics |
+| text_split | summarize-batch (chunk long content) |
 
-### Trigger Types (all 13)
+### Trigger Types (all 16)
 | Trigger | Flow |
 |---|---|
 | HTTP GET | list-users, get-content, get-settings, query-analytics, list-editorial-queue |
@@ -580,7 +582,7 @@ This product description is designed to exercise every DDD feature. Here's the t
 | ws | stream-live-metrics |
 | pattern | send-pattern-alert |
 
-### Collection Operations (all 8)
+### Collection Operations (all 11)
 | Operation | Flow |
 |---|---|
 | filter | fetch-rss-feeds, import-csv-content, monitor-social-feeds |
@@ -591,8 +593,11 @@ This product description is designed to exercise every DDD feature. Here's the t
 | aggregate | stream-live-metrics |
 | reduce | generate-daily-report |
 | flatten | Referenced in parse + transform chains |
+| first | assign-reviewer (take first from sorted list) |
+| last | generate-daily-report (most recent entry) |
+| join | generate-weekly-digest (concatenate summaries) |
 
-### Crypto Operations (all 6)
+### Crypto Operations (all 9)
 | Operation | Flow |
 |---|---|
 | hash | register-user (bcrypt) |
@@ -601,6 +606,9 @@ This product description is designed to exercise every DDD feature. Here's the t
 | decrypt | (Implicit when reading encrypted ApiKey fields) |
 | sign | publish-to-social (hmac) |
 | generate_key | manage-api-keys |
+| jwt_sign | login-user (generate JWT token) |
+| jwt_verify | process-webhook (verify JWT bearer token) |
+| generate_token | register-user (email verification token) |
 
 ### Data Store Types (all 3)
 | Type | Flow |
