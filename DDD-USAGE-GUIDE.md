@@ -121,6 +121,8 @@ layout:
 | `sla_config` | object? | Domain-level SLA thresholds: `{ max_latency_ms: number, alert_threshold_ms: number, on_breach: event_name }`. `/ddd-scaffold` generates latency monitoring hooks; when breach occurs the named event is emitted. |
 | `memory_stores` | MemoryTopologyEntry[]? | Agent memory stores used in this domain. Shown at L2 alongside database/cache nodes: `[{ name: string, type: 'vector_store' \| 'key_value' \| 'conversation_history', used_by: flow_ids[] }]`. |
 | `auth` | object? | Domain-level auth default applied to all flows: `{ required: boolean, roles?: string[], strategy?: 'jwt' \| 'api_key' \| 'none' }`. Individual flows can override via `flow.auth`. `/ddd-implement` uses the domain default when a flow has no explicit auth field. Useful for domains where most flows require the same auth strategy. |
+| `rate_limit_policy` | object? | Domain-level rate limiting default applied to all HTTP triggers in this domain: `{ window_ms: number, max_requests: number, key_by: string, tiers?: [{ name: string, max_requests: number, key_by?: string }] }`. Trigger-level `rate_limit` overrides this default. Also supported at `system.yaml` level as a global default (system → domain → trigger inheritance). |
+| `audit` | boolean? | When `true`, `/ddd-implement` automatically wraps every `data_store` create/update/delete node in this domain with an audit event emission using standard payload: `{ user_id, action, model, record_id, before?, after?, timestamp }`. Individual flows can override via `flows[].audit`. |
 | `layout` | DomainLayout | Canvas positions (managed by DDD Tool) |
 
 ### FlowGroup
@@ -218,6 +220,7 @@ on_error:
 | `throughput` | string? | Expected volume (e.g., `"~500 items/day"`) — shown as subtitle at L2 |
 | `template` | string? | Reference to a template flow ID (see Parameterized Flow pattern in Section 16) |
 | `parameters` | `Record<string, unknown>`? | Parameter values for template instantiation (required when `template` is set) |
+| `audit` | boolean? | Per-flow audit override. When set, overrides the domain-level `audit` flag for this flow. |
 
 ### EventWiring
 
@@ -1274,19 +1277,21 @@ Different component types use different subsets of PageSection fields. Here's wh
 | Component | Key Fields | Notes |
 |-----------|------------|-------|
 | `stat-card` | `fields.value`, `fields.subtitle`, `fields.urgency` (with `rules`), `actions` (e.g., `click: {navigate}`), optional `trend` (`{ value: "$.prev", direction: 'auto' \| 'up' \| 'down', format: 'delta' \| 'percent' \| 'raw' }`) | Single metric display |
-| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll`, optional `interactions`, optional `group_by` (`{ field: "$.category", label_field?: "$.label", show_count?: boolean, collapsible?: boolean }`), optional `realtime_insert_position` (`'top' \| 'bottom'` — when the data_source has a realtime WebSocket feed, declares whether new items prepend or append) | Scrollable list with optional section grouping and realtime update support |
+| `item-list` | `data_source`, `item_template` (title/subtitle/badge/timestamp), `item_actions`, `empty_state`, optional `pagination`/`virtual_scroll`, optional `interactions`, optional `group_by` (`{ field: "$.category", label_field?: "$.label", show_count?: boolean, collapsible?: boolean }`), optional `realtime_insert_position` (`'top' \| 'bottom'` — when the data_source has a realtime WebSocket feed, declares whether new items prepend or append). `item_template` also supports an optional `sections` array for rich multi-row list cards: `sections: [{ name: string, fields: [{ name: string, type?: 'text' \| 'badge' \| 'tag-list' \| 'progress' \| 'timestamp', value: string }] }]`. Each section renders as a visual row within the list item. Use `sections` when flat title/subtitle/badge/timestamp fields are insufficient for complex list items (e.g., multi-line preview + tag list + quality score). | Scrollable list with optional section grouping and realtime update support |
 | `card-grid` | `data_source`, `fields.columns` (responsive: desktop/tablet/mobile), `item_template` (image/title/description/footer), `item_actions`, `empty_state`, optional `interactions` | Responsive grid |
 | `detail-card` | `data_source`, `fields` mapping with `$.field` syntax (optional `editable`), `actions` (edit/delete/archive), optional `tabs` | Single record view |
 | `button-group` | `buttons` (ButtonSpec[]) with `label`, `flow`, `args`, `variant`, `icon`, `visible_when`, `confirm` | Action buttons |
 | `page-header` | `fields` (title, subtitle), `breadcrumbs`, `actions` (button-group for page-level actions) | Page title area |
 | `status-bar` | `fields.items` array with `label`, `value` ($.field), `color_when` conditions | Status indicators |
-| `chart` | `data_source`, `fields` (series, labels, values), `chart_type` (line/bar/pie/area/donut) | Data visualization |
+| `chart` | `data_source`, `fields` (series, labels, values), `chart_type` (line/bar/pie/area/donut). Supports multi-series via an optional `series` array: `series: [{ data_source?: string, field: string, color?: string, y_axis?: 'left' \| 'right', label?: string }]`. When `series` is set, `/ddd-implement` generates a multi-series chart with optional dual Y-axis. Falls back to single-series `fields.series`/`fields.values` when `series` is omitted. | Data visualization |
 | `filter-bar` | `fields` (FormField[] for filter inputs), binds to sibling section's `query` | Inline filters for lists/grids |
 | `map-view` | `data_source`, `center_lat`/`center_lng` (initial center), `zoom` (initial zoom), `markers` (array — `{ lat_field, lng_field, label_field?, color_field?, click_action? }`), `routes` (array — `{ points_field, color?, width? }`), `realtime` (boolean — enables live marker updates via WebSocket) | Geographic map with markers and optional routes. Use for shipment tracking, field service, delivery maps. Do NOT use `chart` with `chart_type: map` for geographic data. |
 | `timeline` | `data_source`, `timestamp_field`, `title_field`, `status_field`, `icon_field?`, `color_when` (conditions → color), `direction` (`'vertical' \| 'horizontal'`) | Ordered event sequence with time steps. Use for shipment history, activity logs, audit trails. |
 | `chat-interface` | `data_source`, `message_roles` (`{ user: string, assistant: string }`), `streaming_source` (flow ref for SSE stream), `input_config` (`{ placeholder?: string, submit_flow: string, submit_key?: 'Enter' \| 'Cmd+Enter' }`), `typing_indicator` (boolean), `message_template` (`{ content_field, role_field, timestamp_field? }`) | Conversational AI chat with message bubbles and streaming. Use for AI agent conversations, chatbots, OD authoring. Pair with `streaming_behavior` on the section and an `agent_loop` node with `streaming: { enabled: true }` on the backend. |
 | `markdown-viewer` | `data_source`, `fields.content` ($.field pointing to markdown string), optional `collapsible` (boolean), optional `copy_button` (boolean), optional `syntax_highlight` (boolean) | Read-only rendered markdown display. Use for documentation, AI-generated content, knowledge base entries, OD documents. |
 | `tree-view` | `data_source`, `fields.children` ($.field for child nodes), `fields.label` ($.field for node label), optional `fields.icon` ($.field), optional `collapsible` (boolean, default true), optional `default_expanded_depth` (number), optional `item_actions` (per-node actions) | Hierarchical tree with expand/collapse. Use for org charts, category trees, GOSTA hierarchies, file trees. |
+| `kanban-board` | `data_source`, `columns` ([{id, label, status_value, max_items?, color?}]), `item_template` (title/subtitle/badge/assignee/priority/date), `item_actions`, `on_move_flow` (flow ref called when card moves between columns with `{ item_id, from_column, to_column }`), `empty_state` | Drag-and-drop workflow board |
+| `calendar-view` | `data_source`, `date_field` (which field determines item placement), `view` (`'month' \| 'week' \| 'day'`), `item_template` (title, status badge), `on_date_click_flow`, `on_item_move_flow` (drag to reschedule), `empty_state` | Date-based scheduling grid |
 
 > To use a shared component, set `component` to the shared component's ID from `pages.yaml` → `shared_components`.
 
@@ -1349,6 +1354,23 @@ When `editable: true` is set on a field, the UI renders a click-to-edit control.
 | `allow_skip` | boolean? | Allow advancing without completing all step fields (default: `false`) |
 
 `/ddd-implement` generates a wizard component with per-step validation. All field names in `wizard.steps[].fields` must exist in the `fields` array. Use for complex multi-stage forms (supplier onboarding, project setup, multi-step checkout).
+
+Each wizard step supports an optional `visible_when: { field: string, values: string[] }` condition. When the condition evaluates to false (the referenced field's current value is not in `values`), `/ddd-implement` skips the step in the wizard progression and navigation indicators.
+
+```yaml
+# Wizard with conditional steps
+steps:
+  - label: "Rule Type"
+    fields: [rule_type, rule_name]
+  - label: "Event Configuration"
+    visible_when: { field: "rule_type", values: ["event"] }
+    fields: [event_source, event_filter]
+  - label: "Schedule Configuration"
+    visible_when: { field: "rule_type", values: ["schedule"] }
+    fields: [cron_expression, timezone]
+  - label: "Review"
+    fields: [summary, notes]
+```
 
 **FormAutoSave fields:**
 
@@ -1457,6 +1479,7 @@ Same fields as ItemAction, used in `button-group` component sections.
 | `store` | string? | Client-side store name (references `stores` in domain.yaml) |
 | `initial_fetch` | string[]? | Backend flows to call on page load |
 | `realtime` | string? | WebSocket/SSE flow for real-time updates (null = no realtime) |
+| `collaborative` | object? | Real-time presence indicators for multi-user pages: `{ presence_flow: string, lock_flow?: string, session_key: string }`. `presence_flow` is called to subscribe to who else is viewing the page. `lock_flow` acquires a soft lock when a user begins editing. `/ddd-implement` generates a presence subscription hook and renders user avatars in the page header. |
 
 > **Note:** UI specs are declarative — they describe what the page shows and how it binds to data, not how to render it. `/ddd-implement` reads these specs alongside the backend flow specs to generate page components with proper data fetching, state management, form handling, and loading/error states. `/ddd-scaffold` creates the page file structure from `pages.yaml`.
 
@@ -1742,7 +1765,7 @@ Connections can optionally include a `behavior` field to distinguish error handl
 |-------|-------------|
 | `continue` | Log and continue (soft fail) |
 | `stop` | Stop the flow (hard fail) |
-| `retry` | Retry before failing (retry count configured at node level) |
+| `retry` | Retry before failing. Add `retry_config` to configure (see below). Falls back to node-level retry if node has one. |
 | `circuit_break` | Use circuit breaker pattern |
 
 When `behavior: circuit_break`, add `circuit_break_config` to configure the breaker:
@@ -1754,6 +1777,17 @@ When `behavior: circuit_break`, add `circuit_break_config` to configure the brea
 | `circuit_break_config.half_open_max_calls` | number? | Max test calls in half-open state before closing (default: `1`) |
 
 `/ddd-implement` reads `circuit_break_config` to generate an [opossum](https://nodeshift.dev/opossum/) or equivalent circuit breaker wrapping the downstream call.
+
+When `behavior: retry`, add `retry_config` to configure the retry strategy:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `retry_config.max_attempts` | number? | Maximum retry attempts (default: `3`) |
+| `retry_config.initial_delay_ms` | number? | Delay before first retry in milliseconds (default: `1000`) |
+| `retry_config.backoff_factor` | number? | Multiplier for subsequent delays — e.g., `2` for exponential backoff (default: `2`) |
+| `retry_config.jitter` | boolean? | Add random jitter to delay to avoid thundering herd (default: `false`) |
+
+`/ddd-implement` generates retry logic with the configured backoff strategy. If the node already has a `retry` field (e.g., `service_call`, `llm_call`), the node-level config takes precedence and `retry_config` on the connection is ignored.
 
 ```yaml
 connections:
@@ -1767,7 +1801,27 @@ connections:
       failure_threshold: 5
       recovery_timeout_ms: 30000
       half_open_max_calls: 1
+  - targetNodeId: data-retry-001
+    behavior: retry
+    retry_config:
+      max_attempts: 5
+      initial_delay_ms: 500
+      backoff_factor: 2
+      jitter: true
 ```
+
+### Async Connections
+
+Connections can optionally include `async: true` for fire-and-forget execution. When set, the target node executes in the background and the source node's flow continues immediately without waiting.
+
+```yaml
+connections:
+  - targetNodeId: analytics-log-001
+    async: true
+    label: "Log analytics (non-blocking)"
+```
+
+Use `async: true` instead of an `event` node with `target_queue` when you need simple fire-and-forget without a queue dependency. `/ddd-implement` wraps the target node invocation in `setImmediate()` or `Promise.resolve().then()`.
 
 ### Connection Format Compatibility
 
@@ -1841,6 +1895,7 @@ The entry point of every flow. Exactly one per flow.
 | `signature` | object? | `{ algorithm: 'hmac-sha256' \| 'hmac-sha1', key_source: { env: string }, header: string }` — webhook signature validation. `/ddd-implement` verifies before handler. |
 | `connection_config` | object? | **WebSocket (`ws`) triggers only.** `{ auth_required: boolean, auth_strategy?: 'jwt' \| 'api_key' \| 'none', heartbeat_ms?: number, max_connections_per_client?: number, reconnect?: boolean }` — `/ddd-implement` generates WebSocket auth middleware and connection lifecycle management. |
 | `tier_limits` | array? | **HTTP triggers only.** Per-role rate limit overrides: `[{ role: string, max_requests: number, window_ms: number }]` — applied after global `rate_limit`. Allows admin roles higher throughput. |
+| `cors_config` | object? | **HTTP triggers only.** CORS policy: `{ origins: string[], methods?: string[], headers?: string[], credentials?: boolean }`. `/ddd-implement` generates CORS middleware from this config. When omitted, CORS is handled by application-level middleware. |
 | `description` | string | Details |
 
 **Trigger type conventions** — use these patterns in the `event` field to communicate trigger semantics:
@@ -2396,6 +2451,7 @@ Publish or subscribe to an event.
 | `delay_ms` | number? | Delay before processing |
 | `dedup_key` | string? | Deduplication key |
 | `correlation_id` | string? | Expression for distributed tracing correlation (e.g., `"$.order_id"`). When set, `/ddd-implement` propagates the correlation ID in event headers for cross-domain trace linking. |
+| `schema_ref` | string? | Schema name the event payload must conform to (e.g., `'ContentItem'`). When set, `/ddd-implement` validates the payload against the referenced schema before emit. DDD Tool shows the schema name on the event node. |
 | `description` | string | Details |
 
 **Job Queue Enqueue Pattern** — using the event node to enqueue BullMQ / Redis Queue jobs:
@@ -2675,6 +2731,7 @@ Single LLM invocation (not an agent loop).
 | `max_tokens` | number | Max output tokens |
 | `structured_output` | `Record<string, unknown>` | Expected output schema. Property values support a `ref` shorthand to resolve enum values from `shared/types.yaml` without duplication: `{ type: string, ref: my_enum_name }` — `/ddd-implement` resolves the ref and injects the enum values as a JSON Schema `enum` constraint. |
 | `retry` | object | `{ max_attempts?, backoff_ms?, strategy?: 'fixed' \| 'linear' \| 'exponential', jitter?: boolean }` |
+| `model_fallback` | `ModelFallback[]`? | Ordered list of fallback models to try when the primary model is unavailable. Each entry: `{ model: string, on_error: string[] }`. `on_error` values: `'rate_limited'` (429), `'overloaded'` (503), `'timeout'`, `'any'`. `/ddd-implement` generates try/catch chains that fall through to the next model on listed errors. |
 | `context_sources` | `Record<string, ContextSource>`? | Formal variable bindings with optional transforms |
 | `prompt_files` | `string[]`? | Relative paths to external prompt files (system prompts, templates, guardrails) that contribute to the final prompt. `/ddd-sync` hashes these files alongside the spec YAML — changes to prompt files trigger drift detection. `/ddd-implement` reads them for context when generating LLM integration code. |
 | `description` | string | Details |
@@ -2715,6 +2772,19 @@ spec:
     content:
       from: "$.content_item.raw_content"
       transform: truncate(4000)
+
+# LLM call with model fallback chain
+spec:
+  model: claude-opus-4-6
+  system_prompt: "Classify the content into one of the categories."
+  prompt_template: "Classify: {content}"
+  model_fallback:
+    - model: claude-sonnet
+      on_error: [rate_limited, overloaded]
+    - model: gpt-4o
+      on_error: [any]
+  structured_output:
+    category: { type: string }
 ```
 
 #### collection
@@ -2874,6 +2944,38 @@ spec:
   input_fields: ["token"]
   output_field: "decoded_payload"
   description: Verify JWT and extract claims
+```
+
+#### text_split
+Split a text string into a variable-length array of chunks with configurable length limits and split strategies. Use instead of process nodes for text chunking (tweet threading, LLM context window management, paragraph extraction). Has single output handle: `"chunks"`.
+
+| Spec Field | Type | Description |
+|------------|------|-------------|
+| `input` | string | Field reference to the text to split (e.g., `"$.article.body"`) |
+| `max_length` | number | Maximum character length per chunk |
+| `split_strategy` | string | `'word' \| 'sentence' \| 'paragraph' \| 'character'` — how to split at boundaries |
+| `prefix_template` | string? | Template prepended to each chunk. Supports `{{index}}` (0-based) and `{{total}}` placeholders. E.g., `"{{index+1}}/{{total}} "` |
+| `suffix_template` | string? | Template appended to each chunk |
+| `output` | string | Output variable name for the chunk array |
+| `description` | string | Details |
+
+```yaml
+# Split article into tweet-length chunks with thread numbering
+spec:
+  input: "$.article.body"
+  max_length: 280
+  split_strategy: word
+  prefix_template: "{{index+1}}/{{total}} "
+  output: "tweet_chunks"
+  description: Split article into tweet-sized chunks with thread numbering
+
+# Split document into LLM-friendly chunks
+spec:
+  input: "$.document.content"
+  max_length: 4000
+  split_strategy: paragraph
+  output: "doc_chunks"
+  description: Chunk document for batch LLM processing
 ```
 
 #### batch
@@ -3082,6 +3184,7 @@ Dispatches work across multiple agents using a coordination strategy. Use when a
 | `flow` | string | Flow reference: `"domain/flow-name"` |
 | `specialization` | string? | What this agent is best at (used by supervisor for routing decisions) |
 | `priority` | number? | Higher priority = preferred when multiple agents qualify |
+| `model_override` | string? | Override the model used by `llm_call` nodes in the referenced sub-flow for this orchestrator invocation. Enables multi-model consensus patterns without duplicating sub-flows. |
 
 **`supervision` sub-fields:**
 
@@ -3107,10 +3210,12 @@ Dispatches work across multiple agents using a coordination strategy. Use when a
       - id: fact-checker
         flow: processing/fact-check-agent
         specialization: "Verifying factual claims against sources"
+        model_override: "claude-opus-4-6"
         priority: 1
       - id: quality-scorer
         flow: processing/score-quality
         specialization: "Assessing writing quality and clarity"
+        model_override: "gpt-4o"
       - id: bias-detector
         flow: processing/bias-check-agent
         specialization: "Detecting ideological or factual bias"
@@ -3240,6 +3345,7 @@ Transfer control from one agent to another, carrying context. Use when a special
 | Field | Type | Description |
 |-------|------|-------------|
 | `action` | string? | `"retry"` — try again; `"escalate"` — route to fallback agent; `"error"` — fail the flow |
+| `flow` | string? | Flow reference for error routing (e.g., `'processing/error-handler'`). When set, handoff failure routes to the specified flow with error context instead of using the `action` field. Mutually exclusive with `action`. |
 | `timeout` | number? | Ms to wait before triggering `action` |
 
 ```yaml
