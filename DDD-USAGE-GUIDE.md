@@ -1386,6 +1386,33 @@ When `auto_save` is set, `/ddd-implement` generates a `useEffect` with debounced
 | `options_depends_on` | object? | Dynamic option filtering based on another field's value: `{ field: string, transform: 'filter' \| 'set_default' \| 'set_options', source_field: string }`. Example: currency dropdown filtered by the currently selected supplier. |
 | `repeating_group` | object? | **Only valid when `type: 'repeating_group'`.** Configuration for an editable sub-table: `{ columns: [{ name, type, label, required?, options? }], min_rows?: number, max_rows?: number, add_label?: string, remove_label?: string }`. `/ddd-implement` renders an add/remove-row grid component. Use for purchase order line items, invoice rows, schedule entries, etc. |
 
+#### field_groups
+
+Group related form fields under collapsible sections with group-level visibility. Use when multiple fields should show/hide together based on a condition (e.g., credentials section based on source type).
+
+```yaml
+forms:
+  - id: add-source
+    field_groups:
+      - id: rss-settings
+        label: "RSS Settings"
+        visible_when: "$.type === 'rss'"
+        fields: ["feed_url", "polling_interval", "max_items"]
+      - id: webhook-settings
+        label: "Webhook Settings"
+        visible_when: "$.type === 'webhook'"
+        fields: ["webhook_url", "secret", "retry_count"]
+    fields:
+      - name: type
+        type: select
+        options: ["rss", "webhook", "api"]
+      - name: feed_url
+        type: text
+      # ... other fields referenced by field_groups
+```
+
+Fields listed in `field_groups[].fields` reference field names from the `fields` array. A field can belong to at most one group. Ungrouped fields are rendered at the top level. `/ddd-implement` renders each group as a collapsible section that shows/hides based on the group's `visible_when` expression.
+
 #### FormSubmit
 
 | Field | Type | Description |
@@ -2168,6 +2195,10 @@ spec:
     style: cursor
     default_limit: 20
     max_limit: 100
+  pagination_response:
+    data_field: "items"
+    cursor_field: "next_cursor"
+    has_more_field: "has_more"
   sort:
     default: "created_at:desc"
     allowed: ["created_at", "name", "price"]
@@ -2780,20 +2811,24 @@ spec:
 ```
 
 #### crypto
-Cryptographic operations: encrypt, decrypt, hash, sign, verify, generate_key, generate_token. Use instead of process nodes for any security operation. Has two output handles: `"success"` and `"error"` (crypto failure).
+Cryptographic operations: encrypt, decrypt, hash, sign, verify, jwt_sign, jwt_verify, generate_key, generate_token. Use instead of process nodes for any security operation. Has two output handles: `"success"` and `"error"` (crypto failure).
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `operation` | string | `'encrypt' \| 'decrypt' \| 'hash' \| 'sign' \| 'verify' \| 'generate_key' \| 'generate_token'` |
-| `algorithm` | string | `'aes-256-gcm' \| 'aes-256-cbc' \| 'sha256' \| 'sha512' \| 'hmac-sha256' \| 'rsa-oaep' \| 'ed25519'` — not required for `generate_token` |
-| `key_source` | object | Where the key comes from: `{ env: string }` — required for `encrypt`, `decrypt`, `sign`; not needed for `hash`, `generate_key`, `generate_token` |
+| `operation` | string | `'encrypt' \| 'decrypt' \| 'hash' \| 'sign' \| 'verify' \| 'jwt_sign' \| 'jwt_verify' \| 'generate_key' \| 'generate_token'` |
+| `algorithm` | string | `'aes-256-gcm' \| 'aes-256-cbc' \| 'sha256' \| 'sha512' \| 'hmac-sha256' \| 'rsa-oaep' \| 'ed25519' \| 'hs256' \| 'rs256' \| 'es256'` — not required for `generate_token` |
+| `key_source` | object | Where the key comes from: `{ env: string }` — required for `encrypt`, `decrypt`, `sign`, `jwt_sign`, `jwt_verify`; not needed for `hash`, `generate_key`, `generate_token` |
 | `input_fields` | string[] | Field(s) to process |
 | `output_field` | string | Result field name |
+| `payload` | object? | **`jwt_sign` only.** JWT claims to encode: `{ sub?, exp?, iat?, iss?, aud?, [custom]? }`. Accepts field references (e.g., `"$.user.id"`) or static values. |
+| `expires_in` | string? | **`jwt_sign` only.** Token expiry duration (e.g., `"1h"`, `"7d"`, `"15m"`). Sets the `exp` claim automatically. |
 | `encoding` | string? | `'base64' \| 'hex' \| 'base64url'` — output encoding. For `generate_token`, also accepts `'uuid'` |
 | `length` | number? | **`generate_token` only.** Number of random bytes to generate before encoding (e.g., `32` → 32-byte token). Defaults to 32. |
 | `description` | string | Details |
 
 > **generate_key vs generate_token:** `generate_key` generates cryptographic key material (fixed-length bytes for use in ciphers — output is raw bytes or base64). `generate_token` generates an opaque random string in a human-readable encoding (hex, base64url, uuid) — use for API keys, bearer tokens, invitation codes, session IDs.
+>
+> **jwt_sign vs jwt_verify:** `jwt_sign` encodes a JWT with claims (`payload`), signs it with `key_source` using `algorithm` (HS256/RS256/ES256), and outputs the token string. `jwt_verify` decodes and verifies a JWT from `input_fields`, outputs the decoded payload to `output_field`, and routes to `"error"` if the signature is invalid or the token is expired.
 
 ```yaml
 # Encrypt credential field for storage
@@ -2820,6 +2855,25 @@ spec:
   encoding: uuid
   output_field: "session_id"
   description: Generate UUID session token
+
+# Sign a JWT with user payload
+spec:
+  operation: jwt_sign
+  algorithm: hs256
+  key_source: { env: "JWT_SECRET" }
+  payload: { sub: "$.user.id", email: "$.user.email", role: "$.user.role" }
+  expires_in: "1h"
+  output_field: "token"
+  description: Issue JWT access token
+
+# Verify and decode a JWT
+spec:
+  operation: jwt_verify
+  algorithm: hs256
+  key_source: { env: "JWT_SECRET" }
+  input_fields: ["token"]
+  output_field: "decoded_payload"
+  description: Verify JWT and extract claims
 ```
 
 #### batch
@@ -4443,7 +4497,44 @@ cross_cutting_patterns:
     convention: >
       All credential fields stored in the database must be encrypted at rest.
       Decrypt on read, encrypt on write.
+
+  audit_log:
+    description: >
+      Log all state-changing operations (create, update, delete) to an audit
+      table with user ID, timestamp, operation, entity, and old/new values.
+    utility: src/utils/audit-logger.ts
+    config:
+      include_diffs: true
+      retention_days: 90
+      operations: [create, update, delete]
+    used_by_domains: []  # list domains that need audit trails
+    convention: >
+      All data_store write operations in audited domains must emit an audit
+      log entry. /ddd-implement generates audit middleware from this pattern.
 ```
+
+**Trigger-level patterns:** Cross-cutting patterns can also target triggers instead of nodes. Use `applies_to: trigger` with a `trigger_type` filter to inject fields into all matching triggers automatically:
+
+```yaml
+cross_cutting_patterns:
+  default_rate_limit:
+    applies_to: trigger
+    trigger_type: HTTP
+    description: >
+      Apply default rate limiting to all HTTP endpoints.
+      Individual flows can override with their own trigger.rate_limit.
+    config:
+      rate_limit:
+        window_ms: 60000
+        max_requests: 100
+        on_exceeded: reject
+    used_by_domains: []  # empty = all domains
+    convention: >
+      All HTTP triggers inherit this rate limit unless they define their own.
+      /ddd-implement reads this pattern and generates rate-limit middleware.
+```
+
+When `applies_to: trigger` is set, `/ddd-implement` merges the pattern's `config` fields into every trigger of the specified `trigger_type` across the listed domains (or all domains if `used_by_domains` is empty). Flow-level trigger fields take precedence over pattern defaults.
 
 ---
 
