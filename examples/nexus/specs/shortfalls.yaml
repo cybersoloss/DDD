@@ -189,15 +189,15 @@ summary:
     medium: 11
     low: 3
   feature_coverage:
-    node_types: 28/28
+    node_types: 28/30
     trigger_types: 16/16
-    collection_operations: 8/8
-    crypto_operations: 5/6
+    collection_operations: 8/11
+    crypto_operations: 5/9
     parse_formats: 6/7
     data_store_types: 3/3
     connection_behaviors: 4/4
-    ui_component_types: 9/9
-    form_field_types: 14/14
+    ui_component_types: 9/16
+    form_field_types: 14/16
     schema_index_types: 3/4
     schema_seed_strategies: 3/3
     schema_relationship_types: 3/4

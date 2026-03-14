@@ -22,10 +22,10 @@ summary:
       info: 12
 coverage:
   node_types:
-    total_defined: 28
+    total_defined: 30
     total_used: 28
-    coverage_pct: 100
-    coverage_note: 28/28 catalog node types used across 53 flows
+    coverage_pct: 93
+    coverage_note: 28/30 catalog node types used across 53 flows
     used:
       - agent_group
       - agent_loop

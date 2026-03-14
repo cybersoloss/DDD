@@ -73,7 +73,7 @@ real_gaps:
       specificity: specific
       workaround_quality: lossy_workaround
     analysis: |
-      Collection supports 8 operations (filter, sort, deduplicate, merge, group_by,
+      Collection supports 11 operations (filter, sort, deduplicate, merge, group_by,
       aggregate, reduce, flatten) but misses the most basic list operation: taking the
       first N elements. The typical pattern is sort → take(1) to get the top result,
       but the second step requires a process node. This is a fundamental collection

@@ -318,7 +318,7 @@ summary:
   errors: 4
   warnings: 8
   coverage:
-    node_types: "25/28 (89%)"
+    node_types: "25/30 (83%)"
     trigger_types: "13/16 (81%)"
     collection_ops: "8/8 (100%)"
 issues:
@@ -335,9 +335,9 @@ issues:
     message: "Event 'ContentArchived' is published but never consumed"
 coverage:
   node_types:
-    total: 28
+    total: 30
     covered: 25
-    percentage: 89
+    percentage: 83
     missing: [agent_group, smart_router, handoff]
     found: [trigger, input, process, ...]
   # ... other coverage sections
