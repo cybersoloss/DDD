@@ -339,6 +339,16 @@ missing_node_types:
     # ... rest of standard shortfalls.yaml fields
 ```
 
+**Comprehensive YAML requirement:** If you produce a YAML, it must include ALL standard sections — not just findings from this session. Do a lightweight project-level audit:
+
+1. **`pillar_balance`** — count the project's flows, schemas, UI pages, and infrastructure services by scanning `specs/`. Include `pages_without_specs` and `imbalance_warnings`. This is fast (directory listing + file count).
+2. **`summary.feature_coverage`** — compute the full Feature Usage Matrix (node_types, trigger_types, collection_operations, crypto_operations, parse_formats, data_store_types, connection_behaviors, ui_component_types, form_field_types, schema_index_types, etc.) by scanning existing flow specs. Report used/available ratios. Include `unused_but_applicable` for features the project could benefit from.
+3. **`ui_shortfalls`** — if UI specs exist (`specs/ui/`), scan them for missing component types, inadequate components, form limitations, and interaction gaps — even if UI wasn't touched this session. Use empty arrays for sub-sections with no findings.
+4. **`layer_gaps`** — populate `elements_used` for all layers where specs exist. For `missing_elements` and `invisible_information`, only report issues you can identify from the specs.
+5. **Empty sections** — include all sections with `[]` when no issues found. An explicit empty array signals "audited, no gaps" vs an omitted section which signals "not checked."
+
+This ensures every session-eval YAML is complete enough for `/ddd-evolve` to produce meaningful analysis, even when the session itself was narrow in scope.
+
 ### After writing
 
 Tell the user the file path(s) and summarize:

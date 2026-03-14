@@ -1714,7 +1714,7 @@ Every node has:
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | Unique node ID |
-| `type` | DddNodeType | One of the 29 node types |
+| `type` | DddNodeType | One of the 30 node types |
 | `position` | `{ x, y }` | Canvas position |
 | `connections` | Array | List of `{ targetNodeId, sourceHandle?, targetHandle?, data?, behavior?, label? }`. The canonical field name is `targetNodeId`; the DDD Tool normalizer also accepts `target` and `targetId` as shorthands. |
 | `spec` | object | Type-specific configuration (see below) |
@@ -2158,7 +2158,8 @@ Data storage operation. Supports databases, filesystem, and in-memory stores. Us
 | `query` | `Record<string, string>` | Query conditions (for read/update/delete). All entries treated as required filters. For optional filters, use `filters` instead. |
 | `filters` | array? | Optional/conditional filter array: `[{ field: string, value: string, required?: boolean }]`. When `required: false`, `/ddd-implement` wraps the clause in a conditional — the filter is only applied if the value is defined and non-null. Backwards compatible with `query` (both can be used together; `query` entries are always required). Example: `[{ field: 'status', value: '$.status', required: false }]` — skip the status filter if `$.status` is null. |
 | `description` | string | Details |
-| `pagination` | object? | Pagination config (for list operations) |
+| `pagination` | object? | Pagination config (for list operations): `{ style: 'cursor' \| 'offset', default_limit: number, max_limit: number }` |
+| `pagination_response` | object? | Response envelope config for cursor pagination: `{ data_field: string, cursor_field: string, has_more_field: string }`. When set, `/ddd-implement` auto-formats the paginated response with the named fields instead of requiring a manual transform node. |
 | `sort` | object? | Sort config (for list operations) |
 | `batch` | boolean? | Batch operation (process entire collection in one DB call) |
 | `upsert_key` | string[]? | Fields for upsert conflict resolution (required when operation is 'upsert') |
@@ -2846,6 +2847,46 @@ spec:
   output: "recent_activities"
   description: Get 5 most recent activities
 ```
+
+**Composite pattern: score-and-rank** — when you need to rank items by a custom multi-factor score (e.g., keyword overlap, weighted fields), use a 3-node chain instead of a process node:
+
+1. `collection.reduce` — compute a score per item into a new array with `score` field added
+2. `collection.sort` — sort by `score` descending
+3. `collection.first(N)` — take top N results
+
+```yaml
+# Step 1: Score each item (reduce to scored array)
+- id: coll-score
+  type: collection
+  spec:
+    operation: reduce
+    input: "$.candidates"
+    accumulator:
+      init: []
+      expression: "acc.concat({ ...item, score: (item.title_match * 2) + (item.tag_match * 1) })"
+    output: "scored_items"
+
+# Step 2: Sort by score descending
+- id: coll-sort
+  type: collection
+  spec:
+    operation: sort
+    input: "$.scored_items"
+    key: "item.score"
+    direction: desc
+    output: "ranked_items"
+
+# Step 3: Take top 3
+- id: coll-top
+  type: collection
+  spec:
+    operation: first
+    input: "$.ranked_items"
+    count: 3
+    output: "top_matches"
+```
+
+This keeps the scoring logic spec-visible (no free-text process node) and composes with existing collection operations. Use a `process` node instead when the scoring formula requires external data lookups or complex string operations that don't fit in an expression.
 
 #### parse
 Structured extraction from raw content formats (RSS, HTML, XML, JSON, CSV). Use instead of process nodes for parsing. Has two output handles: `"success"` and `"error"` (malformed content).
@@ -3552,6 +3593,7 @@ Connections define the flow graph. Each connection is `{ targetNodeId, sourceHan
 | `agent_loop` | `"done"` | `"error"` | |
 | `smart_router` | dynamic route IDs | | From `rules[].id` |
 | `human_gate` | dynamic option IDs | | From `approval_options[].id` |
+| `text_split` | `"chunks"` | | Single output with chunk array |
 | `websocket_broadcast` | `"done"` | | Single output — no error branching |
 | All others | *(single unnamed output)* | | process, delay, transform, sub_flow, orchestrator, handoff, agent_group, event, terminal |
 
@@ -3684,11 +3726,11 @@ The fastest way to create a DDD project is with the `/ddd-create` command in Cla
             assignments and deadlines, and email notifications
 ```
 
-This generates the complete spec structure — `ddd-project.json`, supplementary specs (including UI specs, infrastructure, schemas with indexes/seed), domain YAML, and flow YAML — covering all four foundational pillars (Logic, Data, Interface, Infrastructure) — ready for visual review.
+This generates the complete spec structure — `ddd-project.json`, supplementary specs (including UI specs, infrastructure, schemas with indexes/seed), domain YAML, and flow YAML — covering all four foundational pillars (Data, Interface, Infrastructure, Logic) — ready for visual review.
 
 **Full workflow:**
 
-1. **Create** (Phase 1) — Run `/ddd-create` with a project description. Generates specs for all four pillars: backend flows (Logic), schemas with indexes and seed data (Data), UI page specs (Interface), and infrastructure config (Infrastructure)
+1. **Create** (Phase 1) — Run `/ddd-create` with a project description. Generates specs for all four pillars: schemas with indexes and seed data (Data), UI page specs (Interface), infrastructure config (Infrastructure), and backend flows (Logic)
 2. **Design** (Phase 2) — Open the project in DDD Tool to visualize, validate, and refine specs on the canvas
 3. **Scaffold** (Phase 3) — Run `/ddd-scaffold` to set up project skeleton from specs — backend structure, frontend pages, database with seed data, startup scripts
 4. **Implement** (Phase 3) — Run `/ddd-implement` (no flags) to generate backend flow code, frontend page components, and tests — reads pending entries from `.ddd/change-history.yaml` automatically
@@ -3744,7 +3786,7 @@ Generates a complete DDD project from a natural-language description and/or desi
 
 **What it does:**
 
-`/ddd-create` generates specs for all four foundational pillars of software: **Logic** (backend flows), **Data** (schemas with indexes and seed), **Interface** (UI page specs), and **Infrastructure** (services, ports, startup).
+`/ddd-create` generates specs for all four foundational pillars of software: **Data** (schemas with indexes and seed), **Interface** (UI page specs), **Infrastructure** (services, ports, startup), and **Logic** (backend flows).
 
 1. Fetches the latest DDD Usage Guide for spec format reference
 2. If this is an existing project (`ddd-project.json` exists): reads `architecture.yaml` for `cross_cutting_patterns`, existing domain specs for event wiring, and `.ddd/annotations/` for implementation wisdom. New flows automatically inherit applicable cross-cutting patterns.
@@ -5011,7 +5053,7 @@ metadata:
 5. **Decision nodes need both branches** — always wire both `true` and `false` handles
 6. **Agent flows need terminal tools** — at least one tool must have `is_terminal: true`
 7. **Use `flow_ref` format** — sub_flow references should be `domain-id/flow-id`
-8. **Node IDs must be unique** within a flow — use `{type}-{6char-hash}` format (e.g., `input-a1b2c3`, `process-d4e5f6`)
+8. **Node IDs must be unique** within a flow — use `{type}-{nanoid(8)}` format (e.g., `input-aR9tK3wN`, `process-x7Bm2pQv`)
 9. **Position doesn't affect logic** — positions are for canvas layout only, connections define the actual flow
 10. **Cross-cutting concerns are optional** — only add observability/security when needed for implementation hints
 11. **Always use sourceHandle on branching nodes** — see Section 8 for the complete handle reference per node type

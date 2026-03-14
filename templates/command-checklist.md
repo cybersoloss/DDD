@@ -103,8 +103,8 @@ These items verify the command's behavior matches what the DDD Usage Guide (DDD-
 - [ ] **Required** — Command's scope table matches the Usage Guide's command reference table for that command (same flags, same empty-scope behavior)
 - [ ] **Required** — Command's lifecycle phase matches the Usage Guide's lifecycle diagram
 - [ ] **Required** — Drift resolution recommendations match the Usage Guide's drift decision tree (Section 12.3)
-- [ ] **Required** — Node type references match the Usage Guide's 29 node types (no invented or missing types)
-- [ ] **Conditional** (command creates flow specs) — Node ID convention matches the Usage Guide's format: `{type}-{6char-hash}` (e.g., `process-a1b2c3`)
+- [ ] **Required** — Node type references match the Usage Guide's 30 node types (no invented or missing types)
+- [ ] **Conditional** (command creates flow specs) — Node ID convention matches the Usage Guide's format: `{type}-{nanoid(8)}` (e.g., `process-a1b2c3d4`)
 - [ ] **Conditional** (command creates UI specs) — Page spec format matches the Usage Guide's PageSpec structure (sections, forms, data_source, interactions)
 - [ ] **Conditional** (command references `/ddd-evolve` filters) — Filter count matches the Usage Guide (currently 7 filters: A-G)
 
