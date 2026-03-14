@@ -12,10 +12,10 @@ Vantage exercises every DDD feature via a completely different domain (supply ch
 
 | Coverage | Target |
 |---|---|
-| Node types | **28/28** (100% of catalog) |
+| Node types | **28/30** (93% of catalog) |
 | Trigger types | **10/10** |
 | Schemas | **17** with all relationship/index/seed/state machine features |
-| UI pages | **12** with all 9 component types, all 14 form field types, all 4 interaction types |
+| UI pages | **12** with 9 of 16 component types, 14 of 16 form field types, all 4 interaction types |
 | Infrastructure services | **6** (server ×2, worker ×1, datastore ×2, proxy ×1) |
 | Architecture patterns | **6/6** |
 
@@ -25,7 +25,7 @@ Vantage exercises every DDD feature via a completely different domain (supply ch
 
 *Validates that `/ddd-create` produces correct specs from a product brief in a new domain.*
 
-**Purpose:** Run `/ddd-create` from scratch using `product-definition.md`. If the resulting specs score 98+/100, cover 28/28 node types, and the shortfalls report is clean, the command and Usage Guide are working correctly.
+**Purpose:** Run `/ddd-create` from scratch using `product-definition.md`. If the resulting specs score 98+/100, cover 28/30 node types, and the shortfalls report is clean, the command and Usage Guide are working correctly.
 
 **Steps:**
 
@@ -44,7 +44,7 @@ npm run test:specs -- ~/dev/vantage-test
 **Pass criteria:**
 - `spec-quality-report.yaml` score ≥ 98/100
 - `tool-compatibility-report.yaml` success_rate_pct = 100
-- Node type coverage = 28/28
+- Node type coverage = 28/30
 - 0 parse or normalize failures
 - `specs/shortfalls.yaml` — review for any DDD framework limitations hit during generation
 

@@ -102,9 +102,9 @@ Every feature in the DDD Usage Guide is mapped to a specific flow, schema, or UI
 | `page-header` | All 12 pages |
 | `status-bar` | Live Tracking, Shipment Detail |
 
-### Form Field Types (all 14)
+### Form Field Types (14 of 16)
 
-All 14 field types used across the Purchase Order form and Supplier Onboarding form:
+14 of 16 field types used across the Purchase Order form and Supplier Onboarding form:
 
 | Field Type | Used In |
 |---|---|
@@ -421,7 +421,7 @@ Each service defines: `depends_on`, `startup_order`, `dev_command`, `setup`.
 
 ### 6. Create / Edit Purchase Order (/orders/new, /orders/:id/edit)
 **Form fields:** text (reference, notes), search-select (supplier lookup), select (priority, currency), number (quantities, unit prices), date (expected_date), datetime (requested_by time), date-range (delivery window), textarea (notes), toggle (attach to existing contract), tag-input (internal tags), file (attachment), color (urgency color tag), slider (budget flexibility %), markdown (internal notes)
-**All 14 field types used on this page + order lines sub-table with inline-edit**
+**All 14 of 16 field types used on this page + order lines sub-table with inline-edit**
 
 ### 7. Inventory (/inventory)
 **Components:** page-header, filter-bar (warehouse select, status multi-select, search text), item-list (sku, name, warehouse, quantity, status, reorder_threshold), stat-card (×3: total SKUs, low stock count, depleted count), button-group (bulk adjust, export)
@@ -539,7 +539,7 @@ Use this checklist after running `/ddd-create` and `npm run test:specs` to verif
 - [ ] interval — inventory/refresh-stock-cache, logistics/poll-carrier-status, alerts/escalate-unresolved
 - [ ] event_group — alerts/handle-supply-chain-event
 
-### Node Types (28/28)
+### Node Types (28/30)
 - [ ] trigger, input, process, decision, terminal, data_store, service_call, ipc_call, event
 - [ ] loop (with break_condition)
 - [ ] parallel (failure_policy: all_required) — logistics/notify-stakeholders
@@ -578,8 +578,8 @@ Use this checklist after running `/ddd-create` and `npm run test:specs` to verif
 - [ ] all relationship types: has_many, belongs_to, has_one, many_to_many
 
 ### UI Pages (12)
-- [ ] All 9 component types used across page set
-- [ ] All 14 form field types used (on Create PO page)
+- [ ] 9 of 16 component types used across page set
+- [ ] 14 of 16 form field types used (on Create PO page)
 - [ ] All 4 interaction types: bulk-select, inline-edit, drag-drop, reorder
 - [ ] WebSocket realtime on Dashboard and Live Shipment Tracking
 

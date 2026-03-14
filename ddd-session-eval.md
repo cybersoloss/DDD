@@ -159,7 +159,7 @@ How well did DDD serve as a collaboration layer between you and the user this se
 - **Used this session:**
 - **Needed reference for:**
 - **Knew from prior context:**
-- **Never used (of 29 available):**
+- **Never used (of 30 available):**
 - **Used `process` node as a workaround** for something a structured node type should handle? (If yes, describe what the process node does and what node type you wish existed — this feeds into the shortfalls YAML)
 
 ## 9. Cross-Command Observations
@@ -285,8 +285,8 @@ Provide project-level usage context that makes findings credible across reports:
 
 - **Change-history entries by pillar:** Logic: ___ | Data: ___ | Interface: ___ | Infrastructure: ___
 - **Most common DDD operations this session:** (e.g., `/ddd-update` single flow 45%, `/ddd-implement` pending 25%)
-- **Node types actively used in project:** ___ of 29
-- **Node types used this session:** ___ of 29
+- **Node types actively used in project:** ___ of 30
+- **Node types used this session:** ___ of 30
 - **Usage Guide fetches this session vs total command invocations:** ___/___ (fetch rate: __%)
 
 ---
