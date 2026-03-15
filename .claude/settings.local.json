@@ -61,7 +61,23 @@
       "Bash(npx tsc --noEmit)",
       "Bash(git stash)",
       "Bash(git stash pop)",
-      "Bash(git stash drop)"
+      "Bash(git stash drop)",
+      "Bash(gh issue:*)",
+      "Bash(npm run:*)",
+      "Bash(curl:*)",
+      "Bash(lsof:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npm install:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(ffprobe:*)",
+      "Bash(VITE_DEMO_MODE=true npx vite:*)",
+      "Bash(open:*)",
+      "Bash(npx tsx:*)",
+      "Bash(pkill:*)",
+      "Bash(do:*)",
+      "Bash(for cmd in ddd-create ddd-reverse ddd-update ddd-scaffold ddd-implement ddd-test ddd-sync ddd-reflect ddd-promote ddd-status ddd-evolve)",
+      "Read(//Users/mhcandan/.claude/commands/**)",
+      "Bash(for cmd in ddd-update ddd-scaffold ddd-implement ddd-reflect ddd-promote ddd-status)"
     ]
   }
 }
