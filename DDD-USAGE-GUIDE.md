@@ -1360,15 +1360,19 @@ Each wizard step supports an optional `visible_when: { field: string, values: st
 ```yaml
 # Wizard with conditional steps
 steps:
-  - label: "Rule Type"
+  - id: rule_type_step
+    title: "Rule Type"
     fields: [rule_type, rule_name]
-  - label: "Event Configuration"
+  - id: event_config_step
+    title: "Event Configuration"
     visible_when: { field: "rule_type", values: ["event"] }
     fields: [event_source, event_filter]
-  - label: "Schedule Configuration"
+  - id: schedule_config_step
+    title: "Schedule Configuration"
     visible_when: { field: "rule_type", values: ["schedule"] }
     fields: [cron_expression, timezone]
-  - label: "Review"
+  - id: review_step
+    title: "Review"
     fields: [summary, notes]
 ```
 
@@ -3694,12 +3698,12 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 - Sub-flow must have flow_ref
 - LLM Call must have model
 - Cache must have key and store
-- Transform must have input_schema and output_schema
+- Transform must have input_schema and output_schema (schema mode), OR mode: expression with field_mappings (expression mode does not require schema refs)
 - Delay must have min_ms
 - Collection must have operation, input, and output
 - Parse must have format, input, and output
-- Crypto must have operation, algorithm, and key_source
-- Batch must have input, operation_template, and output
+- Crypto must have operation; algorithm is required except for generate_token and hash; key_source is required except for hash, generate_key, and generate_token
+- Batch must have input and either operation_template or sub_flow_ref (mutually exclusive); output is required
 - Transaction must have steps with at least 2 entries
 
 ### Domain-Level
