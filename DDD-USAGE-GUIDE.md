@@ -1887,7 +1887,7 @@ The entry point of every flow. Exactly one per flow.
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `event` | string \| string[] | What triggers the flow. String or string[] for multi-event triggers (see conventions below) |
+| `event` | string \| string[] | **MANDATORY.** What triggers the flow. String or string[] for multi-event triggers (see conventions below). Every trigger node MUST have this field — a trigger without `spec.event` is invalid. |
 | `source` | string | Where the trigger comes from (e.g., "API Gateway") |
 | `filter` | `Record<string, unknown>`? | Event payload filter — flow only triggers when filter matches (supports dot notation and operators) |
 | `debounce_ms` | number? | Debounce delay in milliseconds. When set, `/ddd-implement` wraps the event handler in a debounce function. Only meaningful for `event:`, `ipc:`, `shortcut`, and `ui:` triggers. |
@@ -1897,6 +1897,8 @@ The entry point of every flow. Exactly one per flow.
 | `tier_limits` | array? | **HTTP triggers only.** Per-role rate limit overrides: `[{ role: string, max_requests: number, window_ms: number }]` — applied after global `rate_limit`. Allows admin roles higher throughput. |
 | `cors_config` | object? | **HTTP triggers only.** CORS policy: `{ origins: string[], methods?: string[], headers?: string[], credentials?: boolean }`. `/ddd-implement` generates CORS middleware from this config. When omitted, CORS is handled by application-level middleware. |
 | `description` | string | Details |
+
+**`type` is not a valid trigger spec field.** Triggers have no `type` — do not write `type: api_endpoint`, `type: http`, or any other `type` value on a trigger node. The trigger kind is expressed entirely through the `event` convention (e.g., `"HTTP POST /path"`, `"cron * * * * *"`, `"event:UserRegistered"`). Adding a `type` field is a spec defect.
 
 **Trigger type conventions** — use these patterns in the `event` field to communicate trigger semantics:
 
