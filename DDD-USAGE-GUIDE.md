@@ -1689,6 +1689,64 @@ metadata:
   modified: "2025-01-15T14:30:00Z"
 ```
 
+### Flow Skeleton (Starting Template)
+
+When writing a new flow, start by copying this skeleton and filling in the placeholders. Add business nodes between the trigger and the error terminal.
+
+```yaml
+# === FLOW TEMPLATE — copy this skeleton for every flow, then fill in ===
+flow:
+  id: {flow-id}
+  name: {Flow Name}
+  type: traditional          # or agent (only if agent_loop/agent_group/orchestrator present)
+  domain: {domain-id}
+  description: |
+    {description}
+
+trigger:
+  id: trigger-{nanoid8}
+  position: { x: 400, y: 50 }
+  connections:
+    - targetNodeId: {first-node-id}
+  spec:
+    event: "{EVENT STRING}"   # ← MANDATORY. HTTP POST /path, cron expr, event:Name, etc.
+    method: POST              # ← only for HTTP triggers
+    path: "/api/v1/..."       # ← only for HTTP triggers
+    description: {what triggers this flow}
+  label: {trigger label}
+
+nodes:
+  # --- ERROR TERMINAL (generate FIRST, before business nodes) ---
+  - id: terminal-{nanoid8}
+    type: terminal
+    position: { x: 700, y: 800 }
+    spec:
+      outcome: error
+      status: 500
+      body: { error: "ERR_CODE", message: "description" }
+    connections: []
+
+  # --- BUSINESS NODES (wire BOTH handles inline for every branching node) ---
+  # Example pattern for any branching node:
+  #   connections:
+  #     - targetNodeId: next-node
+  #       sourceHandle: success
+  #     - targetNodeId: terminal-{error-terminal-id}
+  #       sourceHandle: error        # ← NEVER omit this
+
+metadata:
+  created: "{ISO timestamp}"
+  modified: "{ISO timestamp}"
+```
+
+Three rules when filling in the skeleton:
+
+1. **`trigger.spec.event` is MANDATORY** — never omit it (see [Trigger spec](#trigger) for valid values).
+2. **Error terminal goes first** — declare it before business nodes so its `id` is available to wire from any branching node below.
+3. **Wire BOTH handles inline** — every branching node (`decision`, `data_store`, `service_call`, etc.) must wire both its success/true and error/false handles in the same `connections` block. Copy the comment pattern above and never omit the error handle.
+
+Remove `method:` / `path:` lines for non-HTTP triggers.
+
 ### FlowDocument Structure
 
 | Field | Type | Description |
@@ -3811,10 +3869,11 @@ Generates a complete DDD project from a natural-language description and/or desi
    - **Cross-cutting**: `specs/system.yaml`, `specs/architecture.yaml` (with `cross_cutting_patterns: {}` placeholder), `specs/config.yaml`
 6. Produces a **four-pillar extraction table** before generating any files — enumerating all domains/flows (Logic), pages/sections (Interface), schemas (Data), and services (Infrastructure) with counts per pillar. This table is a countable commitment that prevents pillar starvation
 7. Generates specs in order: Data → Interface → Infrastructure → Logic (detail-heavy Logic goes last so lighter pillars aren't starved)
-8. Validates all flows (trigger → terminals, wired branches, event matching)
-9. Validates UI specs (data_source references exist as backend flows, form field types are valid)
-10. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
-11. Shows summary with per-pillar counts, file list, event wiring, and next steps
+8. Uses the [flow skeleton template](#flow-skeleton-starting-template) for every flow — pre-includes the error terminal and enforces `spec.event` and inline handle wiring before adding business nodes
+9. Validates all flows (trigger → terminals, wired branches, event matching)
+10. Validates UI specs (data_source references exist as backend flows, form field types are valid)
+11. If `--shortfalls`, generates `specs/shortfalls.yaml` with framework gap analysis
+12. Shows summary with per-pillar counts, file list, event wiring, and next steps
 
 **After running:**
 1. Open the project in DDD Tool to review visually
