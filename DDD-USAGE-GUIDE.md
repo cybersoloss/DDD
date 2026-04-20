@@ -1956,6 +1956,7 @@ The entry point of every flow. Exactly one per flow.
 | `rate_limit` | object? | `{ window_ms: number, max_requests: number, key_by?: 'ip' \| 'user' \| 'api_key', on_exceeded?: 'reject' \| 'queue' \| 'delay' }` — per-endpoint rate limiting. `/ddd-implement` generates middleware. |
 | `signature` | object? | `{ algorithm: 'hmac-sha256' \| 'hmac-sha1', key_source: { env: string }, header: string }` — webhook signature validation. `/ddd-implement` verifies before handler. |
 | `connection_config` | object? | **WebSocket (`ws`) and SSE (`sse`) triggers.** For `ws`: `{ auth_required: boolean, auth_strategy?: 'jwt' \| 'api_key' \| 'none', heartbeat_ms?: number, max_connections_per_client?: number, reconnect?: boolean }`. For `sse`: `{ heartbeat_ms?: number, resume_header?: string, on_disconnect?: 'cleanup' \| 'noop' }`. `/ddd-implement` generates connection lifecycle management for both protocols. |
+| `event_subscriptions` | string[]? | **SSE (`sse`) triggers only.** List of internal event names that should be forwarded over the SSE stream (e.g., `["SyncCompleted", "SyncFailed", "ConnectorStatusChanged"]`). `/ddd-implement` generates event bus subscriptions on connection open and forwards matching events as SSE messages. Eliminates the need for a separate process node to wire event listeners to the stream. |
 | `tier_limits` | array? | **HTTP triggers only.** Per-role rate limit overrides: `[{ role: string, max_requests: number, window_ms: number }]` — applied after global `rate_limit`. Allows admin roles higher throughput. |
 | `cors_config` | object? | **HTTP triggers only.** CORS policy: `{ origins: string[], methods?: string[], headers?: string[], credentials?: boolean }`. `/ddd-implement` generates CORS middleware from this config. When omitted, CORS is handled by application-level middleware. |
 | `description` | string | Details |
@@ -2039,6 +2040,10 @@ spec:
     heartbeat_ms: 15000              # send comment heartbeat to keep connection alive
     resume_header: "Last-Event-ID"   # header for client resume-after-disconnect
     on_disconnect: cleanup           # 'cleanup' | 'noop' — run cleanup logic on client disconnect
+  event_subscriptions:               # internal events forwarded over the SSE stream
+    - SyncCompleted
+    - SyncFailed
+    - ConnectorStatusChanged
 
 # WebSocket trigger — with optional connection config
 spec:
@@ -2525,6 +2530,7 @@ Local IPC, native function call, or OS subprocess execution (Tauri commands, Ele
 | `working_dir` | string? | Working directory for subprocess execution (supports `$.` variable interpolation, e.g., `"$.project_path"`). Only meaningful when `bridge: "shell"`. |
 | `capture` | string? | `'stdout' \| 'stderr' \| 'both'` — which output streams to capture from subprocess. Default: `'stdout'`. When `'both'`, output is `{ stdout: string, stderr: string }`. |
 | `on_nonzero_exit` | string? | `'error' \| 'log_and_continue'` — behavior when subprocess returns non-zero exit code. Default: `'error'` (routes to error handle). `'log_and_continue'` logs the exit code and proceeds on the success handle. |
+| `output_format` | string? | `'raw' \| 'json' \| 'plist' \| 'csv' \| 'lines'` — auto-parse stdout before passing to the next node. Default: `'raw'` (pass stdout as-is). When set, `/ddd-implement` wraps the subprocess output in a parser (JSON.parse, plist parser, CSV parser, or line splitter) — eliminates the need for a separate parse/transform node after the call. |
 | `description` | string | Details |
 
 ```yaml
@@ -2558,7 +2564,7 @@ spec:
   bridge: tauri
   description: Check if the target path exists
 
-# OS subprocess — run osascript to export Apple Notes
+# OS subprocess — run osascript with JSON auto-parse
 spec:
   command: osascript
   args: ["-e", "$.jxa_script"]
@@ -2567,10 +2573,11 @@ spec:
   capture: both
   timeout_ms: 30000
   on_nonzero_exit: error
+  output_format: json
   return_type: string
-  description: Execute JXA script to export Apple Notes
+  description: Execute JXA script to export Apple Notes (stdout parsed as JSON)
 
-# OS subprocess — run Python script with non-fatal exit
+# OS subprocess — run Python script with plist auto-parse
 spec:
   command: python3
   args: ["scripts/parse_bookmarks.py", "$.bookmarks_path"]
@@ -2578,8 +2585,9 @@ spec:
   capture: stdout
   on_nonzero_exit: log_and_continue
   timeout_ms: 15000
+  output_format: plist
   return_type: string
-  description: Parse Safari bookmarks via Python plistlib
+  description: Parse Safari bookmarks via Python plistlib (stdout parsed as plist)
 ```
 
 #### event
@@ -2598,6 +2606,9 @@ Publish or subscribe to an event.
 | `dedup_key` | string? | Deduplication key |
 | `correlation_id` | string? | Expression for distributed tracing correlation (e.g., `"$.order_id"`). When set, `/ddd-implement` propagates the correlation ID in event headers for cross-domain trace linking. |
 | `schema_ref` | string? | Schema name the event payload must conform to (e.g., `'ContentItem'`). When set, `/ddd-implement` validates the payload against the referenced schema before emit. DDD Tool shows the schema name on the event node. |
+| `queue_operation` | string? | `'read_metrics' \| 'get_jobs' \| 'remove_repeatable'` — job queue introspection/management operation. Mutually exclusive with `direction`. When set, this node reads from or manages a queue rather than emitting/consuming events. Requires `target_queue`. |
+| `queue_query` | object? | **Only for `queue_operation: get_jobs`.** `{ states?: string[], limit?: number, sort?: 'asc' \| 'desc' }` — filter jobs by state (waiting, active, delayed, completed, failed) with optional limit and sort order. |
+| `job_id` | string? | **Only for `queue_operation: remove_repeatable`.** Job ID or repeatable job key to remove (supports `$.` variable interpolation). |
 | `description` | string | Details |
 
 **Job Queue Enqueue Pattern** — using the event node to enqueue BullMQ / Redis Queue jobs:
@@ -2625,6 +2636,47 @@ The `target_queue`, `priority`, `delay_ms`, and `dedup_key` fields make the even
 | Job queue enqueue (BullMQ) | `event` + `target_queue` | Exactly-once worker processing, retry budgets, concurrency control |
 
 The corresponding worker flow uses a cron or event trigger with `job_config` to declare queue membership and concurrency. Do NOT use a `process` node with `category: infrastructure` for enqueueing — use `event + target_queue`.
+
+**Job Queue Introspection Pattern** — using the event node to read queue state and manage repeatable jobs:
+
+The `queue_operation` field extends the event node for read and management operations on job queues. This is distinct from emit/consume (which move data through queues) — `queue_operation` inspects or modifies queue state.
+
+```yaml
+# Read queue metrics — waiting, active, delayed, completed, failed counts
+- id: event-queue-metrics
+  type: event
+  spec:
+    queue_operation: read_metrics
+    target_queue: sync-jobs
+    description: Read queue depth metrics for sync-jobs queue
+
+# Query recent failed jobs
+- id: event-failed-jobs
+  type: event
+  spec:
+    queue_operation: get_jobs
+    target_queue: sync-jobs
+    queue_query:
+      states: [failed, completed]
+      limit: 50
+      sort: desc
+    description: Get last 50 completed and failed sync jobs
+
+# Remove a repeatable job before re-registering with new schedule
+- id: event-remove-repeatable
+  type: event
+  spec:
+    queue_operation: remove_repeatable
+    target_queue: cron-jobs
+    job_id: "$.existing_job_key"
+    description: Remove existing repeatable job before schedule update
+```
+
+| Use | Mechanism | When |
+|-----|-----------|------|
+| Domain event (pub/sub) | `event` with `direction` | Multiple consumers, event sourcing, cross-domain notifications |
+| Job queue enqueue | `event` + `direction: emit` + `target_queue` | Exactly-once worker processing, retry budgets |
+| Queue introspection | `event` + `queue_operation` | Read queue depths, query job state, remove repeatable jobs |
 
 #### loop
 Iterate over a collection. Has two output paths: `"body"` for the loop body and `"done"` for after the loop completes. Use `sourceHandle` values on connections.
@@ -3831,7 +3883,7 @@ The DDD Tool enforces these validation rules. Your specs should pass all of them
 - Data Store must have operation (and model when store_type is database)
 - Service Call must have method and URL
 - IPC Call must have command
-- Event must have direction and event_name
+- Event must have either `direction` + `event_name` (emit/consume) or `queue_operation` + `target_queue` (introspection) — mutually exclusive
 - Loop must have collection and iterator
 - Parallel must have 2+ branches
 - Sub-flow must have flow_ref
