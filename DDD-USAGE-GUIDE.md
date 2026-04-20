@@ -3846,30 +3846,30 @@ Required spec fields per node type. Omitting these causes DDD Tool validation er
 | `process` | `action` | |
 | `decision` | `condition` | `expression` |
 | `terminal` | `outcome` | |
-| `data_store` (database) | `operation`, `model` | `entity`, `schema` |
+| `data_store` (database) | `operation`, `model` | `table`, `entity`, `schema`; `where` (use `query`); `set`/`values` (use `data`) |
 | `data_store` (filesystem) | `operation`, `path` | |
 | `data_store` (memory) | `store`, `selector` | |
-| `service_call` | `method`, (`url` OR `integration`) | `endpoint` |
+| `service_call` | `method`, (`url` OR `integration`) | `endpoint`; Redis/local ops should use `ipc_call` not `service_call` |
 | `ipc_call` | `command` | |
-| `event` | `direction` (`emit`/`consume`), `event_name` | `action` for direction |
-| `loop` | `collection`, `iterator` | `over`, `as` |
+| `event` | `direction` (`emit`/`consume`), `event_name` | `action` (use `direction`); `event_type` (use `event_name`) |
+| `loop` | `collection`, `iterator` | `over`, `as`, `item_alias` |
 | `parallel` | `branches` (array, ≥2 entries) | |
 | `sub_flow` | `flow_ref` | `flow` |
 | `llm_call` | `model`, `prompt_template` | `prompt` |
 | `delay` | `min_ms` | |
 | `cache` | `operation`, `key`, `store` | |
 | `transform` (schema mode) | `input_schema`, `output_schema`, `field_mappings` | |
-| `transform` (expression mode) | `mode: "expression"`, `field_mappings` | `operations` without `mode` |
+| `transform` (expression mode) | `mode: "expression"`, `field_mappings` | `mapping`, `output_shape`, `operations` without `mode` |
 | `collection` | `operation`, `input`, `output` | |
 | `parse` | `format`, `input` | |
-| `crypto` (encrypt/decrypt/sign/jwt_sign/jwt_verify) | `operation`, `algorithm`, `key_source: { env }` | Omitting `algorithm` or `key_source` |
+| `crypto` (encrypt/decrypt/sign/jwt_sign/jwt_verify) | `operation`, `algorithm`, `key_source: { env }` (OBJECT) | String `"env:VAR"` format; omitting `algorithm` or `key_source` |
 | `crypto` (hash) | `operation`, `algorithm` | |
 | `crypto` (generate_token) | `operation`, `length`, `encoding` | |
-| `batch` | `input`, (`operation_template: { type }` OR `sub_flow_ref`) | `data` for input, string `operation` |
+| `batch` | `input`, (`operation_template: { type }` OR `sub_flow_ref`) | `collection`/`data`/`items` for input; `per_item`/string `operation` for template |
 | `transaction` | `steps` (array, ≥2 entries) | |
 | `text_split` | `input`, `max_length`, `split_strategy`, `output` | |
 | `websocket_broadcast` | `channel`, `event_name` | |
-| `agent_loop` | `model`, `tools` (≥1 with `is_terminal: true`), `max_iterations` | |
+| `agent_loop` | `model`, `tools` (≥1 with `is_terminal: true`), `max_iterations` | `terminal` on tools (use `is_terminal`) |
 | `guardrail` | `checks` | |
 | `human_gate` | `approval_options` (array) | |
 | `orchestrator` | `strategy`, `agents` (≥2) | |
