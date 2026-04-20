@@ -1955,7 +1955,7 @@ The entry point of every flow. Exactly one per flow.
 | `debounce_ms` | number? | Debounce delay in milliseconds. When set, `/ddd-implement` wraps the event handler in a debounce function. Only meaningful for `event:`, `ipc:`, `shortcut`, and `ui:` triggers. |
 | `rate_limit` | object? | `{ window_ms: number, max_requests: number, key_by?: 'ip' \| 'user' \| 'api_key', on_exceeded?: 'reject' \| 'queue' \| 'delay' }` — per-endpoint rate limiting. `/ddd-implement` generates middleware. |
 | `signature` | object? | `{ algorithm: 'hmac-sha256' \| 'hmac-sha1', key_source: { env: string }, header: string }` — webhook signature validation. `/ddd-implement` verifies before handler. |
-| `connection_config` | object? | **WebSocket (`ws`) triggers only.** `{ auth_required: boolean, auth_strategy?: 'jwt' \| 'api_key' \| 'none', heartbeat_ms?: number, max_connections_per_client?: number, reconnect?: boolean }` — `/ddd-implement` generates WebSocket auth middleware and connection lifecycle management. |
+| `connection_config` | object? | **WebSocket (`ws`) and SSE (`sse`) triggers.** For `ws`: `{ auth_required: boolean, auth_strategy?: 'jwt' \| 'api_key' \| 'none', heartbeat_ms?: number, max_connections_per_client?: number, reconnect?: boolean }`. For `sse`: `{ heartbeat_ms?: number, resume_header?: string, on_disconnect?: 'cleanup' \| 'noop' }`. `/ddd-implement` generates connection lifecycle management for both protocols. |
 | `tier_limits` | array? | **HTTP triggers only.** Per-role rate limit overrides: `[{ role: string, max_requests: number, window_ms: number }]` — applied after global `rate_limit`. Allows admin roles higher throughput. |
 | `cors_config` | object? | **HTTP triggers only.** CORS policy: `{ origins: string[], methods?: string[], headers?: string[], credentials?: boolean }`. `/ddd-implement` generates CORS middleware from this config. When omitted, CORS is handled by application-level middleware. |
 | `description` | string | Details |
@@ -2030,6 +2030,16 @@ spec:
   source: API Gateway
   description: Real-time update stream for dashboard
 
+# SSE trigger — with connection config (parallel to ws connection_config)
+spec:
+  event: "sse /api/live-events"
+  source: API Gateway
+  description: Live event stream with resume support
+  connection_config:
+    heartbeat_ms: 15000              # send comment heartbeat to keep connection alive
+    resume_header: "Last-Event-ID"   # header for client resume-after-disconnect
+    on_disconnect: cleanup           # 'cleanup' | 'noop' — run cleanup logic on client disconnect
+
 # WebSocket trigger — with optional connection config
 spec:
   event: "ws /api/live"
@@ -2093,6 +2103,23 @@ spec:
   event: "ipc:spec-files-changed"
   source: File Watcher
   description: Triggered when native file watcher detects spec changes
+
+# Application lifecycle trigger — "lifecycle:{event}"
+spec:
+  event: "lifecycle:startup"
+  source: Application
+  description: Triggered once when the application starts
+
+# Other lifecycle events
+spec:
+  event: "lifecycle:shutdown"
+  source: Application
+  description: Triggered on graceful shutdown (cleanup, flush queues)
+
+spec:
+  event: "lifecycle:ready"
+  source: Application
+  description: Triggered after all services are initialized and healthy
 ```
 
 **job_config** — optional fields for cron triggers to configure the job queue:
@@ -2229,6 +2256,7 @@ Data storage operation. Supports databases, filesystem, and in-memory stores. Us
 | `upsert_key` | string[]? | Fields for upsert conflict resolution (required when operation is 'upsert') |
 | `include` | IncludeRelation[]? | Eager-load related records (joins) |
 | `returning` | boolean? | Return the affected record(s) after the operation. Valid for all operation types — not just bulk. For single `create`/`update`, the ORM returns the record by default; setting `returning: true` makes this intent explicit in the spec and enables `/ddd-implement` to generate typed return handling. |
+| `select` | string[]? | Column projection — list of field names to return from a read operation (e.g., `["id", "title", "status"]`). When omitted, all columns are returned. Use to avoid fetching large fields (BLOBs, raw_content) in list views. `/ddd-implement` generates a Prisma `select` or SQL `SELECT` with only the listed columns. Also accepts `Record<string, string>` for computed columns: `{ "preview": "SUBSTRING(raw_content, 1, 500)" }`. |
 | `safety` | string? | `'strict' \| 'lenient'` — when `'strict'`, `/ddd-implement` wraps all property accesses from this read in null-safe patterns (optional chaining, default values). Default: `'strict'`. |
 
 **Filesystem fields** (when `store_type: 'filesystem'`):
@@ -2323,6 +2351,33 @@ spec:
     default: "created_at:desc"
     allowed: ["created_at", "name", "price"]
   description: List active products with pagination
+```
+
+**Column projection** — fetch only specific fields to avoid large payloads:
+
+```yaml
+# Select specific columns — avoid fetching raw_content BLOB in list views
+spec:
+  operation: read
+  model: ContentItem
+  query:
+    status: active
+  select: ["id", "title", "source_type", "created_at", "status"]
+  pagination:
+    style: cursor
+    default_limit: 20
+  description: List content items without raw_content
+
+# Computed columns — alias-to-expression for derived fields
+spec:
+  operation: read
+  model: ContentItem
+  query: { id: "$.item_id" }
+  select:
+    id: "id"
+    title: "title"
+    preview: "SUBSTRING(raw_content, 1, 500)"
+  description: Load content item with truncated preview
 ```
 
 **Include (joins)** — eager-load related records instead of multiple sequential reads:
@@ -2457,16 +2512,19 @@ spec:
 ```
 
 #### ipc_call
-Local IPC or native function call (Tauri commands, Electron IPC, React Native bridge, etc.). Use `sourceHandle` values `"success"` and `"error"` on connections for success/error routing.
+Local IPC, native function call, or OS subprocess execution (Tauri commands, Electron IPC, React Native bridge, shell commands, osascript, Python scripts, etc.). Use `sourceHandle` values `"success"` and `"error"` on connections for success/error routing.
 
 | Spec Field | Type | Description |
 |------------|------|-------------|
-| `command` | string | Command/function name (e.g., "git_status", "compute_file_hash") |
-| `args` | `Record<string, unknown>`? | Named arguments to pass to the command |
+| `command` | string | Command/function name (e.g., "git_status", "compute_file_hash", "osascript", "python3") |
+| `args` | `Record<string, unknown>`? | Named arguments to pass to the command. For subprocess calls, use an array-style value: `["-e", "script content"]`. |
 | `return_type` | string? | Expected return type (e.g., "string", "GitStatus", "boolean") |
 | `timeout_ms` | number? | Call timeout in milliseconds |
-| `bridge` | string? | Target bridge/runtime (e.g., "tauri", "electron", "react-native") — for implementation targeting |
+| `bridge` | string? | Target bridge/runtime (e.g., "tauri", "electron", "react-native", "shell") — for implementation targeting. Use `"shell"` for OS subprocess execution. |
 | `result_condition` | string? | Expression that maps return values to success/error handles (e.g., `"$.result === true"` → success, else → error). Eliminates need for a separate decision node after boolean-returning calls. |
+| `working_dir` | string? | Working directory for subprocess execution (supports `$.` variable interpolation, e.g., `"$.project_path"`). Only meaningful when `bridge: "shell"`. |
+| `capture` | string? | `'stdout' \| 'stderr' \| 'both'` — which output streams to capture from subprocess. Default: `'stdout'`. When `'both'`, output is `{ stdout: string, stderr: string }`. |
+| `on_nonzero_exit` | string? | `'error' \| 'log_and_continue'` — behavior when subprocess returns non-zero exit code. Default: `'error'` (routes to error handle). `'log_and_continue'` logs the exit code and proceeds on the success handle. |
 | `description` | string | Details |
 
 ```yaml
@@ -2499,6 +2557,29 @@ spec:
   result_condition: "$.result === true"
   bridge: tauri
   description: Check if the target path exists
+
+# OS subprocess — run osascript to export Apple Notes
+spec:
+  command: osascript
+  args: ["-e", "$.jxa_script"]
+  bridge: shell
+  working_dir: "$.project_path"
+  capture: both
+  timeout_ms: 30000
+  on_nonzero_exit: error
+  return_type: string
+  description: Execute JXA script to export Apple Notes
+
+# OS subprocess — run Python script with non-fatal exit
+spec:
+  command: python3
+  args: ["scripts/parse_bookmarks.py", "$.bookmarks_path"]
+  bridge: shell
+  capture: stdout
+  on_nonzero_exit: log_and_continue
+  timeout_ms: 15000
+  return_type: string
+  description: Parse Safari bookmarks via Python plistlib
 ```
 
 #### event
@@ -5123,7 +5204,7 @@ metadata:
 10. **Cross-cutting concerns are optional** — only add observability/security when needed for implementation hints
 11. **Always use sourceHandle on branching nodes** — see Section 8 for the complete handle reference per node type
 12. **Create supplementary specs early** — system.yaml, architecture.yaml, config.yaml, errors.yaml, and schemas give `/ddd-implement` the context it needs to generate correct code
-13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, `manual`, `sse`, `ws`, `pattern:`, `shortcut`, `timer`, `ui:`, or `ipc:` to communicate trigger type
+13. **Use trigger conventions** — prefix with `HTTP`, `cron`, `event:`, `webhook`, `manual`, `sse`, `ws`, `pattern:`, `shortcut`, `timer`, `ui:`, `ipc:`, or `lifecycle:` to communicate trigger type
 14. **Add status and body to terminals** — custom fields on terminal specs tell `/ddd-implement` exactly what HTTP response to generate
 15. **Define integrations in system.yaml** — `service_call` nodes reference integration names instead of repeating URL/auth/retry config
 16. **Use shared/types.yaml for enums used across schemas** — avoids duplicating `values:` arrays in multiple schema files
