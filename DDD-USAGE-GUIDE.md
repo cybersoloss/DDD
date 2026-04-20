@@ -3860,7 +3860,7 @@ Required spec fields per node type. Omitting these causes DDD Tool validation er
 | `cache` | `operation`, `key`, `store` | |
 | `transform` (schema mode) | `input_schema`, `output_schema`, `field_mappings` | |
 | `transform` (expression mode) | `mode: "expression"`, `field_mappings` | `mapping`, `output_shape`, `operations` without `mode` |
-| `collection` | `operation`, `input`, `output` | |
+| `collection` | `operation`, `input`, `output` | `source` (use `input`), `fields` (use `output`), `collect`/`map` (use valid operation) |
 | `parse` | `format`, `input` | |
 | `crypto` (encrypt/decrypt/sign/jwt_sign/jwt_verify) | `operation`, `algorithm`, `key_source: { env }` (OBJECT) | String `"env:VAR"` format; omitting `algorithm` or `key_source` |
 | `crypto` (hash) | `operation`, `algorithm` | |
