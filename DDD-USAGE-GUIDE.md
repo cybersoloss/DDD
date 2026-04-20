@@ -3768,7 +3768,11 @@ Connections define the flow graph. Each connection is `{ targetNodeId, sourceHan
 
 **Convention:** For nodes with multiple output paths, always use `sourceHandle` to label each path. This makes the flow graph unambiguous for both the DDD Tool and `/ddd-implement`.
 
-### sourceHandle Reference
+### DDD Vocabulary Reference
+
+All DDD commands (`/ddd-create`, `/ddd-update`, `/ddd-reverse`, `/ddd-sync`, `/ddd-evolve`, `/ddd-promote`) and the DDD Tool validator enforce these exact names. Use ONLY canonical names — synonyms cause validation errors. The DDD Tool normalizer accepts some aliases for backwards compatibility with older projects, but new YAML output MUST use canonical names.
+
+#### sourceHandle Reference
 
 | Node Type | Handle A | Handle B | Notes |
 |-----------|----------|----------|-------|
@@ -3830,6 +3834,63 @@ connections:
 connections:
   - targetNodeId: next-node-id
 ```
+
+#### Spec Field Reference
+
+Required spec fields per node type. Omitting these causes DDD Tool validation errors.
+
+| Node Type | Required Spec Fields | Don't Use |
+|-----------|---------------------|-----------|
+| `trigger` | `event` | No `type:` field on triggers |
+| `input` | `fields[]` — each field MUST have `name` + `type` | Fields without `type` |
+| `process` | `action` | |
+| `decision` | `condition` | `expression` |
+| `terminal` | `outcome` | |
+| `data_store` (database) | `operation`, `model` | `entity`, `schema` |
+| `data_store` (filesystem) | `operation`, `path` | |
+| `data_store` (memory) | `store`, `selector` | |
+| `service_call` | `method`, (`url` OR `integration`) | `endpoint` |
+| `ipc_call` | `command` | |
+| `event` | `direction` (`emit`/`consume`), `event_name` | `action` for direction |
+| `loop` | `collection`, `iterator` | `over`, `as` |
+| `parallel` | `branches` (array, ≥2 entries) | |
+| `sub_flow` | `flow_ref` | `flow` |
+| `llm_call` | `model`, `prompt_template` | `prompt` |
+| `delay` | `min_ms` | |
+| `cache` | `operation`, `key`, `store` | |
+| `transform` (schema mode) | `input_schema`, `output_schema`, `field_mappings` | |
+| `transform` (expression mode) | `mode: "expression"`, `field_mappings` | `operations` without `mode` |
+| `collection` | `operation`, `input`, `output` | |
+| `parse` | `format`, `input` | |
+| `crypto` (encrypt/decrypt/sign/jwt_sign/jwt_verify) | `operation`, `algorithm`, `key_source: { env }` | Omitting `algorithm` or `key_source` |
+| `crypto` (hash) | `operation`, `algorithm` | |
+| `crypto` (generate_token) | `operation`, `length`, `encoding` | |
+| `batch` | `input`, (`operation_template: { type }` OR `sub_flow_ref`) | `data` for input, string `operation` |
+| `transaction` | `steps` (array, ≥2 entries) | |
+| `text_split` | `input`, `max_length`, `split_strategy`, `output` | |
+| `websocket_broadcast` | `channel`, `event_name` | |
+| `agent_loop` | `model`, `tools` (≥1 with `is_terminal: true`), `max_iterations` | |
+| `guardrail` | `checks` | |
+| `human_gate` | `approval_options` (array) | |
+| `orchestrator` | `strategy`, `agents` (≥2) | |
+| `smart_router` | `rules` | |
+| `handoff` | `target: { flow, domain }` | |
+| `agent_group` | `members` (≥2) | |
+
+#### Connection Field Reference
+
+| Purpose | Canonical Name | Accepted Aliases (normalizer) | Don't Use in New YAML |
+|---------|---------------|-------------------------------|----------------------|
+| Target node | `targetNodeId` | `target`, `targetId` | `to`, `dest` |
+| Output handle | `sourceHandle` | — | `handle`, `next`, `each`, `output` |
+| Input handle | `targetHandle` | — | |
+| Spec wrapper | `spec:` | `properties:`, `config:` | |
+
+#### Flow-Level Field Reference
+
+| Trigger Pattern | Required Flow Field | Example |
+|----------------|--------------------|---------| 
+| HTTP (`"HTTP GET/POST/PUT/PATCH/DELETE ..."`) | `flow.auth` | `auth: { required: false, strategy: none }` |
 
 ---
 
